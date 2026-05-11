@@ -1,9 +1,10 @@
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_io as aio;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_io::{BufferedReader, FileType, ReadState};
+use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
@@ -20,6 +21,13 @@ bun_core::declare_scope!(FileReader, visible);
 // Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
 // readable; Phase B should replace with a proper raw-slice wrapper (BACKREF lifetime).
 
+// R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
+// `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
+// Copy). The `SourceContext` trait and `BufferedReaderParent` shims still
+// hand in `&mut Self` / `*mut Self` until those layers are migrated — `&mut T`
+// auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
+// `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
+// 0 of `NewSource<FileReader>`) is unchanged.
 pub struct FileReader {
     /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
     /// `parent`) and the reader's own `&mut self` both derive from a
@@ -29,50 +37,53 @@ pub struct FileReader {
     /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
     /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
     pub reader: UnsafeCell<IOReader>,
-    pub done: bool,
-    pub pending: streams::Pending,
-    pub pending_value: Strong, // Strong.Optional
+    pub done: Cell<bool>,
+    pub pending: JsCell<streams::Pending>,
+    pub pending_value: JsCell<Strong>, // Strong.Optional
     // TODO(port): `&'static mut [u8]` forge — borrows a JS typed-array buffer
     // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
     // does not honour. `bun_ptr::Interned` is read-only by construction so
     // does NOT cover this; tracked under the sibling `static-widen-mut`
     // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
-    pub pending_view: &'static mut [u8],
-    pub fd: Fd,
+    pub pending_view: JsCell<&'static mut [u8]>,
+    pub fd: Cell<Fd>,
+    /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub start_offset: Option<usize>,
+    /// Read-only after construction.
     pub max_size: Option<usize>,
-    pub total_readed: usize,
-    pub started: bool,
-    pub waiting_for_on_reader_done: bool,
-    pub event_loop: EventLoopHandle,
-    pub lazy: Lazy,
-    pub buffered: Vec<u8>,
-    pub read_inside_on_pull: ReadDuringJSOnPullResult,
+    pub total_readed: Cell<usize>,
+    pub started: Cell<bool>,
+    pub waiting_for_on_reader_done: Cell<bool>,
+    pub event_loop: Cell<EventLoopHandle>,
+    pub lazy: JsCell<Lazy>,
+    pub buffered: JsCell<Vec<u8>>,
+    pub read_inside_on_pull: JsCell<ReadDuringJSOnPullResult>,
+    /// Read-only after construction.
     pub highwater_mark: usize,
-    pub flowing: bool,
+    pub flowing: Cell<bool>,
 }
 
 impl Default for FileReader {
     fn default() -> Self {
         Self {
             reader: UnsafeCell::new(IOReader::init::<FileReader>()),
-            done: false,
-            pending: streams::Pending::default(),
-            pending_value: Strong::empty(),
-            pending_view: &mut [],
-            fd: Fd::INVALID,
+            done: Cell::new(false),
+            pending: JsCell::new(streams::Pending::default()),
+            pending_value: JsCell::new(Strong::empty()),
+            pending_view: JsCell::new(&mut []),
+            fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
-            total_readed: 0,
-            started: false,
-            waiting_for_on_reader_done: false,
+            total_readed: Cell::new(0),
+            started: Cell::new(false),
+            waiting_for_on_reader_done: Cell::new(false),
             // TODO(port): event_loop has no Zig default; callers must overwrite before use
-            event_loop: EventLoopHandle::init(core::ptr::null_mut()),
-            lazy: Lazy::None,
-            buffered: Vec::new(),
-            read_inside_on_pull: ReadDuringJSOnPullResult::None,
+            event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
+            lazy: JsCell::new(Lazy::None),
+            buffered: JsCell::new(Vec::new()),
+            read_inside_on_pull: JsCell::new(ReadDuringJSOnPullResult::None),
             highwater_mark: 16384,
-            flowing: true,
+            flowing: Cell::new(true),
         }
     }
 }
@@ -270,25 +281,25 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. `reader` is `UnsafeCell`-wrapped so
-    // materializing `&mut FileReader` here does not assert Unique over the
-    // reader bytes (SharedReadWrite root); the inherent impls re-derive any
+    // may be live on the caller's stack. R-2: every mutated field on
+    // `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-backed, so materializing
+    // `&FileReader` here does not assert Unique over any byte the caller may
+    // have borrowed (SharedReadWrite root); the inherent impls re-derive any
     // reader access through `reader()` (UnsafeCell::get).
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
-        FileReader::on_read_chunk(unsafe { &mut *this }, chunk, state)
+        FileReader::on_read_chunk(unsafe { &*this }, chunk, state)
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        FileReader::on_reader_done(unsafe { &mut *this })
+        FileReader::on_reader_done(unsafe { &*this })
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        FileReader::on_reader_error(unsafe { &mut *this }, err)
+        FileReader::on_reader_error(unsafe { &*this }, err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
-        // be borrowed mutably by the caller). Spec FileReader.zig:161-165.
-        // SAFETY: `this` is non-null/live per trait contract; `event_loop` is
-        // `Copy` and disjoint from the reader field.
-        let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
+        // R-2: `&Self` is sound here (all writable fields are interior-mut),
+        // so the previous raw `addr_of!` projection is no longer needed.
+        // SAFETY: `this` is non-null/live per trait contract.
+        let ev = unsafe { &*this }.event_loop.get();
         #[cfg(windows)]
         {
             // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
@@ -304,9 +315,8 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; the
         // SAFETY: see on_read_chunk.
-        unsafe { (*this).event_loop.as_event_loop_ctx() }
+        unsafe { &*this }.event_loop.get().as_event_loop_ctx()
     }
 }
 
@@ -323,7 +333,17 @@ impl FileReader {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop
+        self.event_loop.get()
+    }
+
+    /// `self`'s address as `*mut Self` for the `BufferedReader` vtable ctx
+    /// slot. The vtable trampolines deref it as shared (`&*this`) — see
+    /// `BufferedReaderParent` impl above — so no write provenance is
+    /// required; the `*mut` spelling is purely to match the C-shaped
+    /// `set_parent(*mut c_void)` signature.
+    #[inline]
+    fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
     }
 
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
@@ -343,11 +363,13 @@ impl FileReader {
     // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
     // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
     // a quirk; preserved as-is.
+    // R-2: kept `&mut self` — init-time constructor that runs before any
+    // host-fn could re-enter; `*self =` requires unique access.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
             reader: UnsafeCell::new(IOReader::init::<FileReader>()),
-            done: false,
-            fd,
+            done: Cell::new(false),
+            fd: Cell::new(fd),
             ..Default::default()
         };
 
@@ -355,17 +377,19 @@ impl FileReader {
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
         // global); deref to call `event_loop()`.
         let global = unsafe { &*(*self.parent()).global_this };
-        self.event_loop =
-            EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+        self.event_loop
+            .set(EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>()));
     }
 
-    pub fn on_start(&mut self) -> streams::Start {
-        let parent_ptr = std::ptr::from_mut::<Self>(self).cast();
-        self.reader().set_parent(parent_ptr);
-        let was_lazy = !matches!(self.lazy, Lazy::None);
+    pub fn on_start(&self) -> streams::Start {
+        self.reader().set_parent(self.as_ctx_ptr().cast());
+        let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
         let mut file_type = FileType::File;
-        if let Lazy::Blob(store) = &self.lazy {
+        // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
+        // on every path through the original `if let` body) so the `StoreRef`
+        // is owned locally and the cell borrow is released immediately.
+        if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
             // SAFETY: `StoreRef::as_ptr` yields `*mut Store` with mutable provenance
             // (originating from `heap::alloc`). Store is single-threaded here and we
             // hold the only mutating handle; matches Zig's `*Blob.Store` direct field
@@ -381,16 +405,16 @@ impl FileReader {
                     // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
                     // is hoisted after the match below since both arms fall through.
                     let open_result = Lazy::open_file_blob(file);
-                    // drop the StoreRef (Zig: this.lazy.blob.deref()) and clear lazy
-                    self.lazy = Lazy::None;
+                    // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
+                    drop(store);
                     match open_result {
                         Err(err) => {
-                            self.fd = Fd::INVALID;
+                            self.fd.set(Fd::INVALID);
                             return streams::Start::Err(err);
                         }
                         Ok(opened) => {
                             debug_assert!(opened.fd.is_valid());
-                            self.fd = opened.fd;
+                            self.fd.set(opened.fd);
                             pollable = opened.pollable;
                             file_type = opened.file_type;
                             #[cfg(unix)]
@@ -413,8 +437,8 @@ impl FileReader {
 
         {
             let reader_fd = self.reader().get_fd();
-            if reader_fd != Fd::INVALID && self.fd == Fd::INVALID {
-                self.fd = reader_fd;
+            if reader_fd != Fd::INVALID && self.fd.get() == Fd::INVALID {
+                self.fd.set(reader_fd);
             }
         }
 
@@ -423,21 +447,21 @@ impl FileReader {
         // global); deref to call `event_loop()`.
         {
             let global = unsafe { &*(*self.parent()).global_this };
-            self.event_loop =
-                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+            self.event_loop
+                .set(EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>()));
         }
 
         if was_lazy {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).increment_count() };
-            self.waiting_for_on_reader_done = true;
+            self.waiting_for_on_reader_done.set(true);
             if let Some(offset) = self.start_offset {
-                match self.reader().start_file_offset(self.fd, pollable, offset) {
+                match self.reader().start_file_offset(self.fd.get(), pollable, offset) {
                     Ok(()) => {}
                     Err(e) => return streams::Start::Err(e),
                 }
             } else {
-                match self.reader().start(self.fd, pollable) {
+                match self.reader().start(self.fd.get(), pollable) {
                     Ok(()) => {}
                     Err(e) => return streams::Start::Err(e),
                 }
@@ -447,7 +471,7 @@ impl FileReader {
             {
                 use bun_io::pipe_reader::PosixFlags;
                 if self.reader().flags.contains(PosixFlags::POLLABLE) && !self.reader().is_done() {
-                    self.waiting_for_on_reader_done = true;
+                    self.waiting_for_on_reader_done.set(true);
                     // SAFETY: see `parent()`.
                     unsafe { (*self.parent()).increment_count() };
                 }
@@ -480,12 +504,14 @@ impl FileReader {
             }
         }
 
-        self.started = true;
+        self.started.set(true);
 
         if self.reader().is_done() {
             self.consume_reader_buffer();
-            if !self.buffered.is_empty() {
-                return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
+            if !self.buffered.get().is_empty() {
+                return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(
+                    self.buffered.replace(Vec::new()),
+                ));
             }
         } else {
             #[cfg(unix)]
@@ -500,25 +526,32 @@ impl FileReader {
         streams::Start::Ready
     }
 
-    pub fn parent(&mut self) -> *mut Source {
+    pub fn parent(&self) -> *mut Source {
         // SAFETY: self is always the `context` field of a heap-allocated `Source`;
         // matches Zig `@fieldParentPtr("context", this)`.
         // Returns a raw `*mut Source` (NOT `&mut Source`) because `self` IS the
         // `context` field of `Source` — materializing `&mut Source` here would
-        // alias the live `&mut self` borrow at every call site (forbidden
+        // alias the live `&self` borrow at every call site (forbidden
         // aliased-&mut, PORTING.md §Forbidden patterns). Callers must deref in
         // a tight `unsafe { (*ptr).method() }` scope and never hold the
         // resulting `&mut Source` across other `self.*` accesses.
+        //
+        // R-2: accepts `&self`. The `*mut` spelling matches the (not-yet-
+        // migrated) `NewSource` API which still takes `&mut self` for
+        // `increment_count`/`decrement_count`/`on_close`; once `NewSource` is
+        // celled (separate R-2 task) the cast becomes purely nominal. The
+        // `container_of` provenance is identical to the previous `&mut self`
+        // version (offset 0 → same allocation pointer).
         unsafe {
-            bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
+            bun_core::from_field_ptr!(Source, context, self as *const Self)
         }
     }
 
-    pub fn on_cancel(&mut self) {
-        if self.done {
+    pub fn on_cancel(&self) {
+        if self.done.get() {
             return;
         }
-        self.done = true;
+        self.done.set(true);
         self.reader().update_ref(false);
         if !self.reader().is_done() {
             self.reader().close();
@@ -528,7 +561,7 @@ impl FileReader {
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is
     // invoked from the Source's JS finalizer path; it also calls `parent().deinit()`.
     // Not `pub`: reached only via the `SourceContext` trait impl below.
-    fn deinit(&mut self) {
+    fn deinit(&self) {
         // Owned fields (buffered: Vec, reader: BufferedReader, pending_value: Strong,
         // lazy: Arc) drop automatically; only genuine side effects remain.
         self.reader().update_ref(false);
@@ -550,17 +583,17 @@ impl FileReader {
         }
     }
 
-    pub fn on_read_chunk(&mut self, init_buf: &[u8], state: ReadState) -> bool {
+    pub fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> bool {
         let mut buf = init_buf;
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({}) - read_inside_on_pull: {}",
             buf.len(),
             read_state_tag(state),
-            <&'static str>::from(&self.read_inside_on_pull)
+            <&'static str>::from(self.read_inside_on_pull.get())
         );
 
-        if self.done {
+        if self.done.get() {
             self.reader().close();
             return false;
         }
@@ -578,14 +611,15 @@ impl FileReader {
 
         if !buf.is_empty() {
             if let Some(max_size) = self.max_size {
-                if self.total_readed >= max_size {
+                let total_readed = self.total_readed.get();
+                if total_readed >= max_size {
                     return false;
                 }
-                let len = (max_size - self.total_readed).min(buf.len());
+                let len = (max_size - total_readed).min(buf.len());
                 if buf.len() > len {
                     buf = &buf[0..len];
                 }
-                self.total_readed += len;
+                self.total_readed.set(total_readed + len);
 
                 if buf.is_empty() {
                     close = true;
@@ -596,7 +630,7 @@ impl FileReader {
 
         // Kept as a RAW `*mut Vec<u8>` for the lifetime of this fn — never bound to a
         // long-lived `&mut Vec<u8>`. `reader_buffer` points inside `self.reader` while
-        // we still hold `&mut self` and mutate `self.buffered`/`self.pending` etc.
+        // we still hold `&self` and mutate `self.buffered`/`self.pending` etc.
         // interleaved with reads/clears of `*reader_buffer`. Holding a `&mut Vec` here
         // would be the aliased-&mut forbidden pattern (PORTING.md §Forbidden patterns).
         // Spec FileReader.zig:337 `const reader_buffer = this.reader.buffer();` is a Zig
@@ -604,34 +638,38 @@ impl FileReader {
         // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
-        if !self.read_inside_on_pull.is_none() {
-            match &mut self.read_inside_on_pull {
+        if !self.read_inside_on_pull.get().is_none() {
+            // R-2: `with_mut` projects `&mut ReadDuringJSOnPullResult` from
+            // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
+            // inside the closure is sound.
+            self.read_inside_on_pull.with_mut(|riop| match riop {
                 ReadDuringJSOnPullResult::Js(in_progress) => {
                     if in_progress.len() >= buf.len() && !has_more {
                         in_progress[0..buf.len()].copy_from_slice(buf);
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
                         let remaining =
                             unsafe { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
-                        self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(remaining);
+                        *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
                         // variant; holder-lifetime, encoded as `RawSlice<u8>`.
-                        self.read_inside_on_pull =
-                            ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
-                    } else if has_more && !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
-                        self.buffered.extend_from_slice(buf);
-                        self.read_inside_on_pull = ReadDuringJSOnPullResult::UseBuffered(buf.len());
+                        *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
+                    } else if has_more
+                        && !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice())
+                    {
+                        self.buffered.with_mut(|b| b.extend_from_slice(buf));
+                        *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
                     }
                 }
                 ReadDuringJSOnPullResult::UseBuffered(original) => {
                     let original = *original;
-                    self.buffered.extend_from_slice(buf);
-                    self.read_inside_on_pull = ReadDuringJSOnPullResult::UseBuffered(buf.len() + original);
+                    self.buffered.with_mut(|b| b.extend_from_slice(buf));
+                    *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len() + original);
                 }
                 ReadDuringJSOnPullResult::None => unreachable!(),
                 _ => panic!("Invalid state"),
-            }
-        } else if self.pending.state == streams::PendingState::Pending {
+            });
+        } else if self.pending.get().state == streams::PendingState::Pending {
             // Certain readers (such as pipes) may return 0-byte reads even when
             // not at EOF. Consequently, we need to check whether the reader is
             // actually done or not.
@@ -645,50 +683,57 @@ impl FileReader {
             // labeled block computing `ret`, then cleanup + run + return.
             let ret: bool = 'pending: {
                 if buf.is_empty() {
-                    if self.buffered.is_empty() {
-                        self.buffered = Vec::new(); // clearAndFree
+                    if self.buffered.get().is_empty() {
+                        self.buffered.set(Vec::new()); // clearAndFree
                         // SAFETY: see `reader_buffer` decl — tight deref, no &mut held across.
-                        self.buffered = unsafe { mem::take(&mut *reader_buffer) }; // moveToUnmanaged
+                        self.buffered.set(unsafe { mem::take(&mut *reader_buffer) }); // moveToUnmanaged
                     }
 
                     // PORT NOTE: nested `defer buffer.clearAndFree` folded into the arms.
-                    let mut buffer = mem::take(&mut self.buffered);
+                    let mut buffer = self.buffered.replace(Vec::new());
                     if !buffer.is_empty() {
-                        if self.pending_view.len() >= buffer.len() {
-                            self.pending_view[0..buffer.len()].copy_from_slice(&buffer);
-                            self.pending.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                value: self.pending_value.get().unwrap_or(JSValue::ZERO),
-                                len: buffer.len() as u64, // @truncate
+                        if self.pending_view.get().len() >= buffer.len() {
+                            self.pending_view
+                                .with_mut(|v| v[0..buffer.len()].copy_from_slice(&buffer));
+                            self.pending.with_mut(|p| {
+                                p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
+                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    len: buffer.len() as u64, // @truncate
+                                })
                             });
                             drop(buffer); // clearAndFree
                         } else {
-                            self.pending.result =
-                                streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
+                            self.pending.with_mut(|p| {
+                                p.result =
+                                    streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer))
+                            });
                         }
                     } else {
-                        self.pending.result = streams::Result::Done;
+                        self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
                     break 'pending false;
                 }
 
                 let was_done = self.reader().is_done();
 
-                if self.pending_view.len() >= buf.len() {
-                    self.pending_view[0..buf.len()].copy_from_slice(buf);
+                if self.pending_view.get().len() >= buf.len() {
+                    self.pending_view.with_mut(|v| v[0..buf.len()].copy_from_slice(buf));
                     // SAFETY: see `reader_buffer` decl.
                     unsafe { (*reader_buffer).clear() };
-                    self.buffered.clear();
+                    self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().unwrap_or(JSValue::ZERO),
+                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
                         len: buf.len() as u64, // @truncate
                     };
 
-                    self.pending.result = if was_done {
-                        streams::Result::IntoArrayAndDone(into_array)
-                    } else {
-                        streams::Result::IntoArray(into_array)
-                    };
+                    self.pending.with_mut(|p| {
+                        p.result = if was_done {
+                            streams::Result::IntoArrayAndDone(into_array)
+                        } else {
+                            streams::Result::IntoArray(into_array)
+                        }
+                    });
                     break 'pending !was_done;
                 }
 
@@ -699,45 +744,52 @@ impl FileReader {
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
                         let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
                         buffer.truncate(buf.len()); // shrinkRetainingCapacity
-                        self.pending.result =
-                            streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
+                        self.pending.with_mut(|p| {
+                            p.result =
+                                streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer))
+                        });
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
-                        self.pending.result =
-                            streams::Result::Temporary(bun_ptr::RawSlice::new(buf));
+                        self.pending.with_mut(|p| {
+                            p.result = streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                        });
                     }
                     break 'pending !was_done;
                 }
 
-                if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
-                    self.pending.result = if self.reader().is_done() {
-                        streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
-                    } else {
-                        streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
-                    };
+                if !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice()) {
+                    self.pending.with_mut(|p| {
+                        p.result = if self.reader().is_done() {
+                            streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
+                        } else {
+                            streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                        }
+                    });
                     break 'pending !was_done;
                 }
 
-                debug_assert_eq!(buf.as_ptr(), self.buffered.as_ptr());
-                let mut buffered = mem::take(&mut self.buffered);
+                debug_assert_eq!(buf.as_ptr(), self.buffered.get().as_ptr());
+                let mut buffered = self.buffered.replace(Vec::new());
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
-                self.pending.result = if self.reader().is_done() {
-                    streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
-                } else {
-                    streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
-                };
+                self.pending.with_mut(|p| {
+                    p.result = if self.reader().is_done() {
+                        streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
+                    } else {
+                        streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
+                    }
+                });
                 break 'pending !was_done;
             };
 
-            self.pending_value.clear_without_deallocation();
-            self.pending_view = &mut [];
-            self.pending.run();
+            self.pending_value.with_mut(|p| p.clear_without_deallocation());
+            self.pending_view.set(&mut []);
+            self.pending.with_mut(|p| p.run());
             close_if_needed!();
             return ret;
-        } else if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
-            self.buffered.extend_from_slice(buf);
+        } else if !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice()) {
+            self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
             if bun_core::is_slice_in_buffer(buf, unsafe { (*reader_buffer).allocated_slice() }) {
                 unsafe { (*reader_buffer).clear() };
@@ -747,18 +799,18 @@ impl FileReader {
         // For pipes, we have to keep pulling or the other process will block.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(self.read_inside_on_pull, ReadDuringJSOnPullResult::Temporary(_))
-            && !(self.buffered.len() + reader_buffer_len >= self.highwater_mark
+        let ret = !matches!(self.read_inside_on_pull.get(), ReadDuringJSOnPullResult::Temporary(_))
+            && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
                 && !self.reader_is_pollable());
         close_if_needed!();
         ret
     }
 
     fn is_pulling(&self) -> bool {
-        !self.read_inside_on_pull.is_none()
+        !self.read_inside_on_pull.get().is_none()
     }
 
-    pub fn on_pull(&mut self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+    pub fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
         // TODO(port): lifetime — `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -767,8 +819,8 @@ impl FileReader {
         if drained.len() > 0 {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len());
 
-            self.pending_value.clear_without_deallocation();
-            self.pending_view = &mut [];
+            self.pending_value.with_mut(|p| p.clear_without_deallocation());
+            self.pending_view.set(&mut []);
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
@@ -804,22 +856,22 @@ impl FileReader {
 
         if !self.reader().has_pending_read() {
             // If not flowing (paused), don't initiate new reads
-            if !self.flowing {
+            if !self.flowing.get() {
                 bun_core::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
                 // SAFETY: see `parent()`.
                 let global = unsafe { &*(*self.parent()).global_this };
-                self.pending_value.set(global, array);
-                self.pending_view = buffer;
-                return streams::Result::Pending(&raw mut self.pending);
+                self.pending_value.with_mut(|p| p.set(global, array));
+                self.pending_view.set(buffer);
+                return streams::Result::Pending(self.pending.as_ptr());
             }
 
             let buffer_len = buffer.len();
-            self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(buffer);
+            self.read_inside_on_pull.set(ReadDuringJSOnPullResult::Js(buffer));
             self.reader().read();
 
             // PORT NOTE: Zig `defer this.read_inside_on_pull = .none` — replaced via
-            // mem::replace so the field is reset before matching, covering all return paths.
-            let pulled = mem::replace(&mut self.read_inside_on_pull, ReadDuringJSOnPullResult::None);
+            // replace so the field is reset before matching, covering all return paths.
+            let pulled = self.read_inside_on_pull.replace(ReadDuringJSOnPullResult::None);
             match pulled {
                 ReadDuringJSOnPullResult::Js(remaining_buf) => {
                     let amount_read = buffer_len - remaining_buf.len();
@@ -847,10 +899,10 @@ impl FileReader {
                     // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
                     // SAFETY: see `parent()`.
                     let global = unsafe { &*(*self.parent()).global_this };
-                    self.pending_value.set(global, array);
-                    self.pending_view = remaining_buf;
+                    self.pending_value.with_mut(|p| p.set(global, array));
+                    self.pending_view.set(remaining_buf);
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
-                    return streams::Result::Pending(&raw mut self.pending);
+                    return streams::Result::Pending(self.pending.as_ptr());
                 }
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
@@ -861,11 +913,17 @@ impl FileReader {
                     return streams::Result::Temporary(buf);
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
-                    bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());
+                    bun_core::scoped_log!(
+                        FileReader,
+                        "onPull({}) = {}",
+                        buffer_len,
+                        self.buffered.get().len()
+                    );
+                    let buffered = self.buffered.replace(Vec::new());
                     if self.reader().is_done() {
-                        return streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
+                        return streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered));
                     }
-                    return streams::Result::Owned(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
+                    return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
                 _ => {
                     // Spec FileReader.zig:544 `else => {}` falls through to set
@@ -885,17 +943,17 @@ impl FileReader {
         let buffer_len = buffer.len();
         // SAFETY: see `parent()`.
         let global = unsafe { &*(*self.parent()).global_this };
-        self.pending_value.set(global, array);
-        self.pending_view = buffer;
+        self.pending_value.with_mut(|p| p.set(global, array));
+        self.pending_view.set(buffer);
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        streams::Result::Pending(&raw mut self.pending)
+        streams::Result::Pending(self.pending.as_ptr())
     }
 
-    pub fn drain(&mut self) -> Vec<u8> {
-        if !self.buffered.is_empty() {
-            let out = Vec::<u8>::move_from_list(mem::take(&mut self.buffered));
+    pub fn drain(&self) -> Vec<u8> {
+        if !self.buffered.get().is_empty() {
+            let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
             if cfg!(debug_assertions) {
                 debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             }
@@ -909,60 +967,65 @@ impl FileReader {
         Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
     }
 
-    pub fn set_ref_or_unref(&mut self, enable: bool) {
-        if self.done {
+    pub fn set_ref_or_unref(&self, enable: bool) {
+        if self.done.get() {
             return;
         }
         self.reader().update_ref(enable);
     }
 
-    fn consume_reader_buffer(&mut self) {
-        if self.buffered.capacity() == 0 {
-            self.buffered = mem::take(self.reader().buffer());
+    fn consume_reader_buffer(&self) {
+        if self.buffered.get().capacity() == 0 {
+            self.buffered.set(mem::take(self.reader().buffer()));
         }
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         if !self.is_pulling() {
             self.consume_reader_buffer();
-            if self.pending.state == streams::PendingState::Pending {
-                if !self.buffered.is_empty() {
-                    self.pending.result =
-                        streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
+            if self.pending.get().state == streams::PendingState::Pending {
+                if !self.buffered.get().is_empty() {
+                    let buffered = self.buffered.replace(Vec::new());
+                    self.pending.with_mut(|p| {
+                        p.result =
+                            streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
+                    });
                 } else {
-                    self.pending.result = streams::Result::Done;
+                    self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
-                self.buffered = Vec::new();
-                self.pending.run();
+                self.buffered.set(Vec::new());
+                self.pending.with_mut(|p| p.run());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
         }
 
         // Only close the stream if there's no buffered data left to deliver
-        if self.buffered.is_empty() {
+        if self.buffered.get().is_empty() {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).on_close() };
         }
-        if self.waiting_for_on_reader_done {
-            self.waiting_for_on_reader_done = false;
+        if self.waiting_for_on_reader_done.get() {
+            self.waiting_for_on_reader_done.set(false);
             // SAFETY: see `parent()`.
             let _ = unsafe { (*self.parent()).decrement_count() };
         }
     }
 
-    pub fn on_reader_error(&mut self, err: sys::Error) {
+    pub fn on_reader_error(&self, err: sys::Error) {
         self.consume_reader_buffer();
-        if self.buffered.capacity() > 0 && self.buffered.is_empty() {
-            self.buffered = Vec::new();
+        if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
+            self.buffered.set(Vec::new());
         }
 
-        self.pending.result = streams::Result::Err(streams::StreamError::Error(err));
-        self.pending.run();
+        self.pending.with_mut(|p| {
+            p.result = streams::Result::Err(streams::StreamError::Error(err));
+        });
+        self.pending.with_mut(|p| p.run());
     }
 
-    pub fn set_raw_mode(&mut self, flag: bool) -> sys::Result<()> {
+    pub fn set_raw_mode(&self, flag: bool) -> sys::Result<()> {
         #[cfg(not(windows))]
         {
             // TODO(port): comptime string concat with Environment.os.displayString()
@@ -974,14 +1037,14 @@ impl FileReader {
         }
     }
 
-    pub fn set_flowing(&mut self, flag: bool) {
-        bun_core::scoped_log!(FileReader, "setFlowing({}) was={}", flag, self.flowing);
+    pub fn set_flowing(&self, flag: bool) {
+        bun_core::scoped_log!(FileReader, "setFlowing({}) was={}", flag, self.flowing.get());
 
-        if self.flowing == flag {
+        if self.flowing.get() == flag {
             return;
         }
 
-        self.flowing = flag;
+        self.flowing.set(flag);
 
         if flag {
             self.reader().unpause();
@@ -996,7 +1059,7 @@ impl FileReader {
 
     pub fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
-        self.reader().memory_cost() + self.buffered.capacity()
+        self.reader().memory_cost() + self.buffered.get().capacity()
     }
 }
 
@@ -1010,6 +1073,11 @@ impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
+    // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
+    // ByteStream — separate migration); the inherent impls take `&self`, so
+    // these forward via auto-deref. The `&mut` here is what the codegen shim
+    // currently emits; once `NewSource` is celled the trait flips to `&self`
+    // and these become straight `Self::*(self, ..)` calls.
     fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive

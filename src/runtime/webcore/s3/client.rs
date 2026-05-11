@@ -782,19 +782,21 @@ pub fn upload_stream(
         ReadableStreamPtr::File(stream) => {
             // SAFETY: stream is a live `*mut FileReader` from a JS-owned readable stream.
             let stream = unsafe { &mut **stream };
-            if matches!(stream.pending.result, crate::webcore::streams::StreamResult::Err(_)) {
+            if matches!(stream.pending.get().result, crate::webcore::streams::StreamResult::Err(_)) {
                 // we got an error, fail early
-                let err = match core::mem::replace(
-                    &mut stream.pending.result,
-                    crate::webcore::streams::StreamResult::Done,
-                ) {
+                let err = match stream.pending.with_mut(|p| {
+                    core::mem::replace(
+                        &mut p.result,
+                        crate::webcore::streams::StreamResult::Done,
+                    )
+                }) {
                     crate::webcore::streams::StreamResult::Err(err) => err,
                     _ => unreachable!(),
                 };
-                stream.pending = crate::webcore::streams::Pending {
+                stream.pending.set(crate::webcore::streams::Pending {
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
-                };
+                });
                 let (js_err, was_strong) = err.to_js_weak(global_this);
                 if was_strong == crate::webcore::streams::WasStrong::Strong {
                     js_err.unprotect();

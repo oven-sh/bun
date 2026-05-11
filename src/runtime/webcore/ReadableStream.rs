@@ -178,12 +178,12 @@ impl ReadableStream {
             Source::File(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
+                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started);
+                    debug_assert!(!blobby.started.get());
                     self.done(global_this);
                     return Some(webcore::blob::Any::Blob(blob));
                 }
@@ -345,9 +345,9 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
@@ -356,7 +356,7 @@ impl ReadableStream {
                         },
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`
                         // after the raw `.lazy = .{ .blob = store }` assignment.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -406,12 +406,12 @@ impl ReadableStream {
                     global_this,
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -435,9 +435,9 @@ impl ReadableStream {
             global_this,
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: jsc::EventLoopHandle::init(
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
-                ),
+                )),
                 ..Default::default()
             },
             ..Default::default()

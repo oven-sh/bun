@@ -258,7 +258,7 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 
 impl BodyMixin for Response {
     #[inline]
-    fn get_body_value(&mut self) -> &mut BodyValue {
+    fn get_body_value(&self) -> &mut BodyValue {
         Response::get_body_value(self)
     }
     #[inline]
@@ -273,13 +273,13 @@ impl BodyMixin for Response {
     }
     #[inline]
     fn get_form_data_encoding(
-        &mut self,
+        &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Response::get_form_data_encoding(self)
     }
     #[inline]
     fn get_body_readable_stream(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         Response::get_body_readable_stream(self, global_object)
@@ -420,8 +420,11 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
-        &mut self.body.value
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_body_value(&self) -> &mut BodyValue {
+        // R-2: `Body.value` is `JsCell<Value>`; project `&mut` through the
+        // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
+        self.body.value_mut()
     }
 }
 
@@ -431,11 +434,11 @@ impl Response {
 
 impl Response {
     #[inline]
-    pub fn get_body_len(&mut self) -> usize {
+    pub fn get_body_len(&self) -> usize {
         self.body.len() as usize
     }
 
-    pub fn get_form_data_encoding(&mut self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+    pub fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
@@ -447,7 +450,7 @@ impl Response {
     }
 
     pub fn calculate_estimated_byte_size(&mut self) {
-        self.reported_estimated_size = self.body.value.estimated_size()
+        self.reported_estimated_size = self.body.value.get().estimated_size()
             + self.url.byte_slice().len()
             + self.init.status_text.byte_slice().len()
             + mem::size_of::<Response>();
@@ -455,7 +458,7 @@ impl Response {
 
     fn check_body_stream_ref(&mut self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref.try_get() {
-            if let BodyValue::Locked(locked) = &mut self.body.value {
+            if let BodyValue::Locked(locked) = self.body.value_mut() {
                 if let Some(stream) = locked.readable.get(global_object) {
                     // we dont hold a strong reference to the stream we will guard it in js.gc.stream
                     // so we avoid cycled references
@@ -482,7 +485,7 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_body_readable_stream(&mut self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
+    pub fn get_body_readable_stream(&self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref.try_get() {
             if let Some(stream) = js::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
@@ -495,7 +498,7 @@ impl Response {
                 };
             }
         }
-        if let BodyValue::Locked(locked) = &self.body.value {
+        if let BodyValue::Locked(locked) = self.body.value.get() {
             return locked.readable.get(global_object);
         }
         None
@@ -507,7 +510,7 @@ impl Response {
             // Zig `js.gc.stream.clear` ⇒ `set(.., .zero)`.
             js::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
-        if let BodyValue::Locked(locked) = &mut self.body.value {
+        if let BodyValue::Locked(locked) = self.body.value_mut() {
             // old readable dropped; reset to empty
             locked.readable = Default::default();
         }
@@ -515,7 +518,7 @@ impl Response {
 
     #[inline]
     pub fn set_size_hint(&mut self, size_hint: super::blob::SizeType) {
-        if let BodyValue::Locked(locked) = &mut self.body.value {
+        if let BodyValue::Locked(locked) = self.body.value_mut() {
             locked.size_hint = size_hint;
             if let Some(readable) = locked.readable.get(locked.global()) {
                 if let super::readable_stream::Source::Bytes(bytes) = &readable.ptr {
@@ -545,10 +548,12 @@ pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObje
 
     if let Some(response) = this_value.as_::<Response>() {
         // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-        return JSValue::from(!unsafe { &mut *response }.body.value.is_definitely_empty());
+        // R-2: deref as shared — `Body.value` is `JsCell`.
+        return JSValue::from(!unsafe { &*response }.body.value.get().is_definitely_empty());
     } else if let Some(request) = this_value.as_::<Request>() {
         // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-        return JSValue::from(!unsafe { &mut *request }.get_body_value().is_definitely_empty());
+        // R-2: deref as shared — `get_body_value` takes `&self`.
+        return JSValue::from(!unsafe { &*request }.get_body_value().is_definitely_empty());
     }
 
     JSValue::FALSE
@@ -571,10 +576,12 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     let body: &mut BodyValue = 'brk: {
         if let Some(response) = this_value.as_::<Response>() {
             // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-            break 'brk unsafe { &mut (*response).body.value };
+            // R-2: deref as shared; `get_body_value` projects `&mut` via `JsCell`.
+            break 'brk unsafe { &*response }.get_body_value();
         } else if let Some(request) = this_value.as_::<Request>() {
             // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-            break 'brk unsafe { &mut *request }.get_body_value();
+            // R-2: deref as shared — `get_body_value` takes `&self`.
+            break 'brk unsafe { &*request }.get_body_value();
         }
 
         return JSValue::UNDEFINED;
@@ -683,7 +690,7 @@ impl Response {
         if self.init.headers.is_none() {
             self.init.headers = Some(HeadersRef::create_empty());
 
-            if let BodyValue::Blob(blob) = &self.body.value {
+            if let BodyValue::Blob(blob) = self.body.value.get() {
                 // SAFETY: Blob.content_type is always a valid (possibly empty) slice
                 // pointer (see Blob::default()/set_content_type contract).
                 let content_type = unsafe { &*blob.content_type.get() };
@@ -705,14 +712,17 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub fn get_content_type(&mut self) -> JsResult<Option<ZigStringSlice>> {
-        if let Some(headers) = self.init.headers.as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
+    pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
+        if let Some(headers) = self.init.headers.as_ref() {
+            // SAFETY: `HeadersRef` wraps a live C++ `FetchHeaders` handle;
+            // `fast_get` only writes a stack out-param via FFI. R-2: route via
+            // raw `*mut` from `as_ptr()` rather than `&mut self.init.headers`.
+            if let Some(value) = unsafe { (*headers.as_ptr()).fast_get(HTTPHeaderName::ContentType) } {
                 return Ok(Some(value.to_slice()));
             }
         }
 
-        if let BodyValue::Blob(blob) = &self.body.value {
+        if let BodyValue::Blob(blob) = self.body.value.get() {
             // SAFETY: see note in get_or_create_headers.
             let content_type = unsafe { &*blob.content_type.get() };
             if !content_type.is_empty() {
@@ -825,7 +835,7 @@ impl Response {
         // Update the original response's body cache with the new teed stream.
         // At this point, this.body.value.Locked.readable still holds the teed stream
         // because checkBodyStreamRef hasn't been called on the original response yet.
-        if let BodyValue::Locked(locked) = &this.body.value {
+        if let BodyValue::Locked(locked) = this.body.value.get() {
             if let Some(readable) = locked.readable.get(global_this) {
                 js::body_set_cached(this_value, global_this, readable.value);
             }
@@ -856,7 +866,7 @@ impl Response {
         };
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload (Response.zig:433).
-        let body = scopeguard::guard(body, |mut b| b.reset());
+        let body = scopeguard::guard(body, |b| b.reset());
         let init = self.init.clone(global_this)?;
         // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
@@ -955,11 +965,11 @@ impl Response {
         // `body.deinit`) on early return; disarmed before `heap::alloc`.
         let mut response = scopeguard::guard(
             Response {
-                body: Body { value: BodyValue::Empty },
+                body: Body::new(BodyValue::Empty),
                 init: Init { status_code: 200, ..Default::default() },
                 ..Default::default()
             },
-            |mut r| r.body.reset(),
+            |r| r.body.reset(),
         );
         let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
 
@@ -999,17 +1009,17 @@ impl Response {
                 if let Some(bytes) = unsafe { (*wtf).to_utf8_if_needed() } {
                     // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
                     unsafe { (*wtf).deref() };
-                    response.body.value = BodyValue::InternalBlob(InternalBlob {
+                    response.body.value.set(BodyValue::InternalBlob(InternalBlob {
                         // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
                         // transfers here as Vec<u8>.
                         bytes: bytes.into_vec(),
                         was_string: true,
-                    });
+                    }));
                 } else {
                     // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
                     // We already hold the +1 from `leak_wtf_impl`; transfer it
                     // into the body value.
-                    response.body.value = BodyValue::WTFStringImpl(wtf);
+                    response.body.value.set(BodyValue::WTFStringImpl(wtf));
                 }
             }
         }
@@ -1073,7 +1083,7 @@ impl Response {
         let mut response: Response = 'brk: {
             let mut response = Response {
                 init: Init { status_code: 302, ..Default::default() },
-                body: Body { value: BodyValue::Empty },
+                body: Body::new(BodyValue::Empty),
                 ..Default::default()
             };
 
@@ -1122,7 +1132,7 @@ impl Response {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let response = bun_core::heap::into_raw(Box::new(Response {
             init: Init { status_code: 0, ..Default::default() },
-            body: Body { value: BodyValue::Empty },
+            body: Body::new(BodyValue::Empty),
             ..Default::default()
         }));
 
@@ -1151,7 +1161,7 @@ impl Response {
                     }
                     let mut response = Response {
                         init: Init { status_code: 302, ..Default::default() },
-                        body: Body { value: BodyValue::Empty },
+                        body: Body::new(BodyValue::Empty),
                         js_ref: JsRef::init_weak(js_this),
                         ..Default::default()
                     };
@@ -1214,7 +1224,7 @@ impl Response {
 
         let body: Body = 'brk: {
             if arguments[0].is_undefined_or_null() {
-                break 'brk Body { value: BodyValue::Null };
+                break 'brk Body::new(BodyValue::Null);
             }
             // PORT NOTE: `Body::extract` is a free fn in `body::_jsc_gated`,
             // re-exported as `body::extract`.
@@ -1223,7 +1233,7 @@ impl Response {
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
         // error returns below release the extracted body payload
         // (Response.zig:758).
-        let body = scopeguard::guard(body, |mut b| b.reset());
+        let body = scopeguard::guard(body, |b| b.reset());
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
@@ -1235,7 +1245,7 @@ impl Response {
         // body+init are freed (only the bare struct leaks). Doing it on stack
         // locals lets `?` trigger the scopeguard and `init`'s drop glue and
         // avoids leaking the heap allocation entirely.
-        if let BodyValue::Blob(blob) = &body.value {
+        if let BodyValue::Blob(blob) = body.value.get() {
             if let Some(headers) = init.headers.as_deref_mut() {
                 // SAFETY: see note in get_or_create_headers — `content_type`
                 // is a valid (possibly empty) slice pointer.
@@ -1423,7 +1433,7 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
     // TODO(port): Zig signature says `Response` but body calls bun.new(Response, ...) —
     // it actually returns *Response. Preserving the heap-alloc behavior.
     bun_core::heap::into_raw(Box::new(Response {
-        body: Body { value: BodyValue::Null },
+        body: Body::new(BodyValue::Null),
         init: Init { status_code: status, ..Default::default() },
         ..Default::default()
     }))

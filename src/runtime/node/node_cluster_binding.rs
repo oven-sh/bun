@@ -231,7 +231,7 @@ pub fn on_internal_message_primary(global: &JSGlobalObject, frame: &CallFrame) -
 
 pub fn handle_internal_message_primary(
     global: &JSGlobalObject,
-    subprocess: &mut Subprocess<'_>,
+    subprocess: &Subprocess<'_>,
     message: JSValue,
 ) -> JsResult<()> {
     let Some(ipc_data) = subprocess.ipc() else {

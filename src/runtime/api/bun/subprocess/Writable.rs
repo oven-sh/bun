@@ -86,9 +86,9 @@ impl<'a> Writable<'a> {
     // both. In Rust, deriving the parent from `&mut self` is out-of-provenance
     // (the `&mut` only covers the `stdin` field). Instead the `SignalHandler`
     // impl is on `Subprocess` and hands us the parent directly; field accesses
-    // here are disjoint and sequential so a plain `&mut Subprocess` suffices.
-    pub fn on_close(process: &mut Subprocess<'a>, _: Option<bun_sys::Error>) {
-        if let Some(this_jsvalue) = process.this_value.try_get() {
+    // here are disjoint and sequential so a plain `&Subprocess` suffices.
+    pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
+        if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -102,7 +102,7 @@ impl<'a> Writable<'a> {
         // a just-deref'd `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
-        match core::mem::replace(&mut process.stdin, Writable::Ignore) {
+        match process.stdin.replace(Writable::Ignore) {
             Writable::Buffer(buffer) => {
                 buffer.deref();
             }
@@ -165,16 +165,18 @@ impl<'a> Writable<'a> {
                             }
                         }
                         pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
-                        subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
+                        subprocess.weak_file_sink_stdin_ptr.set(NonNull::new(pipe_ptr));
                         subprocess.ref_();
-                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                        subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
+                        subprocess.update_flags(|f| {
+                            f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
+                            f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
+                        });
 
                         if let Stdio::ReadableStream(rs) = stdio {
                             let assign_result = pipe.assign_to_stream(rs, global);
                             if let Some(err_val) = assign_result.to_error() {
-                                subprocess.weak_file_sink_stdin_ptr = None;
-                                subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, false);
+                                subprocess.weak_file_sink_stdin_ptr.set(None);
+                                subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
                                 // SAFETY: pipe is live; deref may free it.
                                 unsafe { FileSink::deref(pipe_ptr) };
                                 subprocess.deref();
@@ -271,16 +273,18 @@ impl<'a> Writable<'a> {
                     }
                 });
 
-                subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
+                subprocess.weak_file_sink_stdin_ptr.set(NonNull::new(pipe_ptr));
                 subprocess.ref_();
-                subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
+                subprocess.update_flags(|f| {
+                    f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
+                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
+                });
 
                 if let Stdio::ReadableStream(rs) = stdio {
                     let assign_result = pipe.assign_to_stream(rs, global);
                     if let Some(err_val) = assign_result.to_error() {
-                        subprocess.weak_file_sink_stdin_ptr = None;
-                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, false);
+                        subprocess.weak_file_sink_stdin_ptr.set(None);
+                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
                         // SAFETY: pipe is live; deref may free it.
                         unsafe { FileSink::deref(pipe_ptr) };
                         subprocess.deref();
@@ -339,26 +343,26 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(subprocess: &mut Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
+    pub fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
         // PORT NOTE: reshaped for borrowck — Zig passed `*Writable` (== `&stdin`)
         // and `*Subprocess` separately, which alias. Take only the parent and
         // project `stdin` here so no two `&mut` overlap at any point.
-        match core::mem::replace(&mut subprocess.stdin, Writable::Ignore) {
+        match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Fd(fd) => {
-                subprocess.stdin = Writable::Fd(fd);
+                subprocess.stdin.set(Writable::Fd(fd));
                 fd.to_js(global_this)
             }
             Writable::Memfd(fd) => {
-                subprocess.stdin = Writable::Memfd(fd);
+                subprocess.stdin.set(Writable::Memfd(fd));
                 JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
             Writable::Buffer(buffer) => {
-                subprocess.stdin = Writable::Buffer(buffer);
+                subprocess.stdin.set(Writable::Buffer(buffer));
                 JSValue::UNDEFINED
             }
             Writable::Inherit => {
-                subprocess.stdin = Writable::Inherit;
+                subprocess.stdin.set(Writable::Inherit);
                 JSValue::UNDEFINED
             }
             Writable::Pipe(pipe_nn) => {
@@ -367,7 +371,7 @@ impl<'a> Writable<'a> {
                 // allocation from `*subprocess` so the borrows are disjoint.
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
                 if subprocess.has_exited()
-                    && !subprocess.flags.contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
+                    && !subprocess.flags.get().contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
                     // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
@@ -380,24 +384,24 @@ impl<'a> Writable<'a> {
                     pipe.on_attached_process_exit(&subprocess.process().status);
                     pipe.to_js(global_this)
                 } else {
-                    subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                    subprocess.weak_file_sink_stdin_ptr = Some(pipe_nn);
-                    if !subprocess.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED) {
+                    subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
+                    subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
+                    if !subprocess.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED) {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
                         subprocess.ref_();
-                        subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
+                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
                     if pipe.signal.get().ptr
-                        == NonNull::new(std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>())
+                        == NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>())
                     {
                         pipe.signal.with_mut(|s| s.clear());
                     }
                     pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
-                            std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>(),
+                            subprocess.as_ctx_ptr().cast::<c_void>(),
                         )),
                     )
                 }
@@ -409,8 +413,8 @@ impl<'a> Writable<'a> {
     // `@fieldParentPtr("stdin", this)` is replaced by the caller passing the
     // parent; deriving it from `&mut self` on `Writable` would be
     // out-of-provenance.
-    pub fn finalize(subprocess: &mut Subprocess<'a>) {
-        if let Some(this_jsvalue) = subprocess.this_value.try_get() {
+    pub fn finalize(subprocess: &Subprocess<'a>) {
+        if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -418,9 +422,8 @@ impl<'a> Writable<'a> {
 
         // The signal back-pointer is the `*mut Subprocess` (see SignalHandler
         // impl below / `to_js`); compare against that, not the `stdin` address.
-        let parent_ptr =
-            NonNull::new(std::ptr::from_mut::<Subprocess<'a>>(subprocess).cast::<c_void>());
-        match core::mem::replace(&mut subprocess.stdin, Writable::Ignore) {
+        let parent_ptr = NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>());
+        match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 // SAFETY: pipe is live for the duration of the variant.
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
@@ -443,10 +446,10 @@ impl<'a> Writable<'a> {
             }
             Writable::Ignore => {}
             Writable::Fd(fd) => {
-                subprocess.stdin = Writable::Fd(fd);
+                subprocess.stdin.set(Writable::Fd(fd));
             }
             Writable::Inherit => {
-                subprocess.stdin = Writable::Inherit;
+                subprocess.stdin.set(Writable::Inherit);
             }
         }
     }

@@ -20,7 +20,7 @@ pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
 use crate::jsc::HTTPHeaderName;
-use bun_jsc::StringJsc as _;
+use bun_jsc::{JsCell, StringJsc as _};
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
 use bun_str::{WTFStringImpl, WTFStringImplExt as _};
 use bun_jsc::ZigStringJsc as _;
@@ -56,49 +56,70 @@ bun_core::declare_scope!(BodyValueBufferer, visible);
 // TODO(port): `bun.JSTerminated!T` is a narrower error set than `bun.JSError`; using JsResult for now.
 type JsTerminated<T> = jsc::JsResult<T>;
 
+// R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
+// `Response` (and aliased via `HiveRef` in `Request`). Every BodyMixin host
+// fn takes `&self` and projects `&mut Value` through this `JsCell`; the
+// `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
+// host call cannot stack two `&mut` to the same field.
 #[repr(C)]
 pub struct Body {
-    pub value: Value, // = Value::Empty,
+    pub value: JsCell<Value>, // = Value::Empty,
 }
 
 impl Default for Body {
-    fn default() -> Self { Self { value: Value::Empty } }
+    fn default() -> Self { Self { value: JsCell::new(Value::Empty) } }
 }
 
 impl Body {
+    #[inline]
+    pub fn new(value: Value) -> Self {
+        Self { value: JsCell::new(value) }
+    }
+
+    /// R-2 interior-mutability projection: `&self` → `&mut Value`.
+    /// Single-JS-thread invariant (see `JsCell`) makes this sound; keep the
+    /// returned borrow short and do not hold it across a call that re-enters
+    /// JS and may touch this same body.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn value_mut(&self) -> &mut Value {
+        // SAFETY: single-JS-thread invariant — `Body` lives inside a
+        // `Request`/`Response` JSC heap cell; concurrent access is impossible
+        // and re-entrant host fns each form a fresh short-lived borrow.
+        unsafe { self.value.get_mut() }
+    }
+
     // TODO(b2-blocked): Blob::get_size_for_bindings (gated in Blob.rs `_jsc_gated`).
-    
-    pub fn len(&mut self) -> blob::SizeType {
-        self.value.size()
+
+    pub fn len(&self) -> blob::SizeType {
+        self.value_mut().size()
     }
 
     pub fn slice(&self) -> &[u8] {
-        self.value.slice()
+        self.value.get().slice()
     }
 
     // TODO(b2-blocked): Blob::init(Vec<u8>, &JSGlobalObject) (gated in Blob.rs `_jsc_gated`).
-    
-    pub fn use_(&mut self) -> Blob {
-        self.value.use_()
+
+    pub fn use_(&self) -> Blob {
+        self.value_mut().use_()
     }
 
     // TODO(b2-blocked): Value::clone (gated below).
-    
-    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Body> {
-        Ok(Body {
-            value: self.value.clone(global_this)?,
-        })
+
+    pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Body> {
+        Ok(Body::new(self.value_mut().clone(global_this)?))
     }
 
-    
+
     pub fn clone_with_readable_stream(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Body> {
-        Ok(Body {
-            value: self.value.clone_with_readable_stream(global_this, readable)?,
-        })
+        Ok(Body::new(
+            self.value_mut().clone_with_readable_stream(global_this, readable)?,
+        ))
     }
 }
 
@@ -107,7 +128,7 @@ impl Body {
 
 impl Body {
     pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
+        &self,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -124,12 +145,12 @@ impl Body {
             .print_as::<W, ENABLE_ANSI_COLORS>(
                 jsc::FormatAs::Boolean,
                 writer,
-                JSValue::from(matches!(self.value, Value::Used)),
+                JSValue::from(matches!(self.value.get(), Value::Used)),
                 jsc::JSType::BooleanObject,
             )
             .map_err(|_| core::fmt::Error)?;
 
-        match &mut self.value {
+        match self.value_mut() {
             Value::Blob(blob) => {
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
@@ -178,8 +199,8 @@ impl Body {
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl Body {
-    pub fn reset(&mut self) {
-        self.value.reset();
+    pub fn reset(&self) {
+        self.value_mut().reset();
     }
 }
 
@@ -664,11 +685,13 @@ impl Value {
         }
         if let Some(req) = value.as_::<crate::webcore::Request>() {
             // SAFETY: `as_` returns a live JSC-owned `*mut Request`.
-            return Some(std::ptr::from_mut::<Value>(unsafe { &mut *req }.get_body_value()));
+            // R-2: deref as shared (`&*const`) — `get_body_value` takes `&self`.
+            return Some(std::ptr::from_mut::<Value>(unsafe { &*req }.get_body_value()));
         }
         if let Some(res) = value.as_::<crate::webcore::Response>() {
             // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-            return Some(std::ptr::from_mut::<Value>(unsafe { &mut *res }.get_body_value()));
+            // R-2: deref as shared (`&*const`) — `get_body_value` takes `&self`.
+            return Some(std::ptr::from_mut::<Value>(unsafe { &*res }.get_body_value()));
         }
         None
     }
@@ -1626,13 +1649,11 @@ type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
-    let mut body = Body { value: Value::Null };
-
-    body.value = Value::from_js(global_this, value)?;
-    if let Value::Blob(b) = &body.value {
+    let body_value = Value::from_js(global_this, value)?;
+    if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
     }
-    Ok(body)
+    Ok(Body::new(body_value))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1642,21 +1663,28 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// `pub fn Mixin(comptime Type: type) type` → trait with provided methods.
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
+///
+/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
+/// codegen shim still emits `this: &mut T` until Phase 1 lands — `&mut T`
+/// auto-derefs to `&T` so the impls below compile against either.
 pub trait BodyMixin: BodyOwnerJs + Sized {
-    fn get_body_value(&mut self) -> &mut Value;
+    /// R-2 interior-mutability boundary: implementors project `&mut Value`
+    /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);
+    /// see [`Body::value_mut`]. Single-JS-thread invariant — keep the borrow
+    /// short and do not hold it across a call that re-enters JS.
+    #[allow(clippy::mut_from_ref)]
+    fn get_body_value(&self) -> &mut Value;
     /// Zig: `Type.getFetchHeaders(this) -> ?*FetchHeaders`. `FetchHeaders` is an
     /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
-    fn get_form_data_encoding(&mut self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+    fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     /// Default: None. Override to enable the `@hasDecl(Type, "getBodyReadableStream")` paths.
     /// TODO(port): Zig used `@hasDecl` to gate this at comptime; here it's a default method.
-    /// Takes `&mut self` so Response/Request (whose inherent impls mutate `js_ref`/body
-    /// state) can override it; the trait-default callers below all hold `&mut self`.
     fn get_body_readable_stream(
-        &mut self,
+        &self,
         _global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         None
@@ -1664,7 +1692,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_text(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1702,7 +1730,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    fn get_body(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let body = self.get_body_value();
 
         if matches!(body, Value::Used) {
@@ -1717,8 +1745,8 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    fn get_body_used(&mut self, global_object: &JSGlobalObject) -> JSValue {
-        // PORT NOTE: reshaped for borrowck — `get_body_readable_stream` needs `&mut self`,
+    fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
+        // PORT NOTE: reshaped for borrowck — `get_body_readable_stream` needs `&self`,
         // so we can't hold a `match` borrow on `get_body_value()` across it.
         let used = match self.get_body_value() {
             Value::Used => true,
@@ -1741,7 +1769,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_json(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1787,7 +1815,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_array_buffer(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1835,7 +1863,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_bytes(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1882,7 +1910,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_form_data(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1965,7 +1993,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_blob(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1973,7 +2001,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_blob_with_this_value(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
@@ -2070,7 +2098,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
-    fn get_blob_without_call_frame(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn get_blob_without_call_frame(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.get_blob_with_this_value(global_object, JSValue::ZERO)
     }
 }

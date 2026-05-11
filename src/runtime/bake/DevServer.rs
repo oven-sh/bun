@@ -5069,10 +5069,7 @@ impl DevServer {
                         headers: Some(headers_ref),
                         ..Default::default()
                     },
-                    crate::webcore::Body {
-                        value: crate::webcore::body::Value::Blob(any_blob.to_blob(global)),
-                        ..Default::default()
-                    },
+                    crate::webcore::Body::new(crate::webcore::body::Value::Blob(any_blob.to_blob(global))),
                     BunString::empty(),
                     false,
                 );

@@ -143,13 +143,13 @@ pub fn do_send(
             log!("got listener");
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
             // wrapper holds it alive for the call.
-            match unsafe { &(*listener).listener } {
+            match unsafe { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `*socket_uws` is a live non-null `*mut ListenSocket`
+                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut **socket_uws }.get_socket().get_fd();
+                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
                     zig_handle = Some(Handle::init(fd, handle));
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}

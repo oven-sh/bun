@@ -224,7 +224,7 @@ impl Request {
 
 impl BodyMixin for Request {
     #[inline]
-    fn get_body_value(&mut self) -> &mut BodyValue {
+    fn get_body_value(&self) -> &mut BodyValue {
         Request::get_body_value(self)
     }
     #[inline]
@@ -239,13 +239,13 @@ impl BodyMixin for Request {
     }
     #[inline]
     fn get_form_data_encoding(
-        &mut self,
+        &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Request::get_form_data_encoding(self)
     }
     #[inline]
     fn get_body_readable_stream(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         Request::get_body_readable_stream(self, global_object)
@@ -258,7 +258,8 @@ impl Request {
     /// Inherent shim until the real `BodyMixin` (body::_jsc_gated) is un-gated
     /// and `impl BodyMixin for Request` supplies this as a trait method.
     #[inline]
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_body_value(&self) -> &mut BodyValue {
         self.body_value_mut()
     }
 
@@ -272,12 +273,16 @@ impl Request {
     }
 
     /// Zig: `&this.#body.value`.
+    ///
+    /// R-2: takes `&self` and projects `&mut` through the raw `NonNull`
+    /// (the hive slot is heap-allocated; not covered by `&self`'s `noalias`).
+    /// Single-JS-thread invariant — keep the borrow short.
     #[inline]
-    pub(crate) fn body_value_mut(&mut self) -> &mut BodyValue {
-        // SAFETY: see `body_value`. `&mut self` guarantees exclusive access on
-        // the Rust side; the aliasing `RequestContext.request_body` pointer is
-        // only dereferenced while no `&mut Request` is live (single-threaded
-        // event-loop sequencing).
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
+        // SAFETY: see `body_value`. The aliasing `RequestContext.request_body`
+        // pointer is only dereferenced while no `&mut BodyValue` derived here
+        // is live (single-threaded event-loop sequencing).
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
@@ -393,7 +398,7 @@ impl Request {
         Ok(None)
     }
 
-    pub fn get_content_type(&mut self) -> JsResult<Option<bun_str::ZigStringSlice>> {
+    pub fn get_content_type(&self) -> JsResult<Option<bun_str::ZigStringSlice>> {
         if let Some(req) = self.request_context.get_request() {
             // SAFETY: `req` points to a live uWS HttpRequest for the duration
             // of the request handler; header() returns a view into its buffer.
@@ -403,8 +408,11 @@ impl Request {
             }
         }
 
-        if let Some(headers) = self.headers.as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
+        if let Some(headers) = self.headers.as_ref() {
+            // SAFETY: `HeadersRef` wraps a live C++ `FetchHeaders` handle;
+            // `fast_get` only writes a stack out-param via FFI. R-2: route via
+            // raw `*mut` from `as_ptr()` rather than `&mut self.headers`.
+            if let Some(value) = unsafe { (*headers.as_ptr()).fast_get(HTTPHeaderName::ContentType) } {
                 return Ok(Some(value.to_slice()));
             }
         }
@@ -504,7 +512,7 @@ impl Request {
     }
 
     pub fn get_form_data_encoding(
-        &mut self,
+        &self,
     ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
@@ -555,7 +563,7 @@ impl Request {
 impl Request {
     #[inline]
     pub fn get_body_readable_stream(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref.try_get() {

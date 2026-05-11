@@ -1574,7 +1574,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let l: &Listener = unsafe {
             &*bun_core::from_field_ptr!(Listener, handlers, handlers)
         };
-        l.strong_self.get().unwrap_or(JSValue::UNDEFINED)
+        l.strong_self.get().get().unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(getter)]

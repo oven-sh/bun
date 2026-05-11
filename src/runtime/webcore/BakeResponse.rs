@@ -200,7 +200,7 @@ pub fn construct_render(
             },
             ..Default::default()
         },
-        crate::webcore::Body { value: crate::webcore::BodyValue::Empty },
+        crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
         BunString::empty(),
         false,
     ));

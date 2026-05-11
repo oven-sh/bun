@@ -1,5 +1,6 @@
 //! This is the code for the object returned by Bun.listen().
 
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -7,7 +8,7 @@ use core::ptr::NonNull;
 use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
@@ -64,17 +65,21 @@ fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
 // `to_js(self)` impl does would invalidate that link).
 use crate::generated_classes::js_Listener;
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim still emits `this: &mut Listener` until Phase 1 lands — `&mut T`
+// auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
-    pub handlers: Handlers,
-    pub listener: ListenerType,
+    pub handlers: JsCell<Handlers>,
+    pub listener: Cell<ListenerType>,
 
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsCell<KeepAlive>,
     pub connection: UnixOrHost,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
-    pub group: uws::SocketGroup,
+    pub group: JsCell<uws::SocketGroup>,
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
@@ -82,10 +87,11 @@ pub struct Listener {
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
 
-    pub strong_data: Strong,
-    pub strong_self: Strong,
+    pub strong_data: JsCell<Strong>,
+    pub strong_self: JsCell<Strong>,
 }
 
+#[derive(Clone, Copy)]
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
@@ -108,13 +114,13 @@ impl Listener {
     #[bun_jsc::host_fn(getter)]
     pub fn get_data(this: &Self, _global: &JSGlobalObject) -> JSValue {
         log!("getData()");
-        this.strong_data.get().unwrap_or(JSValue::UNDEFINED)
+        this.strong_data.get().get().unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(this: &mut Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub fn set_data(this: &Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         log!("setData()");
-        this.strong_data.set(global, value);
+        this.strong_data.with_mut(|s| s.set(global, value));
         Ok(true)
     }
 }
@@ -142,11 +148,12 @@ impl UnixOrHost {
 
 impl Listener {
     #[bun_jsc::host_fn(method)]
-    pub fn reload(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = frame.arguments_old::<1>();
 
         if args.len < 1
-            || (matches!(this.listener, ListenerType::None) && this.handlers.active_connections == 0)
+            || (matches!(this.listener.get(), ListenerType::None)
+                && this.handlers.get().active_connections == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
@@ -161,15 +168,17 @@ impl Listener {
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
 
-        let handlers = Handlers::from_js(global, socket_obj, this.handlers.mode == SocketMode::Server)?;
+        let handlers = Handlers::from_js(global, socket_obj, this.handlers.get().mode == SocketMode::Server)?;
         // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
         // `markActive`. Without this, closing any of them after reload would underflow the
         // counter (panic in safe builds, wrap in release).
-        let active_connections = this.handlers.active_connections;
         // PORT NOTE: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
-        this.handlers = handlers;
-        this.handlers.active_connections = active_connections;
+        this.handlers.with_mut(|h| {
+            let active_connections = h.active_connections;
+            *h = handlers;
+            h.active_connections = active_connections;
+        });
 
         Ok(JSValue::UNDEFINED)
     }
@@ -230,21 +239,21 @@ impl Listener {
                 core::mem::forget(socket_config);
 
                 let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
-                    handlers: handlers_moved,
+                    handlers: JsCell::new(handlers_moved),
                     connection,
                     ssl: ssl_enabled,
-                    listener: ListenerType::None,
+                    listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
-                    poll_ref: KeepAlive::init(),
-                    group: uws::SocketGroup::default(),
+                    poll_ref: JsCell::new(KeepAlive::init()),
+                    group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: None,
-                    strong_data: Strong::empty(),
-                    strong_self: Strong::empty(),
+                    strong_data: JsCell::new(Strong::empty()),
+                    strong_self: JsCell::new(Strong::empty()),
                 }));
                 // SAFETY: just allocated, non-null, exclusive
                 let this_ref = unsafe { &mut *this };
                 if !default_data.is_empty() {
-                    this_ref.strong_data = Strong::create(default_data, global);
+                    this_ref.strong_data.set(Strong::create(default_data, global));
                 }
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
@@ -259,9 +268,9 @@ impl Listener {
                     this,
                 ) {
                     Ok(named_pipe) => {
-                        this_ref.listener = ListenerType::NamedPipe(
+                        this_ref.listener.set(ListenerType::NamedPipe(
                             NonNull::new(named_pipe).expect("listen returns a non-null heap pointer"),
-                        );
+                        ));
                     }
                     Err(_) => {
                         // On error, clean up everything `this` owns *except* `this.handlers`: the outer
@@ -271,7 +280,7 @@ impl Listener {
                         // PORT NOTE: in this port `handlers` was *moved* (not copied), so we
                         // recover it from the box before freeing and let it drop here for the
                         // same single-unprotect effect.
-                        this_ref.strong_data.deinit();
+                        this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
                         drop(unsafe { bun_core::heap::take(this) });
@@ -285,8 +294,8 @@ impl Listener {
                 // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
                 // transfers to the C++ wrapper.
                 let this_value = js_Listener::to_js(this, global);
-                this_ref.strong_self.set(global, this_value);
-                this_ref.poll_ref.ref_(vm_event_loop_ctx());
+                this_ref.strong_self.with_mut(|s| s.set(global, this_value));
+                this_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
                 return Ok(this_value);
             }
         }
@@ -315,29 +324,29 @@ impl Listener {
         core::mem::forget(socket_config);
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
-            handlers: handlers_moved,
+            handlers: JsCell::new(handlers_moved),
             // Placeholder until `this_ref.connection = connection` below; Zig used `undefined`.
             // Cannot `mem::zeroed()` a Rust enum (UB).
             connection: UnixOrHost::Fd(Fd::invalid()),
             ssl: ssl_enabled,
             protos: protos_taken,
-            listener: ListenerType::None,
-            poll_ref: KeepAlive::init(),
-            group: uws::SocketGroup::default(),
+            listener: Cell::new(ListenerType::None),
+            poll_ref: JsCell::new(KeepAlive::init()),
+            group: JsCell::new(uws::SocketGroup::default()),
             secure_ctx: None,
-            strong_data: Strong::empty(),
-            strong_self: Strong::empty(),
+            strong_data: JsCell::new(Strong::empty()),
+            strong_self: JsCell::new(Strong::empty()),
         }));
         // SAFETY: just allocated, non-null, exclusive
         let this_ref = unsafe { &mut *this };
-        this_ref.group.init(uws::Loop::get(), None, this.cast::<c_void>());
+        this_ref.group.with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
         // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
         // this.group → head_sockets → us_socket_t` once the only pointer into the
         // group lives inside a mimalloc page. Registering the embedded group as a
         // root region restores reachability for the accepted sockets' allocations.
         // Paired unregister in `deinit()` (and the errdefer below).
         bun_core::asan::register_root_region(
-            (&raw const this_ref.group).cast::<c_void>(),
+            this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // errdefer: on any early return below, tear down the half-built Listener.
@@ -351,11 +360,11 @@ impl Listener {
             }
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
-                (&raw const this_ref.group).cast::<c_void>(),
+                this_ref.group.as_ptr().cast::<c_void>(),
                 size_of::<uws::SocketGroup>(),
             );
             // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(&raw mut this_ref.group) };
+            unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
             // SAFETY: reclaim the Box we leaked via into_raw
             drop(unsafe { bun_core::heap::take(this) });
         });
@@ -398,7 +407,7 @@ impl Listener {
                 let mut hostz = host.to_vec();
                 hostz.push(0);
                 let host_cstr = bun_core::ZStr::from_slice_with_nul(&hostz).as_cstr();
-                let ls = this_ref.group.listen(
+                let ls = this_ref.group.with_mut(|g| g.listen(
                     kind,
                     secure_ctx_ptr,
                     Some(host_cstr),
@@ -406,21 +415,21 @@ impl Listener {
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
                     &mut errno,
-                );
+                ));
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port()).expect("int cast");
                 }
                 ls
             }
-            UnixOrHost::Unix(u) => this_ref.group.listen_unix(
+            UnixOrHost::Unix(u) => this_ref.group.with_mut(|g| g.listen_unix(
                 kind,
                 secure_ctx_ptr,
                 u,
                 socket_flags,
                 size_of::<*mut c_void>() as c_int,
                 &mut errno,
-            ),
+            )),
             UnixOrHost::Fd(fd) => {
                 let err = jsc::SystemError {
                     errno: bun_sys::SystemErrno::EINVAL as c_int,
@@ -468,9 +477,9 @@ impl Listener {
         }
 
         this_ref.connection = connection;
-        this_ref.listener = ListenerType::Uws(listen_socket);
+        this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
-            this_ref.strong_data = Strong::create(default_data, global);
+            this_ref.strong_data.set(Strong::create(default_data, global));
         }
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
@@ -496,8 +505,8 @@ impl Listener {
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
         let this_value = js_Listener::to_js(this, global);
-        this_ref.strong_self.set(global, this_value);
-        this_ref.poll_ref.ref_(vm_event_loop_ctx());
+        this_ref.strong_self.with_mut(|s| s.set(global, this_value));
+        this_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
 
         Ok(this_value)
     }
@@ -507,12 +516,12 @@ impl Listener {
         Err(global.throw(format_args!("Cannot construct Listener")))
     }
 
-    pub fn on_name_pipe_created<const SSL: bool>(listener: &mut Listener) -> *mut NewSocket<SSL> {
+    pub fn on_name_pipe_created<const SSL: bool>(listener: &Listener) -> *mut NewSocket<SSL> {
         debug_assert!(SSL == listener.ssl);
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(&raw mut listener.handlers),
+            handlers: NonNull::new(listener.handlers.as_ptr()),
             socket: uws::NewSocketHandler::<SSL>::DETACHED,
             protos: listener.protos.clone(),
             // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
@@ -531,8 +540,8 @@ impl Listener {
         });
         // SAFETY: NewSocket::new returns a valid heap pointer.
         unsafe { (*this_socket).ref_() };
-        if let Some(default_data) = listener.strong_data.get() {
-            let global = listener.handlers.global_object;
+        if let Some(default_data) = listener.strong_data.get().get() {
+            let global = listener.handlers.get().global_object;
             NewSocket::<SSL>::data_set_cached(
                 // SAFETY: this_socket just allocated above.
                 unsafe { (*this_socket).get_this_value(&global) },
@@ -548,7 +557,7 @@ impl Listener {
     /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
     /// straight to `BunSocket` (the listener arm only fires once per accept).
     pub fn on_create<const SSL: bool>(
-        listener: &mut Listener,
+        listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
     ) -> *mut NewSocket<SSL> {
         jsc::mark_binding!();
@@ -558,7 +567,7 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(&raw mut listener.handlers),
+            handlers: NonNull::new(listener.handlers.as_ptr()),
             socket,
             protos: listener.protos.clone(),
             // TODO(port): protos borrow semantics — Zig shared the listener's slice; here we clone.
@@ -576,9 +585,9 @@ impl Listener {
         });
         // SAFETY: NewSocket::new returns a valid heap pointer
         unsafe { (*this_socket).ref_() };
-        let default_data = listener.strong_data.get();
+        let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
-            let global = listener.handlers.global_object;
+            let global = listener.handlers.get().global_object;
             NewSocket::<SSL>::data_set_cached(
                 // SAFETY: this_socket just allocated above.
                 unsafe { (*this_socket).get_this_value(&global) },
@@ -603,7 +612,7 @@ impl Listener {
     }
 
     pub fn add_server_name(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         hostname: JSValue,
         tls: JSValue,
@@ -624,7 +633,7 @@ impl Listener {
         server_name_buf.push(0);
         let server_name = bun_core::ZStr::from_slice_with_nul(&server_name_buf).as_cstr();
 
-        let ListenerType::Uws(ls) = this.listener else {
+        let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -688,13 +697,13 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn dispose(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn dispose(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Self::do_stop(this, true);
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn stop(this: &mut Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         log!("close");
 
@@ -710,11 +719,11 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn do_stop(this: &mut Self, force_close: bool) {
-        if matches!(this.listener, ListenerType::None) {
+    fn do_stop(this: &Self, force_close: bool) {
+        if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
-        let listener = core::mem::replace(&mut this.listener, ListenerType::None);
+        let listener = this.listener.replace(ListenerType::None);
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -722,12 +731,12 @@ impl Listener {
 
         // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
 
-        if this.handlers.active_connections == 0 {
-            this.poll_ref.unref(vm_event_loop_ctx());
-            this.strong_self.clear_without_deallocation();
-            this.strong_data.clear_without_deallocation();
+        if this.handlers.get().active_connections == 0 {
+            this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+            this.strong_self.with_mut(|s| s.clear_without_deallocation());
+            this.strong_data.with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
-            this.group.close_all();
+            this.group.with_mut(|g| g.close_all());
         }
 
         match listener {
@@ -745,12 +754,12 @@ impl Listener {
         }
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         log!("finalize");
-        let listener = core::mem::replace(&mut self.listener, ListenerType::None);
+        let listener = self.listener.replace(ListenerType::None);
         match listener {
             ListenerType::Uws(socket) => {
-                Self::unlink_unix_socket_path(&mut self);
+                Self::unlink_unix_socket_path(&self);
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }
@@ -787,23 +796,23 @@ impl Listener {
         log!("deinit");
         // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
         let this_ref = unsafe { &mut *this };
-        this_ref.strong_self.deinit();
-        this_ref.strong_data.deinit();
-        this_ref.poll_ref.unref(vm_event_loop_ctx());
-        debug_assert!(matches!(this_ref.listener, ListenerType::None));
+        this_ref.strong_self.with_mut(|s| s.deinit());
+        this_ref.strong_data.with_mut(|s| s.deinit());
+        this_ref.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+        debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
         // Any still-open accepted sockets hold a `&listener.handlers` pointer, so
         // we cannot free `this` while they're alive. Force-close them; their
         // onClose paths will markInactive against handlers we drop right after.
-        if this_ref.handlers.active_connections > 0 {
-            this_ref.group.close_all();
+        if this_ref.handlers.get().active_connections > 0 {
+            this_ref.group.with_mut(|g| g.close_all());
         }
         bun_core::asan::unregister_root_region(
-            (&raw const this_ref.group).cast::<c_void>(),
+            this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(&raw mut this_ref.group) };
+        unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
         if let Some(ctx) = this_ref.secure_ctx {
             // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
@@ -817,7 +826,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections as f64)
+        JSValue::js_number(this.handlers.get().active_connections as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -846,10 +855,10 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        match &this.listener {
+        match this.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let socket = bun_opaque::opaque_deref_mut(*uws_listener).socket::<false>();
+                let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
                 // Zig: `uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned()`.
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
@@ -863,13 +872,13 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn ref_(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let this_value = frame.this();
-        if matches!(this.listener, ListenerType::None) {
+        if matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
         }
-        this.poll_ref.ref_(vm_event_loop_ctx());
-        this.strong_self.set(global, this_value);
+        this.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+        this.strong_self.with_mut(|s| s.set(global, this_value));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -877,15 +886,15 @@ impl Listener {
     /// property). Forward to [`ref_`] so the existing call sites that spell it
     /// with the trailing underscore keep working.
     #[inline]
-    pub fn r#ref(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn r#ref(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         Self::ref_(this, global, frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unref(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(vm_event_loop_ctx());
-        if this.handlers.active_connections == 0 {
-            this.strong_self.clear_without_deallocation();
+    pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+        if this.handlers.get().active_connections == 0 {
+            this.strong_self.with_mut(|s| s.clear_without_deallocation());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -1267,8 +1276,8 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn getsockname(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let ListenerType::Uws(socket) = this.listener else {
+    pub fn getsockname(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let ListenerType::Uws(socket) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -1444,7 +1453,8 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let listener = arguments.ptr[0];
     if let Some(this) = Listener::from_js(listener) {
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
-        return Listener::add_server_name(unsafe { &mut *this }, global, arguments.ptr[1], arguments.ptr[2]);
+        // R-2: deref as shared (`&*`) — `add_server_name` takes `&Self`.
+        return Listener::add_server_name(unsafe { &*this }, global, arguments.ptr[1], arguments.ptr[2]);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
@@ -1520,8 +1530,9 @@ impl WindowsNamedPipeListeningContext {
             // connection dropped or vm is shutting down or we are deiniting/closing
             return;
         }
-        // SAFETY: checked Some above.
-        let listener = unsafe { this_ref.listener.unwrap().as_mut() };
+        // SAFETY: checked Some above. R-2: deref as shared (`as_ref`) —
+        // `on_name_pipe_created` takes `&Listener`.
+        let listener = unsafe { this_ref.listener.unwrap().as_ref() };
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
         let socket: PipeSocketType = if this_ref.ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))

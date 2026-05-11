@@ -152,14 +152,17 @@ impl Handlers {
         self.active_connections -= 1;
         if self.active_connections == 0 {
             if self.mode == SocketMode::Server {
-                // SAFETY: self points to the `handlers` field of a Listener (server mode invariant)
-                let listen_socket: &mut SocketListener = unsafe {
-                    &mut *bun_core::from_field_ptr!(SocketListener, handlers, std::ptr::from_mut::<Handlers>(self))
+                // SAFETY: self points to the `handlers` field of a Listener (server mode invariant).
+                // R-2: `Listener.handlers` is `JsCell<Handlers>` (`#[repr(transparent)]`), so the
+                // field offset equals the inner `Handlers` address; `from_field_ptr!` arithmetic
+                // is unchanged. Deref as shared (`&*`) — celled fields below take `&self`.
+                let listen_socket: &SocketListener = unsafe {
+                    &*bun_core::from_field_ptr!(SocketListener, handlers, std::ptr::from_mut::<Handlers>(self))
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
-                if matches!(listen_socket.listener, ListenerType::None) {
-                    listen_socket.poll_ref.unref(vm_ctx());
-                    listen_socket.strong_self.deinit();
+                if matches!(listen_socket.listener.get(), ListenerType::None) {
+                    listen_socket.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+                    listen_socket.strong_self.with_mut(|s| s.deinit());
                     // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }
             } else {

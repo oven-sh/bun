@@ -239,9 +239,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
             status_text: BunString::create_atom(b"OK").into(),
             ..Default::default()
         },
-        Body {
-            value: BodyValue::Blob(blob),
-        },
+        Body::new(BodyValue::Blob(blob)),
         data_url.url.dupe_ref(),
         false,
     )));
@@ -1502,9 +1500,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 status_code: 200,
                 ..Default::default()
             },
-            Body {
-                value: BodyValue::Blob(blob_to_use),
-            },
+            Body::new(BodyValue::Blob(blob_to_use)),
             url_string.clone(),
             false,
         )));
@@ -2041,9 +2037,7 @@ impl<'a> S3StreamWrapper<'a> {
                         status_code: 200,
                         ..Default::default()
                     },
-                    Body {
-                        value: BodyValue::Empty,
-                    },
+                    Body::new(BodyValue::Empty),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));
@@ -2059,12 +2053,10 @@ impl<'a> S3StreamWrapper<'a> {
                         status_text: BunString::create_atom_if_possible(err.code).into(),
                         ..Default::default()
                     },
-                    Body {
-                        value: BodyValue::InternalBlob(InternalBlob {
+                    Body::new(BodyValue::InternalBlob(InternalBlob {
                             bytes: err.message.to_vec(),
                             was_string: true,
-                        }),
-                    },
+                        })),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));

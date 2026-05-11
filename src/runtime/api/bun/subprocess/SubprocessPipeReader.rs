@@ -234,13 +234,13 @@ impl PipeReader {
     }
 
     pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if let Readable::Pipe(pipe) = &process.stdout {
+        if let Readable::Pipe(pipe) = process.stdout.get() {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stdout;
             }
         }
 
-        if let Readable::Pipe(pipe) = &process.stderr {
+        if let Readable::Pipe(pipe) = process.stderr.get() {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stderr;
             }
@@ -465,12 +465,16 @@ impl BufferedReaderParent for PipeReader {
         let Some(mut process) = (unsafe { (*this).process }) else { return };
         // SAFETY: `process` is the owning Subprocess back-pointer; live until
         // `detach()`/finalize, both of which clear `(*this).process` first.
-        let sp = unsafe { process.as_mut() };
-        let kind = if sp.stdout_maxbuf == Some(maxbuf) {
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
+        let sp = unsafe { process.as_ref() };
+        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
+            let mut mb = sp.stdout_maxbuf.get();
+            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stdout_maxbuf.set(mb);
             bun_io::max_buf::Kind::Stdout
         } else {
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
+            let mut mb = sp.stderr_maxbuf.get();
+            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stderr_maxbuf.set(mb);
             bun_io::max_buf::Kind::Stderr
         };
         sp.on_max_buffer(kind);

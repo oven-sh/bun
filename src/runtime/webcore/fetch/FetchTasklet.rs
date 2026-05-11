@@ -1339,9 +1339,7 @@ impl FetchTasklet {
                 status_text: status_text.into(),
                 ..Default::default()
             },
-            Body {
-                value: self.to_body_value(),
-            },
+            Body::new(self.to_body_value()),
             url,
             redirected,
         )

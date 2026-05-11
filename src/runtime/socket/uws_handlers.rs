@@ -522,7 +522,7 @@ where
         // dispatch tick that accepted the fd sees an open socket — the
         // old `configure({onCreate, onOpen})` path did this in one
         // on_open call.
-        let ns = api::Listener::on_create::<SSL>(unsafe { &mut *listener }, wrap::<SSL>(s));
+        let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, wrap::<SSL>(s));
         // SAFETY: `on_create` returns a freshly-boxed `NewSocket`; the `*mut`
         // `on_*` methods hold no `&mut NewSocket` across re-entrant JS calls.
         swallow(unsafe { api::NewSocket::on_open(ns, wrap::<SSL>(s)) });

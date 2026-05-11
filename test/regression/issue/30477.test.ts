@@ -6,7 +6,7 @@
 // Also covers the `--tsconfig-override` flag path, which attaches the
 // tsconfig to the filesystem root DirInfo — the transpiler must pick
 // it up via `enclosing_tsconfig_json` for the working directory.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // The probe decorator distinguishes legacy vs stage-3 emit at runtime:
@@ -46,11 +46,7 @@ test("experimentalDecorators: true is preserved through an extends chain", async
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
   expect(exitCode).toBe(0);
@@ -75,11 +71,7 @@ test("experimentalDecorators inherited from the base tsconfig still wins", async
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
   expect(exitCode).toBe(0);
@@ -107,11 +99,7 @@ test("--tsconfig-override picks up experimentalDecorators via extends", async ()
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The bogus "Internal error: directory mismatch" warning from the
   // override-fd path must not appear — the resolver now passes an

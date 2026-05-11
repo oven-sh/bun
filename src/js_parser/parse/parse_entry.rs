@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use core::ffi::c_void;
+use core::mem::MaybeUninit;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -36,6 +37,30 @@ pub type TSXImportScanner<'a> = P<'a, true, JsxReact, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
+
+/// Stack-local in-place `P` constructor (Zig: `var p: ParserType = undefined;
+/// try ParserType.init(.., &p)`). `P` is ~5 KiB; the previous
+/// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
+/// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
+/// macro reserves an uninitialized slot on the caller's stack, has `P::init`
+/// write to it directly, and yields a `&mut P` borrow that runs `P::drop` via
+/// `scopeguard` on scope exit — no `Self`-sized moves, no heap.
+///
+/// On `init` `Err`, the slot is still uninitialized so the guard's
+/// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
+/// guard. (`P::init` itself only fails before `out.write` — see its SAFETY.)
+macro_rules! init_p {
+    ($ty:ty; $($arg:expr),* $(,)?) => {{
+        let mut __slot = MaybeUninit::<$ty>::uninit();
+        // SAFETY: fresh `MaybeUninit` is properly aligned + uninitialized;
+        // `P::init` writes a fully-initialized value on `Ok`.
+        unsafe { <$ty>::init(__slot.as_mut_ptr(), $($arg),*) }?;
+        // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
+        // guard's drop closure is the sole owner of the slot from here.
+        scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
+    }};
+}
+
 
 pub struct Parser<'a> {
     pub options: Options<'a>,
@@ -401,14 +426,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut p = Pi::<TS, JX>::init(
-            self.bump,
-            self.log,
-            self.source,
-            self.define,
-            lexer,
-            options,
-        )?;
+        let mut __p = init_p!(Pi<'_, TS, JX>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_, TS, JX> = unsafe { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
@@ -531,16 +552,11 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut p = JavaScriptParser::init(
-            self.bump,
-            self.log,
-            self.source,
-            self.define,
-            lexer,
-            options,
-        )?;
+        let mut __p = init_p!(JavaScriptParser<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
 
-        p.lexer.track_comments = p.options.features.minify_identifiers;
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
         if p.options.features.minify_syntax || p.options.features.inlining {
@@ -626,14 +642,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut p = TSXParser::init(
-            self.bump,
-            self.log,
-            self.source,
-            self.define,
-            lexer,
-            options,
-        )?;
+        let mut __p = init_p!(TSXParser<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
@@ -693,7 +705,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         let mut analyze_tracer = bun_core::perf::trace("JSParser.analyze");
-        callback(context, &mut p, parts.as_mut_slice())?;
+        callback(context, p, parts.as_mut_slice())?;
         analyze_tracer.end();
         Ok(())
     }
@@ -720,14 +732,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut p = P::<TS, JX, false>::init(
-            bump,
-            log,
-            source,
-            define,
-            lexer,
-            options,
-        )?;
+        let mut __p = init_p!(P<'_, TS, JX, false>;
+            bump, log, source, define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut P<'_, TS, JX, false> = unsafe { __p.assume_init_mut() };
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);

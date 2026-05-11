@@ -7696,15 +7696,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
-    pub fn init(
+    /// Construct a `P` in place at `out` (matching Zig's `init(..., this: *P) !void`).
+    ///
+    /// PERF(port): the previous shape returned `Result<Self, _>` by value. `P`
+    /// is ~5 KiB; the by-value return forced a stack temp inside `init` (5176-B
+    /// frame, ASM-verified) plus a move at the caller's `?` (`_scan_imports`
+    /// 14168-B frame, 5× `memcpy`). Zig's `var p: P = undefined; try P.init(..,
+    /// &p)` writes the struct exactly once at its final address. This restores
+    /// that: every pre-computable post-init mutation is hoisted above the
+    /// single `out.write(Self { .. })` so there is no stack temporary `Self`
+    /// to relocate.
+    ///
+    /// SAFETY: `out` must point to writable, properly-aligned, uninitialized
+    /// storage for `Self`. On `Ok(())`, `*out` is fully initialized and the
+    /// caller owns dropping it; on `Err`, `*out` is left untouched.
+    pub unsafe fn init(
+        out: *mut Self,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source,
         define: &'a Define,
-        lexer: js_lexer::Lexer<'a>,
-        opts: ParserOptions<'a>,
-    ) -> Result<Self, bun_core::Error> {
-        // PORT NOTE: out-param constructor reshaped to return Self.
+        mut lexer: js_lexer::Lexer<'a>,
+        mut opts: ParserOptions<'a>,
+    ) -> Result<(), bun_core::Error> {
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
         let scope: *mut Scope = arena.alloc(Scope {
             members: Default::default(),
@@ -7723,7 +7737,52 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let commonjs_named_exports_deoptimized =
             if opts.bundle { opts.output_format == options::Format::Cjs } else { true };
 
-        let mut this = Self {
+        // ─── Hoisted post-init mutations (were `this.* = ...` after the
+        // literal in the by-value-return shape; now precomputed so the
+        // literal below is the *only* write to `*out`). ───
+        lexer.track_comments = opts.features.minify_identifiers;
+
+        if !TYPESCRIPT {
+            // This is so it doesn't impact runtime transpiler caching when not in use
+            opts.features.emit_decorator_metadata = false;
+        }
+
+        let unwrap_all_requires = 'brk: {
+            if opts.bundle && opts.output_format != options::Format::Cjs {
+                // Zig: `source.path.packageName()` — `bun_paths::fs::Path<'static>` is the
+                // crate-local minimal stub (no `pretty`, no `package_name()`),
+                // so reuse the free `path_package_name` body via a borrowed
+                // `bun_paths::fs::Path` view over the same `text`. `pretty`
+                // is irrelevant once `node_modules/` is found in `text`; when
+                // it isn't, the result won't match any `unwrap_commonjs_packages`
+                // entry anyway. // TODO(b2-blocked): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
+                let path_view = fs::Path { text: source.path.text, pretty: source.path.text, ..Default::default() };
+                if let Some(pkg) = path_package_name(&path_view) {
+                    if opts.features.should_unwrap_require(pkg) {
+                        if pkg == b"react" || pkg == b"react-dom" {
+                            let version = opts.package_version;
+                            if version.len() > 2
+                                && (version[0] == b'0' || (version[0] == b'1' && version[1] < b'8'))
+                            {
+                                break 'brk false;
+                            }
+                        }
+                        break 'brk true;
+                    }
+                }
+            }
+            false
+        };
+
+        let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
+        if opts.features.top_level_await || SCAN_ONLY {
+            fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
+            fn_or_arrow_data_parse.is_top_level = true;
+        }
+
+        // SAFETY: caller contract on `out` (see fn doc). Single placement
+        // write — no separate stack temp for `Self`.
+        unsafe { out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
@@ -7778,7 +7837,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
-            fn_or_arrow_data_parse: FnOrArrowDataParse::default(),
+            fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),
             allocated_names: BumpVec::new_in(arena),
@@ -7813,7 +7872,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             declared_symbols_for_reuse: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
-            unwrap_all_requires: false,
+            unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,
@@ -7865,61 +7924,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             options: opts,
 
             _jsx: core::marker::PhantomData,
-        };
-        this.lexer.track_comments = this.options.features.minify_identifiers;
-
-        this.unwrap_all_requires = 'brk: {
-            if this.options.bundle && this.options.output_format != options::Format::Cjs {
-                // Zig: `source.path.packageName()` — `bun_paths::fs::Path<'static>` is the
-                // crate-local minimal stub (no `pretty`, no `package_name()`),
-                // so reuse the free `path_package_name` body via a borrowed
-                // `bun_paths::fs::Path` view over the same `text`. `pretty`
-                // is irrelevant once `node_modules/` is found in `text`; when
-                // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. // TODO(b2-blocked): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
-                let path_view = fs::Path { text: source.path.text, pretty: source.path.text, ..Default::default() };
-                if let Some(pkg) = path_package_name(&path_view) {
-                    if this.options.features.should_unwrap_require(pkg) {
-                        if pkg == b"react" || pkg == b"react-dom" {
-                            let version = this.options.package_version;
-                            if version.len() > 2
-                                && (version[0] == b'0' || (version[0] == b'1' && version[1] < b'8'))
-                            {
-                                break 'brk false;
-                            }
-                        }
-                        break 'brk true;
-                    }
-                }
-            }
-            false
-        };
-
-        this.symbols = BumpVec::new_in(arena);
-
-        if !SCAN_ONLY {
-            this.import_records = ImportRecordList::Owned(BumpVec::new_in(arena));
-            this.named_imports = NamedImportsType::Owned(Default::default());
-        }
-        // For SCAN_ONLY, the caller (Parser) assigns the borrowed variants after construction.
+        }) };
 
         // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. In Rust
         // the recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
         // receives its `*mut P` per-call from the live `&mut P` at the call
         // site — `prepare_for_visit_pass` only wires the arena/trampoline.
+        //
+        // For SCAN_ONLY, the caller (Parser) assigns the borrowed
+        // `import_records` / `named_imports` variants after construction; for
+        // !SCAN_ONLY the literal's `Owned(..)` defaults are already correct
+        // (the previous post-init `if !SCAN_ONLY { .. }` rewrites were
+        // redundant with the literal and have been dropped).
 
-        if this.options.features.top_level_await || SCAN_ONLY {
-            this.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
-            this.fn_or_arrow_data_parse.is_top_level = true;
-        }
-
-        if !TYPESCRIPT {
-            // This is so it doesn't impact runtime transpiler caching when not in use
-            this.options.features.emit_decorator_metadata = false;
-        }
-
-        Ok(this)
+        Ok(())
     }
 }
 

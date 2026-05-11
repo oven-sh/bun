@@ -971,14 +971,6 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 
     debug_assert!(!owner.is_null());
 
-    /// `ptr.as(T)` — recover the typed owner.
-    macro_rules! owner_as {
-        ($ty:ty) => {{
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *owner.ptr().cast::<$ty>() }
-        }};
-    }
-
     match owner.kind() {
         poll_tag::BUFFERED_READER => {
             let reader = owner

@@ -760,7 +760,11 @@ mod platform {
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
-        pub buf: [u8; 8192], // TODO align(@alignOf(os.wasi.dirent_t)),
+        // NOTE: even if this buffer were aligned to align_of::<dirent_t>(), entries after
+        // the first land at `size_of::<dirent_t>() + d_namlen` offsets (arbitrary), so the
+        // header is read via `read_unaligned` below regardless. The Zig original expresses
+        // the same thing with a `*align(1) dirent_t` cast.
+        pub buf: [u8; 8192],
         pub cookie: u64,
         pub index: usize,
         pub end_index: usize,
@@ -805,8 +809,16 @@ mod platform {
                     self.index = 0;
                     self.end_index = bufused;
                 }
-                // SAFETY: index within filled buf
-                let entry = unsafe { &*(self.buf.as_ptr().add(self.index).cast::<w::dirent_t>()) };
+                // SAFETY: `index < end_index <= buf.len()` and `fd_readdir` guarantees a full
+                // dirent header at this offset. The header is NOT naturally aligned (entries are
+                // packed as `[dirent_t][name bytes][dirent_t]...` with no padding between the
+                // variable-length name and the next header), so we must `read_unaligned` rather
+                // than form a `&dirent_t` — matching Zig's `*align(1) w.dirent_t` cast.
+                let entry: w::dirent_t = unsafe {
+                    core::ptr::read_unaligned(
+                        self.buf.as_ptr().add(self.index).cast::<w::dirent_t>(),
+                    )
+                };
                 let entry_size = size_of::<w::dirent_t>();
                 let name_index = self.index + entry_size;
                 let name = &self.buf[name_index..name_index + entry.d_namlen as usize];

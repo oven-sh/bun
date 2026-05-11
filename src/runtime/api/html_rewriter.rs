@@ -11,7 +11,7 @@ use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_string::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, ProtectedJSValue,
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, StringJsc as _, bun_string_jsc,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
@@ -170,7 +170,7 @@ impl HTMLRewriter {
     }
 
     pub fn on_(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         selector_name: ZigString,
         call_frame: &CallFrame,
@@ -224,7 +224,7 @@ impl HTMLRewriter {
     }
 
     pub fn on_document_(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         listener: JSValue,
         call_frame: &CallFrame,
@@ -255,11 +255,11 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         self.finalize_without_destroy();
     }
 
-    pub fn finalize_without_destroy(&mut self) {
+    pub fn finalize_without_destroy(&self) {
         // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
         // SAFETY: builder was created by Builder::init() and not yet freed.
         unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
@@ -269,12 +269,12 @@ impl HTMLRewriter {
         // fresh Rc. Phase B: verify call sites.
     }
 
-    pub fn begin_transform(&mut self, global: &JSGlobalObject, response: *mut Response) -> JsResult<JSValue> {
+    pub fn begin_transform(&self, global: &JSGlobalObject, response: *mut Response) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
         BufferOutputSink::init(new_context, global, response, self.builder)
     }
 
-    pub fn transform_(&mut self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
+    pub fn transform_(&self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
         // PORT NOTE: `Response` doesn't yet impl `JsClass`, so use the
         // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
         if let Some(response) = webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>()) {
@@ -363,7 +363,7 @@ impl HTMLRewriter {
     // Zig: `pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false)`
     // etc. — see arg-decode helpers at top of file.
 
-    pub fn on(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let selector_name = eat_zig_string(&mut iter, global)?;
@@ -371,14 +371,14 @@ impl HTMLRewriter {
         self.on_(global, selector_name, call_frame, listener)
     }
 
-    pub fn on_document(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn on_document(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let listener = eat_js_value(&mut iter, global)?;
         self.on_document_(global, listener, call_frame)
     }
 
-    pub fn transform(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn transform(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let response_value = eat_js_value(&mut iter, global)?;
@@ -1046,7 +1046,7 @@ impl DocumentHandler {
         handler_callback::<Self, DocType, lolhtml::DocType>(
             this,
             value,
-            |w| w.doctype = core::ptr::null_mut(),
+            |w| w.doctype.set(core::ptr::null_mut()),
             |h| h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1054,7 +1054,7 @@ impl DocumentHandler {
         handler_callback::<Self, Comment, lolhtml::Comment>(
             this,
             value,
-            |w| w.comment = core::ptr::null_mut(),
+            |w| w.comment.set(core::ptr::null_mut()),
             |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1062,7 +1062,7 @@ impl DocumentHandler {
         handler_callback::<Self, TextChunk, lolhtml::TextChunk>(
             this,
             value,
-            |w| w.text_chunk = core::ptr::null_mut(),
+            |w| w.text_chunk.set(core::ptr::null_mut()),
             |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1070,7 +1070,7 @@ impl DocumentHandler {
         handler_callback::<Self, DocEnd, lolhtml::DocEnd>(
             this,
             value,
-            |w| w.doc_end = core::ptr::null_mut(),
+            |w| w.doc_end.set(core::ptr::null_mut()),
             |h| h.on_end_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1184,14 +1184,14 @@ pub trait WrapperLike {
     /// Some wrapper types (Element) hand out sub-objects that borrow from the
     /// underlying lol-html value and must be detached along with the wrapper
     /// itself. Default: no-op (caller passes a `clear_field` closure instead).
-    fn invalidate(&mut self) {}
+    fn invalidate(&self) {}
     const HAS_INVALIDATE: bool = false;
 }
 
 fn handler_callback<H, Z, L>(
     this: *mut H,
     value: *mut L,
-    clear_field: impl FnOnce(&mut Z),
+    clear_field: impl FnOnce(&Z),
     get_callback: impl FnOnce(&H) -> Option<JSValue>,
 ) -> bool
 where
@@ -1216,15 +1216,17 @@ where
             // with the wrapper itself.
             (*w).invalidate();
         } else {
-            clear_field(&mut *w);
+            clear_field(&*w);
         }
         Z::deref(w);
     });
 
     // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
     // pointer we registered with lol-html; it lives in LOLHTMLContext for the
-    // duration of the rewriter.
-    let this = unsafe { &mut *this };
+    // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
+    // JS, which may re-enter another `handler_callback` on the same handler
+    // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
+    let this = unsafe { &*this };
     let global = this.global();
     // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives
     // `this.global.bunVM()` at each use site rather than caching a `&mut`.
@@ -1375,7 +1377,7 @@ impl ElementHandler {
         handler_callback::<Self, Comment, lolhtml::Comment>(
             this,
             value,
-            |w| w.comment = core::ptr::null_mut(),
+            |w| w.comment.set(core::ptr::null_mut()),
             |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1384,7 +1386,7 @@ impl ElementHandler {
         handler_callback::<Self, TextChunk, lolhtml::TextChunk>(
             this,
             value,
-            |w| w.text_chunk = core::ptr::null_mut(),
+            |w| w.text_chunk.set(core::ptr::null_mut()),
             |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
@@ -1459,7 +1461,8 @@ fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject)
 pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub text_chunk: *mut lolhtml_sys::TextChunk,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub text_chunk: Cell<*mut lolhtml_sys::TextChunk>,
 }
 
 impl TextChunk {
@@ -1468,19 +1471,19 @@ impl TextChunk {
     pub fn init(text_chunk: *mut lolhtml::TextChunk) -> *mut TextChunk {
         bun_core::heap::into_raw(Box::new(TextChunk {
             ref_count: Cell::new(1),
-            text_chunk,
+            text_chunk: Cell::new(text_chunk),
         }))
     }
 
     fn content_handler(
-        &mut self,
+        &self,
         callback: fn(&mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
             return JSValue::UNDEFINED;
         };
         let content_slice = content.to_slice();
@@ -1499,7 +1502,7 @@ impl TextChunk {
     }
 
     pub fn before_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1509,7 +1512,7 @@ impl TextChunk {
     }
 
     pub fn after_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1519,7 +1522,7 @@ impl TextChunk {
     }
 
     pub fn replace_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1530,24 +1533,24 @@ impl TextChunk {
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
 
-    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.before_(call_frame, global, content, opts))
     }
 
-    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.after_(call_frame, global, content, opts))
     }
 
-    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.replace_(call_frame, global, content, opts))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
+    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         chunk.remove();
@@ -1556,7 +1559,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         bun_string_jsc::create_utf8_for_js(global, chunk.get_content().slice())
@@ -1564,7 +1567,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::TextChunk::from_ptr(self.text_chunk) {
+        match lolhtml::TextChunk::from_ptr(self.text_chunk.get()) {
             Some(chunk) => JSValue::from(chunk.is_removed()),
             None => JSValue::UNDEFINED,
         }
@@ -1572,7 +1575,7 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(getter)]
     pub fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::TextChunk::from_ptr(self.text_chunk) {
+        match lolhtml::TextChunk::from_ptr(self.text_chunk.get()) {
             Some(chunk) => JSValue::from(chunk.is_last_in_text_node()),
             None => JSValue::UNDEFINED,
         }
@@ -1610,7 +1613,8 @@ impl WrapperLike for TextChunk {
 pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub doctype: *mut lolhtml_sys::DocType,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub doctype: Cell<*mut lolhtml_sys::DocType>,
 }
 
 impl DocType {
@@ -1626,14 +1630,14 @@ impl DocType {
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
         bun_core::heap::into_raw(Box::new(DocType {
             ref_count: Cell::new(1),
-            doctype,
+            doctype: Cell::new(doctype),
         }))
     }
 
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
     pub fn name(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
             return JSValue::UNDEFINED;
         };
         let owned = dt.get_name();
@@ -1646,7 +1650,7 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
             return JSValue::UNDEFINED;
         };
         let owned = dt.get_system_id();
@@ -1659,7 +1663,7 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
             return JSValue::UNDEFINED;
         };
         let owned = dt.get_public_id();
@@ -1671,8 +1675,8 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
+    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         dt.remove();
@@ -1681,7 +1685,7 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::DocType::from_ptr(self.doctype) {
+        match lolhtml::DocType::from_ptr(self.doctype.get()) {
             Some(dt) => JSValue::from(dt.is_removed()),
             None => JSValue::UNDEFINED,
         }
@@ -1711,7 +1715,8 @@ impl WrapperLike for DocType {
 pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub doc_end: *mut lolhtml_sys::DocEnd,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub doc_end: Cell<*mut lolhtml_sys::DocEnd>,
 }
 
 impl DocEnd {
@@ -1720,19 +1725,19 @@ impl DocEnd {
     pub fn init(doc_end: *mut lolhtml::DocEnd) -> *mut DocEnd {
         bun_core::heap::into_raw(Box::new(DocEnd {
             ref_count: Cell::new(1),
-            doc_end,
+            doc_end: Cell::new(doc_end),
         }))
     }
 
     fn content_handler(
-        &mut self,
+        &self,
         callback: fn(&mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        let Some(doc_end) = lolhtml::DocEnd::from_ptr(self.doc_end) else {
+        let Some(doc_end) = lolhtml::DocEnd::from_ptr(self.doc_end.get()) else {
             return JSValue::NULL;
         };
         let content_slice = content.to_slice();
@@ -1751,7 +1756,7 @@ impl DocEnd {
     }
 
     pub fn append_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1762,7 +1767,7 @@ impl DocEnd {
 
     // ── host_fn.wrapInstanceMethod hand-expansion ────────────────────────
 
-    pub fn append(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn append(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.append_(call_frame, global, content, opts))
     }
@@ -1798,7 +1803,8 @@ impl WrapperLike for DocEnd {
 pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub comment: *mut lolhtml_sys::Comment,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub comment: Cell<*mut lolhtml_sys::Comment>,
 }
 
 impl Comment {
@@ -1807,19 +1813,19 @@ impl Comment {
     pub fn init(comment: *mut lolhtml::Comment) -> *mut Comment {
         bun_core::heap::into_raw(Box::new(Comment {
             ref_count: Cell::new(1),
-            comment,
+            comment: Cell::new(comment),
         }))
     }
 
     fn content_handler(
-        &mut self,
+        &self,
         callback: fn(&mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
             return JSValue::NULL;
         };
         let content_slice = content.to_slice();
@@ -1838,7 +1844,7 @@ impl Comment {
     }
 
     pub fn before_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1848,7 +1854,7 @@ impl Comment {
     }
 
     pub fn after_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1858,7 +1864,7 @@ impl Comment {
     }
 
     pub fn replace_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -1869,24 +1875,24 @@ impl Comment {
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
 
-    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.before_(call_frame, global, content, opts))
     }
 
-    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.after_(call_frame, global, content, opts))
     }
 
-    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.replace_(call_frame, global, content, opts))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
+    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
             return Ok(JSValue::NULL);
         };
         comment.remove();
@@ -1895,7 +1901,7 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
             return Ok(JSValue::NULL);
         };
         html_string_to_js(comment.get_text(), global_object)
@@ -1905,8 +1911,8 @@ impl Comment {
     // emits `CommentPrototype__setText` via `host_setter_result` (which wants
     // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
     // `JsResult<bool>` wrapper.
-    pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
+    pub fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
             return Ok(());
         };
         let text = value.to_slice(global)?;
@@ -1918,7 +1924,7 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Comment::from_ptr(self.comment) {
+        match lolhtml::Comment::from_ptr(self.comment.get()) {
             Some(comment) => JSValue::from(comment.is_removed()),
             None => JSValue::UNDEFINED,
         }
@@ -1955,7 +1961,8 @@ impl WrapperLike for Comment {
 pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub end_tag: *mut lolhtml_sys::EndTag,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub end_tag: Cell<*mut lolhtml_sys::EndTag>,
 }
 
 pub struct EndTagHandler {
@@ -1970,7 +1977,7 @@ impl EndTagHandler {
         handler_callback::<Self, EndTag, lolhtml::EndTag>(
             this,
             value,
-            |w| w.end_tag = core::ptr::null_mut(),
+            |w| w.end_tag.set(core::ptr::null_mut()),
             |h| h.callback,
         )
     }
@@ -1994,7 +2001,7 @@ impl EndTag {
     pub fn init(end_tag: *mut lolhtml::EndTag) -> *mut EndTag {
         bun_core::heap::into_raw(Box::new(EndTag {
             ref_count: Cell::new(1),
-            end_tag,
+            end_tag: Cell::new(end_tag),
         }))
     }
 
@@ -2006,14 +2013,14 @@ impl EndTag {
     }
 
     fn content_handler(
-        &mut self,
+        &self,
         callback: fn(&mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
             return JSValue::NULL;
         };
         let content_slice = content.to_slice();
@@ -2032,7 +2039,7 @@ impl EndTag {
     }
 
     pub fn before_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -2042,7 +2049,7 @@ impl EndTag {
     }
 
     pub fn after_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -2052,7 +2059,7 @@ impl EndTag {
     }
 
     pub fn replace_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         content: ZigString,
@@ -2063,25 +2070,25 @@ impl EndTag {
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
 
-    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.before_(call_frame, global, content, opts))
     }
 
-    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.after_(call_frame, global, content, opts))
     }
 
     #[allow(dead_code)]
-    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.replace_(call_frame, global, content, opts))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
+    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         end_tag.remove();
@@ -2090,7 +2097,7 @@ impl EndTag {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         html_string_to_js(end_tag.get_name(), global_object)
@@ -2098,8 +2105,8 @@ impl EndTag {
 
     // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `EndTagPrototype__setName` via `host_setter_result`.
-    pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
+    pub fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag.get()) else {
             return Ok(());
         };
         let text = value.to_slice(global)?;
@@ -2134,7 +2141,8 @@ impl WrapperLike for EndTag {
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub iterator: *mut lolhtml_sys::AttributeIterator,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub iterator: Cell<*mut lolhtml_sys::AttributeIterator>,
 }
 
 impl AttributeIterator {
@@ -2154,14 +2162,14 @@ impl AttributeIterator {
     pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
         bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
-            iterator,
+            iterator: Cell::new(iterator),
         }))
     }
 
-    fn detach(&mut self) {
-        if let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator) {
+    fn detach(&self) {
+        if let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) {
             it.destroy();
-            self.iterator = core::ptr::null_mut();
+            self.iterator.set(core::ptr::null_mut());
         }
     }
 
@@ -2177,11 +2185,11 @@ impl AttributeIterator {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn next(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let done_label = bun_string::ZigString::init(b"done");
         let value_label = bun_string::ZigString::init(b"value");
 
-        let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator) else {
+        let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) else {
             return JSValue::create_object2(
                 global_object,
                 &done_label,
@@ -2193,7 +2201,7 @@ impl AttributeIterator {
 
         let Some(attribute) = it.next() else {
             it.destroy();
-            self.iterator = core::ptr::null_mut();
+            self.iterator.set(core::ptr::null_mut());
             return JSValue::create_object2(
                 global_object,
                 &done_label,
@@ -2232,12 +2240,17 @@ impl AttributeIterator {
 pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    pub element: *mut lolhtml_sys::Element,
+    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    pub element: Cell<*mut lolhtml_sys::Element>,
     /// AttributeIterator instances created by `getAttributes()` that borrow
     /// from `element`. They must be detached in `invalidate()` when the
     /// handler returns so that JS cannot dereference the freed lol-html
     /// attribute buffer.
-    pub attribute_iterators: Vec<*mut AttributeIterator>,
+    /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
+    /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
+    /// closures do not call into JS, so the short `&mut Vec` borrow cannot
+    /// overlap a re-entrant access.
+    pub attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
 }
 
 impl Element {
@@ -2257,8 +2270,8 @@ impl Element {
     pub fn init(element: *mut lolhtml::Element) -> *mut Element {
         bun_core::heap::into_raw(Box::new(Element {
             ref_count: Cell::new(1),
-            element,
-            attribute_iterators: Vec::new(),
+            element: Cell::new(element),
+            attribute_iterators: JsCell::new(Vec::new()),
         }))
     }
 
@@ -2273,8 +2286,12 @@ impl Element {
     /// underlying attribute buffer is about to become invalid — either because
     /// the handler is returning, or because `setAttribute` / `removeAttribute`
     /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
-    fn detach_attribute_iterators(&mut self) {
-        for iter in self.attribute_iterators.drain(..) {
+    fn detach_attribute_iterators(&self) {
+        // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
+        // projection of `self` is held across `detach()`/`deref()` (which do
+        // not re-enter JS, but defence-in-depth keeps the JsCell borrow zero-len).
+        let iters = self.attribute_iterators.replace(Vec::new());
+        for iter in iters {
             // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes();
             // ref_count >= 1 so the allocation is valid here.
             unsafe { (*iter).detach() };
@@ -2288,19 +2305,19 @@ impl Element {
     /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
     /// borrows from) is only valid during handler execution, so we must null
     /// it out here along with any iterators we handed to JS.
-    pub fn invalidate(&mut self) {
-        self.element = core::ptr::null_mut();
+    pub fn invalidate(&self) {
+        self.element.set(core::ptr::null_mut());
         self.detach_attribute_iterators();
-        self.attribute_iterators = Vec::new();
+        self.attribute_iterators.set(Vec::new());
     }
 
     pub fn on_end_tag_(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         function: JSValue,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
@@ -2330,8 +2347,8 @@ impl Element {
     }
 
     /// Returns the value for a given attribute name on the element, or null if it is not found.
-    pub fn get_attribute_(&mut self, global_object: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    pub fn get_attribute_(&self, global_object: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::NULL);
         };
         let slice = name.to_slice();
@@ -2345,8 +2362,8 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&mut self, global: &JSGlobalObject, name: ZigString) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JSValue {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::FALSE;
         };
         let slice = name.to_slice();
@@ -2358,13 +2375,13 @@ impl Element {
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
     pub fn set_attribute_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         name_: ZigString,
         value_: ZigString,
     ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
         };
 
@@ -2382,12 +2399,12 @@ impl Element {
 
     /// Removes the attribute.
     pub fn remove_attribute_(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
         name: ZigString,
     ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
         };
 
@@ -2404,28 +2421,28 @@ impl Element {
 
     // ── host_fn.wrapInstanceMethod hand-expansions (attribute ops) ───────
 
-    pub fn on_end_tag(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn on_end_tag(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let function = eat_js_value(&mut iter, global)?;
         self.on_end_tag_(global, function, call_frame)
     }
 
-    pub fn get_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         self.get_attribute_(global, name)
     }
 
-    pub fn has_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn has_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         Ok(self.has_attribute_(global, name))
     }
 
-    pub fn set_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
@@ -2433,7 +2450,7 @@ impl Element {
         Ok(self.set_attribute_(call_frame, global, name, value))
     }
 
-    pub fn remove_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn remove_attribute(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
@@ -2441,14 +2458,14 @@ impl Element {
     }
 
     fn content_handler(
-        &mut self,
+        &self,
         callback: fn(&mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
         };
         let content_slice = content.to_slice();
@@ -2467,71 +2484,71 @@ impl Element {
     }
 
     /// Inserts content before the element.
-    pub fn before_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn before_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::before, call_frame.this(), global_object, content, content_options)
     }
 
     /// Inserts content right after the element.
-    pub fn after_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn after_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::after, call_frame.this(), global_object, content, content_options)
     }
 
     /// Inserts content right after the start tag of the element.
-    pub fn prepend_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn prepend_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::prepend, call_frame.this(), global_object, content, content_options)
     }
 
     /// Inserts content right before the end tag of the element.
-    pub fn append_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn append_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::append, call_frame.this(), global_object, content, content_options)
     }
 
     /// Removes the element and inserts content in place of it.
-    pub fn replace_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn replace_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::replace, call_frame.this(), global_object, content, content_options)
     }
 
     /// Replaces content of the element.
-    pub fn set_inner_content_(&mut self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
+    pub fn set_inner_content_(&self, call_frame: &CallFrame, global_object: &JSGlobalObject, content: ZigString, content_options: Option<ContentOptions>) -> JSValue {
         self.content_handler(lolhtml::Element::set_inner_content, call_frame.this(), global_object, content, content_options)
     }
 
     // ── host_fn.wrapInstanceMethod hand-expansions (content ops) ─────────
 
-    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn before(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.before_(call_frame, global, content, opts))
     }
 
-    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn after(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.after_(call_frame, global, content, opts))
     }
 
-    pub fn prepend(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn prepend(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.prepend_(call_frame, global, content, opts))
     }
 
-    pub fn append(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn append(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.append_(call_frame, global, content, opts))
     }
 
-    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn replace(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.replace_(call_frame, global, content, opts))
     }
 
-    pub fn set_inner_content(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_inner_content(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (content, opts) = eat_content_args(global, call_frame)?;
         Ok(self.set_inner_content_(call_frame, global, content, opts))
     }
 
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove();
@@ -2540,8 +2557,8 @@ impl Element {
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
     #[bun_jsc::host_fn(method)]
-    pub fn remove_and_keep_content(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    pub fn remove_and_keep_content(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         el.remove_and_keep_content();
@@ -2550,7 +2567,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         html_string_value(el.tag_name(), global_object)
@@ -2558,8 +2575,8 @@ impl Element {
 
     // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `ElementPrototype__setTagName` via `host_setter_result`.
-    pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    pub fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(());
         };
         let text = value.to_slice(global)?;
@@ -2571,7 +2588,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element) {
+        match lolhtml::Element::from_ptr(self.element.get()) {
             Some(el) => JSValue::from(el.is_removed()),
             None => JSValue::UNDEFINED,
         }
@@ -2579,7 +2596,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element) {
+        match lolhtml::Element::from_ptr(self.element.get()) {
             Some(el) => JSValue::from(el.is_self_closing()),
             None => JSValue::UNDEFINED,
         }
@@ -2587,7 +2604,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
-        match lolhtml::Element::from_ptr(self.element) {
+        match lolhtml::Element::from_ptr(self.element.get()) {
             Some(el) => JSValue::from(el.can_have_content()),
             None => JSValue::UNDEFINED,
         }
@@ -2595,7 +2612,7 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: namespaceURI returns a NUL-terminated C string owned by lol-html.
@@ -2603,11 +2620,9 @@ impl Element {
         bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
     }
 
-    // PORT NOTE: `host_fn(getter)` codegen passes `&self`; this needs `&mut`
-    // to push into `attribute_iterators`. Dropped the macro attribute until
-    // the codegen supports `&mut self` getters (Phase B).
-    pub fn get_attributes(&mut self, global_object: &JSGlobalObject) -> JSValue {
-        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JSValue {
+        let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
         };
 
@@ -2616,7 +2631,7 @@ impl Element {
         };
         let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
-            iterator: iter,
+            iterator: Cell::new(iter),
         }));
         // Track this iterator so we can detach it when the handler returns.
         // lol-html's attribute iterator borrows from the element's attribute
@@ -2624,7 +2639,8 @@ impl Element {
         // without detaching it would be a use-after-free.
         // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
-        self.attribute_iterators.push(attr_iter);
+        // R-2: `with_mut` — closure does not call into JS (push only).
+        self.attribute_iterators.with_mut(|v| v.push(attr_iter));
         // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
         // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
         unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) }
@@ -2645,7 +2661,7 @@ impl WrapperLike for Element {
         // ownership is shared with the GC wrapper via the intrusive refcount.
         unsafe { Self::to_js_ptr(this, g) }
     }
-    fn invalidate(&mut self) { Element::invalidate(self) }
+    fn invalidate(&self) { Element::invalidate(self) }
     const HAS_INVALIDATE: bool = true;
 }
 

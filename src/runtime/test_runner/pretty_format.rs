@@ -1814,8 +1814,9 @@ impl<'a> Formatter<'a> {
                         }
                         return Ok(());
                     } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above.
-                        let build = unsafe { &mut *build };
+                        // SAFETY: see Response branch above. `write_format` is
+                        // `&self` post-R-2, so a shared borrow is sufficient.
+                        let build = unsafe { &*build };
                         let mut bridge = IoFmt(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)

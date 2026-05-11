@@ -1671,7 +1671,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     if let Some(build) = value.as_::<BuildArtifact>() {
         let mut w = IoAsFmt(writer_);
-        let _ = unsafe { &mut *build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {

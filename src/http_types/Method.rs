@@ -112,86 +112,88 @@ impl Method {
         Self::which(str)
     }
 
+    /// Port of Zig `bun.ComptimeStringMap(Method, …).get`: length-gated, then a
+    /// flat byte-pattern match on the entries of that exact length. Zig builds
+    /// the dispatch at `comptime`; the previous Rust port used a `phf::Map`,
+    /// which costs a SipHash13 round per lookup (`phf_shared::hash` ≈ 0.6 %
+    /// self-time in a Bun.serve hello-world profile, called twice per request).
+    /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
+    /// hot path takes the upper arm; the all-lower entries exist only for
+    /// `new Request("get", …)` JS-side convenience and match the Zig table
+    /// exactly (mixed-case still rejects).
     pub fn which(str: &[u8]) -> Option<Method> {
-        MAP.get(str).copied()
+        use Method::*;
+        Some(match str.len() {
+            3 => match str {
+                b"GET" | b"get" => GET,
+                b"PUT" | b"put" => PUT,
+                b"ACL" | b"acl" => ACL,
+                _ => return None,
+            },
+            4 => match str {
+                b"POST" | b"post" => POST,
+                b"HEAD" | b"head" => HEAD,
+                b"BIND" | b"bind" => BIND,
+                b"COPY" | b"copy" => COPY,
+                b"LINK" | b"link" => LINK,
+                b"LOCK" | b"lock" => LOCK,
+                b"MOVE" | b"move" => MOVE,
+                _ => return None,
+            },
+            5 => match str {
+                b"PATCH" | b"patch" => PATCH,
+                b"TRACE" | b"trace" => TRACE,
+                b"QUERY" | b"query" => QUERY,
+                b"MERGE" | b"merge" => MERGE,
+                b"MKCOL" | b"mkcol" => MKCOL,
+                b"PURGE" | b"purge" => PURGE,
+                _ => return None,
+            },
+            6 => match str {
+                b"DELETE" | b"delete" => DELETE,
+                b"NOTIFY" | b"notify" => NOTIFY,
+                b"REBIND" | b"rebind" => REBIND,
+                b"REPORT" | b"report" => REPORT,
+                b"SEARCH" | b"search" => SEARCH,
+                b"SOURCE" | b"source" => SOURCE,
+                b"UNBIND" | b"unbind" => UNBIND,
+                b"UNLINK" | b"unlink" => UNLINK,
+                b"UNLOCK" | b"unlock" => UNLOCK,
+                _ => return None,
+            },
+            7 => match str {
+                b"OPTIONS" | b"options" => OPTIONS,
+                b"CONNECT" | b"connect" => CONNECT,
+                _ => return None,
+            },
+            8 => match str {
+                b"CHECKOUT" | b"checkout" => CHECKOUT,
+                b"M-SEARCH" | b"m-search" => M_SEARCH,
+                b"PROPFIND" | b"propfind" => PROPFIND,
+                _ => return None,
+            },
+            9 => match str {
+                b"PROPPATCH" | b"proppatch" => PROPPATCH,
+                b"SUBSCRIBE" | b"subscribe" => SUBSCRIBE,
+                _ => return None,
+            },
+            10 => match str {
+                b"MKACTIVITY" | b"mkactivity" => MKACTIVITY,
+                b"MKCALENDAR" | b"mkcalendar" => MKCALENDAR,
+                _ => return None,
+            },
+            11 => match str {
+                b"UNSUBSCRIBE" | b"unsubscribe" => UNSUBSCRIBE,
+                _ => return None,
+            },
+            13 => match str {
+                b"MKADDRESSBOOK" | b"mkaddressbook" => MKADDRESSBOOK,
+                _ => return None,
+            },
+            _ => return None,
+        })
     }
 }
-
-static MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
-    b"ACL" => Method::ACL,
-    b"BIND" => Method::BIND,
-    b"CHECKOUT" => Method::CHECKOUT,
-    b"CONNECT" => Method::CONNECT,
-    b"COPY" => Method::COPY,
-    b"DELETE" => Method::DELETE,
-    b"GET" => Method::GET,
-    b"HEAD" => Method::HEAD,
-    b"LINK" => Method::LINK,
-    b"LOCK" => Method::LOCK,
-    b"M-SEARCH" => Method::M_SEARCH,
-    b"MERGE" => Method::MERGE,
-    b"MKACTIVITY" => Method::MKACTIVITY,
-    b"MKADDRESSBOOK" => Method::MKADDRESSBOOK,
-    b"MKCALENDAR" => Method::MKCALENDAR,
-    b"MKCOL" => Method::MKCOL,
-    b"MOVE" => Method::MOVE,
-    b"NOTIFY" => Method::NOTIFY,
-    b"OPTIONS" => Method::OPTIONS,
-    b"PATCH" => Method::PATCH,
-    b"POST" => Method::POST,
-    b"PROPFIND" => Method::PROPFIND,
-    b"PROPPATCH" => Method::PROPPATCH,
-    b"PURGE" => Method::PURGE,
-    b"PUT" => Method::PUT,
-    b"QUERY" => Method::QUERY,
-    b"REBIND" => Method::REBIND,
-    b"REPORT" => Method::REPORT,
-    b"SEARCH" => Method::SEARCH,
-    b"SOURCE" => Method::SOURCE,
-    b"SUBSCRIBE" => Method::SUBSCRIBE,
-    b"TRACE" => Method::TRACE,
-    b"UNBIND" => Method::UNBIND,
-    b"UNLINK" => Method::UNLINK,
-    b"UNLOCK" => Method::UNLOCK,
-    b"UNSUBSCRIBE" => Method::UNSUBSCRIBE,
-
-    b"acl" => Method::ACL,
-    b"bind" => Method::BIND,
-    b"checkout" => Method::CHECKOUT,
-    b"connect" => Method::CONNECT,
-    b"copy" => Method::COPY,
-    b"delete" => Method::DELETE,
-    b"get" => Method::GET,
-    b"head" => Method::HEAD,
-    b"link" => Method::LINK,
-    b"lock" => Method::LOCK,
-    b"m-search" => Method::M_SEARCH,
-    b"merge" => Method::MERGE,
-    b"mkactivity" => Method::MKACTIVITY,
-    b"mkaddressbook" => Method::MKADDRESSBOOK,
-    b"mkcalendar" => Method::MKCALENDAR,
-    b"mkcol" => Method::MKCOL,
-    b"move" => Method::MOVE,
-    b"notify" => Method::NOTIFY,
-    b"options" => Method::OPTIONS,
-    b"patch" => Method::PATCH,
-    b"post" => Method::POST,
-    b"propfind" => Method::PROPFIND,
-    b"proppatch" => Method::PROPPATCH,
-    b"purge" => Method::PURGE,
-    b"put" => Method::PUT,
-    b"query" => Method::QUERY,
-    b"rebind" => Method::REBIND,
-    b"report" => Method::REPORT,
-    b"search" => Method::SEARCH,
-    b"source" => Method::SOURCE,
-    b"subscribe" => Method::SUBSCRIBE,
-    b"trace" => Method::TRACE,
-    b"unbind" => Method::UNBIND,
-    b"unlink" => Method::UNLINK,
-    b"unlock" => Method::UNLOCK,
-    b"unsubscribe" => Method::UNSUBSCRIBE,
-};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Optional {
@@ -346,3 +348,32 @@ pub enum HeaderName {
 }
 
 // ported from: src/http_types/Method.zig
+
+#[cfg(test)]
+mod tests {
+    use super::Method;
+
+    /// Exhaustive parity check for `Method::which`: every variant round-trips
+    /// via its uppercase wire form and the all-lower convenience form, and
+    /// nothing else slips through. Guards the length-gated match against
+    /// transcription mistakes (the previous `phf::Map` build would have
+    /// rejected typos at compile time; the open-coded match does not).
+    #[test]
+    fn which_roundtrip() {
+        for m in enumset::EnumSet::<Method>::all() {
+            let upper = m.as_str();
+            assert_eq!(Method::which(upper.as_bytes()), Some(m), "upper {upper}");
+            let lower = upper.to_ascii_lowercase();
+            assert_eq!(Method::which(lower.as_bytes()), Some(m), "lower {lower}");
+        }
+        // Mixed case must reject (Zig table has only all-upper / all-lower).
+        assert_eq!(Method::which(b"Get"), None);
+        assert_eq!(Method::which(b"OPtions"), None);
+        // Out-of-range lengths and unknown tokens.
+        assert_eq!(Method::which(b""), None);
+        assert_eq!(Method::which(b"GE"), None);
+        assert_eq!(Method::which(b"GETS"), None);
+        assert_eq!(Method::which(b"BREW"), None);
+        assert_eq!(Method::which(b"MKADDRESSBOOKS"), None);
+    }
+}

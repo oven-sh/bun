@@ -306,6 +306,15 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
+        // Serialize the close+swap_remove against (a) the JS thread's
+        // `ImportWatcher::snapshot_fd_and_package_json` lookup and (b) the JS
+        // thread's `append_file_maybe_lock<true>` re-add. Without this lock
+        // there is a window between pass 1 (`close(fd)`) and pass 2
+        // (`swap_remove`) where the JS thread can read the still-present
+        // entry's now-closed fd → `EBADF reading "<path>"` in the transpiler.
+        // Intentionally diverges from Zig spec (`Watcher.zig:264` does not
+        // lock); same race exists there.
+        let _guard = self.mutex.lock_guard();
         let evict_list_i = self.evict_list_i as usize;
         // defer this.evict_list_i = 0 — set at end of fn
 

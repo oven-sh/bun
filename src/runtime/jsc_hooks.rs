@@ -1984,26 +1984,19 @@ fn transpile_source_code_inner(
             let mut fd: Option<bun_sys::Fd> = None;
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                use bun_watcher::{WatchItemColumns as _};
                 // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher`
                 // set during VM init (BACKREF); cast recovers the concrete type.
                 let import_watcher: *mut bun_jsc::ImportWatcher =
                     unsafe { &*jsc_vm }.bun_watcher.cast();
                 if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above; only the JS thread
-                    // mutates the watchlist shape.
+                    // SAFETY: non-null per check above. The watchlist *is*
+                    // mutated cross-thread (the watcher thread's
+                    // `flush_evictions` closes fds and `swap_remove`s), so
+                    // snapshot under the watcher mutex — see
+                    // `ImportWatcher::snapshot_fd_and_package_json` doc for
+                    // the EBADF race this closes (port improves on Zig spec).
                     let iw = unsafe { &*import_watcher };
-                    if let Some(index) = iw.index_of(hash) {
-                        if let Some(watchlist) = iw.watchlist() {
-                            let watcher_fd = watchlist.items_fd()[index as usize];
-                            fd = if watcher_fd.is_valid() { Some(watcher_fd) } else { None };
-                            // SAFETY: column `PackageJson` is
-                            // `Option<&'static PackageJSON>` per WatchItem layout.
-                            package_json = unsafe {
-                                watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
-                            };
-                        }
-                    }
+                    (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
                 }
             }
 

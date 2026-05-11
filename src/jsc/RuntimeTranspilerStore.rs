@@ -709,28 +709,22 @@ impl TranspilerJob {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init (BACKREF).
         let import_watcher: *mut ImportWatcher = unsafe { (*vm).bun_watcher }.cast();
         if !import_watcher.is_null() {
-            // SAFETY: import_watcher is live; only the JS thread mutates the watchlist
-            // shape — the worker thread reads SoA columns by index.
+            // SAFETY: import_watcher is live. The watchlist *is* mutated
+            // cross-thread (the watcher thread's `flush_evictions` closes fds
+            // and `swap_remove`s), so snapshot under the watcher mutex — see
+            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
+            // race this closes (port improves on Zig spec; Zig
+            // `RuntimeTranspilerStore.zig:344` reads unlocked).
             let iw = unsafe { &*import_watcher };
-            if matches!(iw, ImportWatcher::Hot(_) | ImportWatcher::Watch(_)) {
-                if let Some(index) = iw.index_of(hash) {
-                    if let Some(watchlist) = iw.watchlist() {
-                        let watcher_fd = watchlist.items_fd()[index as usize];
-                        // On Linux, `addFileByPathSlow` inserts watchlist
-                        // entries with `fd = invalid_fd` (only kqueue needs
-                        // the descriptor). Treat invalid as "no cached fd"
-                        // so `readFileWithAllocator` opens the file instead
-                        // of calling `seekTo` on a bogus handle.
-                        fd = if watcher_fd.is_valid() && watcher_fd.stdio_tag().is_none() {
-                            Some(watcher_fd)
-                        } else {
-                            None
-                        };
-                        // column `PackageJson` is `Option<&'static PackageJSON>` per WatchItem layout.
-                        package_json =
-                            watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
-                    }
-                }
+            (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
+            // On Linux, `addFileByPathSlow` inserts watchlist entries with
+            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
+            // invalid as "no cached fd" so `readFileWithAllocator` opens the
+            // file instead of calling `seekTo` on a bogus handle. The snapshot
+            // helper already filtered `!is_valid()`; additionally reject
+            // stdio-tagged fds here.
+            if fd.is_some_and(|f| f.stdio_tag().is_some()) {
+                fd = None;
             }
         }
 

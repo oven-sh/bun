@@ -52,6 +52,44 @@ impl ImportWatcher {
         }
     }
 
+    /// Look up the cached fd (and `package_json` column) for `hash` under the
+    /// watcher's mutex, snapshotting both before returning.
+    ///
+    /// The watcher thread's `flush_evictions` (called from `on_file_update`)
+    /// closes the cached fd in pass 1 and `swap_remove`s the entry in pass 2.
+    /// `on_file_update` orders `flush_evictions` *before* `enqueue` so the JS
+    /// thread cannot observe the closed-fd window for the *same* event, but
+    /// nothing serializes a *subsequent* event's `flush_evictions` against the
+    /// JS thread's previous-event reload that re-added the entry: the JS
+    /// thread can read the cached fd here while the watcher thread is between
+    /// pass 1 (close) and pass 2 (remove), surfacing as `EBADF reading
+    /// "<path>"` in `transpiler.rs:read_file_with_allocator` (hot.test.ts
+    /// "should work with sourcemap generation" on debian-aarch64). Zig has
+    /// the same race (`ModuleLoader.zig:173-174` reads unlocked); the port
+    /// closes it by locking the same mutex `append_file_maybe_lock<true>` and
+    /// `flush_evictions` take.
+    pub fn snapshot_fd_and_package_json(
+        &self,
+        hash: bun_watcher::HashType,
+    ) -> (Option<bun_sys::Fd>, Option<&'static bun_watcher::PackageJSON>) {
+        let w = match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
+            ImportWatcher::None => return (None, None),
+        };
+        let _guard = w.mutex.lock_guard();
+        let Some(index) = w.index_of(hash) else {
+            return (None, None);
+        };
+        let watcher_fd = w.watchlist.items_fd()[index as usize];
+        let package_json = w
+            .watchlist
+            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
+        (
+            if watcher_fd.is_valid() { Some(watcher_fd) } else { None },
+            package_json,
+        )
+    }
+
     #[inline]
     pub fn add_file_by_path_slow(
         &mut self,

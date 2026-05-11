@@ -3404,11 +3404,11 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1016 `enqueueImmediateTask`.
     ///
-    /// PORT NOTE (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see
-    /// [`crate::event_loop::RunImmediateFn`].
+    /// PORT NOTE (§Dispatch): `task` is a typed sidecar handle for
+    /// `bun_runtime::timer::ImmediateObject` — see
+    /// [`crate::event_loop::EventLoop::enqueue_immediate_task`].
     #[inline]
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
+    pub fn enqueue_immediate_task(&mut self, task: bun_runtime_types::timer::ImmediateTaskHandle) {
         self.event_loop_mut().enqueue_immediate_task(task);
     }
 

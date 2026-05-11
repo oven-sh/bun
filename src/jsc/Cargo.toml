@@ -48,6 +48,7 @@ bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
+bun_runtime_types.workspace = true
 bun_s3_signing.workspace = true
 bun_sha_hmac.workspace = true
 bun_simdutf_sys.workspace = true

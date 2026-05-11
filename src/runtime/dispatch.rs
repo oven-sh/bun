@@ -1198,30 +1198,29 @@ pub unsafe fn __bun_io_pollable_on_io_error(
 // `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `__bun_run_immediate_task` body — cast the low-tier erased `*mut ()` to the
-/// real `crate::timer::ImmediateObject` and run the task (low tier stores
-/// `*mut ()`, high tier owns the cast).
+/// `__bun_run_immediate_task` body — recover the concrete
+/// `crate::timer::ImmediateObject` from the typed runtime sidecar handle.
 ///
 /// # Safety
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_run_immediate_task(
-    task: *mut (),
+    task: bun_runtime_types::timer::ImmediateTaskHandle,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
-    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
+    // builds this handle from a live `*mut crate::timer::ImmediateObject`.
     unsafe {
         crate::timer::ImmediateObject::run_immediate_task(
-            task.cast::<crate::timer::ImmediateObject>(),
+            task.as_ptr::<crate::timer::ImmediateObject>(),
             vm,
         )
     }
 }
 
-/// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
-/// `crate::timer::WTFTimer` and fire it (spec event_loop.zig:302-306
+/// `__bun_run_wtf_timer` body — recover the concrete `crate::timer::WTFTimer`
+/// from the typed runtime sidecar handle and fire it (spec event_loop.zig:302-306
 /// `imminent_gc_timer.swap(null).?.run(vm)`).
 ///
 /// # Safety
@@ -1229,12 +1228,12 @@ pub unsafe fn __bun_run_immediate_task(
 /// remains live until consumed; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_run_wtf_timer(
-    timer: *mut (),
+    timer: bun_runtime_types::timer::WtfTimerHandle,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
-    // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
-    // `*mut crate::timer::WTFTimer`, so the cast is the identity.
-    let real = timer.cast::<crate::timer::WTFTimer>();
+    // SAFETY: per fn contract — the only producer (`WTFTimer::update`) builds
+    // this handle from a live `*mut crate::timer::WTFTimer`.
+    let real = timer.as_ptr::<crate::timer::WTFTimer>();
     // SAFETY: per fn contract — `real` is live until consumed; `vm` is the
     // per-thread VM. `run` may re-enter `(*runtime_state()).timer.remove()`;
     // no `&mut` held here.

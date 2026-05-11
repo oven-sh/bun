@@ -1313,6 +1313,7 @@ dependencies = [
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
+ "bun_runtime_types",
  "bun_s3_signing",
  "bun_sha_hmac",
  "bun_simdutf_sys",

@@ -10,9 +10,8 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
-
 use bun_core::{Timespec, TimespecMockMode};
+use bun_runtime_types::timer::{ImminentWtfTimer, WtfTimerHandle};
 use bun_threading::Mutex;
 
 use crate::jsc::virtual_machine::{VirtualMachine, IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE};
@@ -46,11 +45,9 @@ pub struct WTFTimer {
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
     pub event_loop_timer: EventLoopTimer,
-    // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores
-    // `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast to `*mut ()` at
-    // each compare_exchange (the hook in `dispatch.rs` casts back to
-    // `*mut WTFTimer`).
-    imminent: bun_ptr::BackRef<AtomicPtr<()>>,
+    // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores a typed
+    // sidecar handle, while timer effects remain in this crate.
+    imminent: bun_ptr::BackRef<ImminentWtfTimer>,
     repeat: bool,
     lock: Mutex,
     script_execution_context_id: ScriptExecutionContextIdentifier,
@@ -101,10 +98,7 @@ impl WTFTimer {
             return true;
         }
         // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
-        let loaded = self.imminent.load(Ordering::SeqCst);
-        // Zig: `(load orelse return false) == this` — null can never equal `this`,
-        // so a single pointer compare suffices.
-        loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
+        self.imminent.load() == Some(WtfTimerHandle::from_ref(self))
     }
 
     #[bun_uws::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
@@ -126,30 +120,20 @@ impl WTFTimer {
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
-        let self_opaque = this.cast::<()>();
+        let handle = WtfTimerHandle::from_ptr(this).expect("WTFTimer pointer is non-null");
         // SAFETY: per fn contract — `this` is live; copy the `BackRef` out so the
-        // subsequent `&AtomicPtr` borrow is detached from `*this`.
+        // subsequent atomic borrow is detached from `*this`.
         let imminent_br = unsafe { (*this).imminent };
         let imminent = imminent_br.get();
 
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
         if !(seconds > 0.0) {
-            let _ = imminent.compare_exchange(
-                ptr::null_mut(),
-                self_opaque,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
+            let _ = imminent.try_set_if_empty(handle);
             return;
         }
         // Clear imminent if this timer was the one that set it.
-        let _ = imminent.compare_exchange(
-            self_opaque,
-            ptr::null_mut(),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
+        let _ = imminent.clear_if_current(handle);
 
         // seconds can be +inf: JSC's GC scheduler divides by gcTimeSlice, which is 0 whenever
         // bytes*deathRate truncates to 0. Other WTF::RunLoop backends saturate Seconds→int;
@@ -191,16 +175,11 @@ impl WTFTimer {
         // SAFETY: per fn contract.
         if unsafe { (*this).script_execution_context_id }.valid() {
             // Only clear imminent if this timer was the one that set it.
-            let self_opaque = this.cast::<()>();
+            let handle = WtfTimerHandle::from_ptr(this).expect("WTFTimer pointer is non-null");
             // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
             // into the VM's event loop, which outlives this timer.
             let imminent_br = unsafe { (*this).imminent };
-            let _ = imminent_br.compare_exchange(
-                self_opaque,
-                ptr::null_mut(),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
+            let _ = imminent_br.clear_if_current(handle);
 
             // SAFETY: per fn contract.
             if unsafe { (*this).event_loop_timer.state } == EventLoopTimerState::ACTIVE {
@@ -226,16 +205,11 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live.
         unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
         // Only clear imminent if this timer was the one that set it.
-        let self_opaque = this.cast::<()>();
+        let handle = WtfTimerHandle::from_ptr(this).expect("WTFTimer pointer is non-null");
         // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
         // into the VM's event loop, which outlives this timer.
         let imminent_br = unsafe { (*this).imminent };
-        let _ = imminent_br.compare_exchange(
-            self_opaque,
-            ptr::null_mut(),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
+        let _ = imminent_br.clear_if_current(handle);
         // SAFETY: per fn contract — `this` is live.
         unsafe { (*this).run_without_removing() };
     }

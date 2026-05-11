@@ -6,3 +6,4 @@ pub mod process_exit;
 pub mod reader;
 pub mod shell;
 pub mod subprocess;
+pub mod timer;

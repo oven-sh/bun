@@ -3,18 +3,20 @@
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
 //! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
 //! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
-//! `bun_runtime` types and are hoisted to that tier via link-time
-//! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
+//! `bun_runtime` types and are hoisted to that tier via typed sidecar handles
+//! plus link-time `extern "Rust"` (`__bun_tick_queue_with_count` /
+//! `__bun_run_immediate_task`);
 //! `auto_tick`/`auto_tick_active` likewise
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_jsc_types::event_loop::JsEventLoopHandle;
+use bun_runtime_types::timer::{ImmediateTaskHandle, ImminentWtfTimer, WtfTimerHandle};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -63,12 +65,11 @@ pub struct EventLoop {
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
-    /// (cycle). Low tier stores the erased pointer; the high-tier hook
-    /// (link-time `__bun_run_immediate_task`) casts it back.
-    pub immediate_tasks: Vec<*mut ()>,
-    pub next_immediate_tasks: Vec<*mut ()>,
+    /// PORT NOTE (§Dispatch): the real `bun_runtime::timer::ImmediateObject`
+    /// lives in the higher-tier crate (cycle). Low tier stores a typed sidecar
+    /// handle; the high-tier hook recovers the concrete runtime type.
+    pub immediate_tasks: Vec<ImmediateTaskHandle>,
+    pub next_immediate_tasks: Vec<ImmediateTaskHandle>,
 
     pub concurrent_tasks: ConcurrentQueue,
     // TODO(port): lifetime — *JSGlobalObject backref owned by VM
@@ -89,13 +90,8 @@ pub struct EventLoop {
     pub debug: Debug,
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
-    /// `std.atomic.Value(?*Timer.WTFTimer)` — atomic nullable pointer.
-    ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
-    /// Low tier stores the erased pointer; the high-tier hook installed via
-    /// (link-time `__bun_run_wtf_timer`) casts it back.
-    pub imminent_gc_timer: AtomicPtr<()>,
+    /// `std.atomic.Value(?*Timer.WTFTimer)` — atomic nullable timer handle.
+    pub imminent_gc_timer: ImminentWtfTimer,
 
     #[cfg(unix)]
     // TODO(port): lifetime — ?*PosixSignalHandle (boxed, process-lifetime)
@@ -124,7 +120,7 @@ impl Default for EventLoop {
             debug: Debug::default(),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
-            imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
+            imminent_gc_timer: ImminentWtfTimer::new(),
             #[cfg(unix)]
             signal_handler: None,
             #[cfg(not(unix))]
@@ -253,13 +249,11 @@ unsafe extern "Rust" {
         vm: *mut VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), JsTerminated>;
-    /// `ImmediateObject::runImmediateTask` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_immediate_task(task: *mut (), vm: *mut VirtualMachine) -> bool;
-    /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
+    /// `ImmediateObject::runImmediateTask`; returns whether the callback threw.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    fn __bun_run_immediate_task(task: ImmediateTaskHandle, vm: *mut VirtualMachine) -> bool;
+    /// `WTFTimer::run`. Defined in `bun_runtime::dispatch`. Link-time resolved.
+    fn __bun_run_wtf_timer(timer: WtfTimerHandle, vm: *mut VirtualMachine);
 }
 
 #[inline]
@@ -498,13 +492,12 @@ impl EventLoop {
 
     pub fn run_imminent_gc_timer(&mut self) {
         // Spec event_loop.zig:302-306: `if (swap()) |timer| timer.run(vm)`.
-        // The real `WTFTimer` lives in `bun_runtime` (cycle), so the body
-        // dispatches through `__bun_run_wtf_timer` (link-time extern).
-        let ptr = self.imminent_gc_timer.swap(core::ptr::null_mut(), Ordering::SeqCst);
-        if !ptr.is_null() {
-            // SAFETY: `ptr` was published by `WTFTimer::update` and remains
+        // The real `WTFTimer` lives in `bun_runtime` (cycle), so the sidecar
+        // handle dispatches through `__bun_run_wtf_timer` (link-time extern).
+        if let Some(timer) = self.imminent_gc_timer.take() {
+            // SAFETY: `timer` was published by `WTFTimer::update` and remains
             // valid until `run` removes it; `vm()` is the live owning VM.
-            unsafe { __bun_run_wtf_timer(ptr, self.vm()) };
+            unsafe { __bun_run_wtf_timer(timer, self.vm()) };
         }
     }
 
@@ -714,9 +707,10 @@ impl EventLoop {
         self.next_immediate_tasks = Vec::new();
     }
 
-    /// PORT NOTE (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
+    /// PORT NOTE (§Dispatch): `task` names a live
+    /// `bun_runtime::timer::ImmediateObject` without making this crate depend
+    /// on `bun_runtime`.
+    pub fn enqueue_immediate_task(&mut self, task: ImmediateTaskHandle) {
         self.immediate_tasks.push(task);
     }
 
@@ -737,7 +731,7 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
+            // SAFETY: ImmediateObject handles are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };

@@ -286,10 +286,11 @@ impl TimerObjectInternals {
             let parent = unsafe {
                 bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self))
             };
-            // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
-            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
-            // to `*mut ImmediateObject`.
-            unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
+            let task = bun_runtime_types::timer::ImmediateTaskHandle::from_ptr(parent)
+                .expect("ImmediateObject pointer is non-null");
+            // SAFETY: `vm` is the live per-thread VM. Low tier stores the
+            // typed sidecar handle; `bun_runtime` owns the concrete pointee.
+            unsafe { (*vm).enqueue_immediate_task(task) };
             self.set_enable_keeping_event_loop_alive(vm, true);
             // ref'd by event loop
             self.ref_();

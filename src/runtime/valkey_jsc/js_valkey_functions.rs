@@ -28,8 +28,8 @@ const fn bname(b: &'static [u8]) -> &'static str {
 fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
     if this.is_subscriber() {
         // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
-        // SAFETY: `global_object` is set at construction and outlives the client.
-        let global = unsafe { &*this.global_object };
+        // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
+        let global: &JSGlobalObject = &this.global_object;
         return Err(global
             .err(
                 ErrorCode::REDIS_INVALID_STATE,
@@ -46,8 +46,8 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResu
 fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
     if !this.is_subscriber() {
         // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
-        // SAFETY: `global_object` is set at construction and outlives the client.
-        let global = unsafe { &*this.global_object };
+        // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
+        let global: &JSGlobalObject = &this.global_object;
         return Err(global
             .err(
                 ErrorCode::REDIS_INVALID_STATE,

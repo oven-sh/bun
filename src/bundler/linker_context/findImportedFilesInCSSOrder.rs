@@ -307,17 +307,8 @@ pub fn find_imported_files_in_css_order<'a>(
             core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
         ),
         visited: Vec::<Index>::init_capacity(16),
-        // SAFETY: re-borrow the same column slices; lifetime erased to decouple
-        // from the shared `this.graph` borrow (Zig holds these as raw slice views).
-        css_asts: unsafe {
-            core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
-        },
-        all_import_records: unsafe {
-            core::slice::from_raw_parts(
-                all_import_records_slice.as_ptr(),
-                all_import_records_slice.len(),
-            )
-        },
+        css_asts: css_asts_slice,
+        all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
     };
@@ -333,9 +324,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut wip_order =
         Vec::<CssImportOrder>::init_capacity(order.len() as usize);
 
-    let css_asts: &[crate::bundled_ast::CssCol] = unsafe {
-        core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
-    };
+    let css_asts: &[crate::bundled_ast::CssCol] = css_asts_slice;
 
     debug_css_order(this, &order, CssOrderDebugStep::BeforeHoisting);
 

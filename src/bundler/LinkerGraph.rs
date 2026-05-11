@@ -647,11 +647,9 @@ impl LinkerGraph {
 
             let distances: &mut [u32] = files_cols.distance_from_entry_point;
             distances.fill(File::default().distance_from_entry_point);
-            // SAFETY: `Index` is `#[repr(transparent)]` over `u32`;
-            // reinterpreting `[Index]` as `[u32]` is sound. The arena-allocated
-            // slice is never freed individually (whole arena dropped with
-            // `BundleV2`), so a borrowed `Vec` is correct.
-            self.stable_source_indices = unsafe { core::slice::from_raw_parts(stable_source_indices.as_ptr().cast::<u32>(), stable_source_indices.len()) }.to_vec();
+            // `Index` is `#[repr(transparent)]` over `u32`; the field stores
+            // raw `u32` so unwrap via `.get()` (no slice reinterpret needed).
+            self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
         }
 
         {

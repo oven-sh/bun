@@ -4642,11 +4642,7 @@ impl<'a> BundleV2<'a> {
                 debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
             }
         }
-        // SAFETY: Index is `#[repr(transparent)]` over u32 (= IndexInt); slice reinterpret
-        // via raw-pointer `.cast()` is sound.
-        self.linker.compute_data_for_source_map(unsafe {
-            core::slice::from_raw_parts(js_reachable_files.as_ptr().cast::<IndexInt>(), js_reachable_files.len())
-        });
+        self.linker.compute_data_for_source_map(js_reachable_files);
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */

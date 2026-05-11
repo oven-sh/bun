@@ -515,7 +515,7 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
-    pub fn compute_data_for_source_map(&mut self, reachable: &[crate::IndexInt]) {
+    pub fn compute_data_for_source_map(&mut self, reachable: &[Index]) {
         debug_assert!(self.options.source_maps != SourceMapOption::None);
         self.source_maps.line_offset_wait_group = WaitGroup::init_with_count(reachable.len());
         self.source_maps.quoted_contents_wait_group = WaitGroup::init_with_count(reachable.len());
@@ -546,7 +546,7 @@ impl<'a> LinkerContext<'a> {
         {
             *line_offset = SourceMapDataTask {
                 ctx,
-                source_index: *source_index,
+                source_index: source_index.get(),
                 thread_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
                     callback: SourceMapDataTask::run_line_offset,
@@ -554,7 +554,7 @@ impl<'a> LinkerContext<'a> {
             };
             *quoted = SourceMapDataTask {
                 ctx,
-                source_index: *source_index,
+                source_index: source_index.get(),
                 thread_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
                     callback: SourceMapDataTask::run_quoted_source_contents,
@@ -658,11 +658,7 @@ impl<'a> LinkerContext<'a> {
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
         if self.options.source_maps != SourceMapOption::None {
-            // SAFETY: Index is repr(transparent) u32 wrapper; reinterpret slice
-            let reachable_ints: &[crate::IndexInt] = unsafe {
-                core::slice::from_raw_parts(reachable.as_ptr().cast(), reachable.len())
-            };
-            self.compute_data_for_source_map(reachable_ints);
+            self.compute_data_for_source_map(reachable);
         }
 
         self.process_html_import_files();

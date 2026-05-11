@@ -414,13 +414,16 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
   void *marked = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx);
   X509_STORE *store;
   if (marked) {
-    /* Second+ addCACert on this CTX: reuse the store we installed last time. */
+    /* CTX already carries default roots + user CAs — set by a prior
+     * `addCACert` or by the `options.ca` / `ca_file_name` / `request_cert`
+     * branches of `us_ssl_ctx_build_raw`. Append to that store instead of
+     * swapping in a fresh one, which would drop the existing CAs. */
     store = SSL_CTX_get_cert_store(ctx);
   } else {
-    /* First call: install the default_ca_store so the added CA joins (not
-     * replaces) OS/baked-in trust anchors. The mark below is what tells the
-     * client attach path to keep this store instead of overriding it with
-     * the shared default roots. */
+    /* First user-CA installation on this CTX: swap in the default_ca_store
+     * so the added CA joins (not replaces) OS/baked-in trust anchors. The
+     * mark below is what tells the client attach path to keep this store
+     * instead of overriding it with the shared default roots. */
     store = us_get_default_ca_store();
     if (store == NULL) return 0;
     SSL_CTX_set_cert_store(ctx, store);

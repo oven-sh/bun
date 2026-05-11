@@ -1,5 +1,8 @@
+use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
+
+use bun_jsc::JsCell;
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
@@ -179,41 +182,52 @@ impl bun_jsc::JsClass for Response {
     }
 }
 
+/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Response` (not
+/// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
+/// instance. Fields mutated by host-fns are therefore wrapped in `Cell` (Copy
+/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
+/// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
+///
+/// Exception: the `BodyMixin` trait family (`get_text`/`get_json`/...) still
+/// takes `&mut self` — the trait is shared with `Request` (not yet migrated).
+/// Those methods reach mutable state exclusively through the `JsCell`-wrapped
+/// `body`, so the `UnsafeCell` indirection still suppresses field-level
+/// `noalias` caching across re-entry.
 #[repr(C)]
 pub struct Response {
-    body: Body,
-    init: Init,
+    body: JsCell<Body>,
+    init: JsCell<Init>,
     // PORT NOTE: `OwnedString` is `#[repr(transparent)]` over `BunString`, so
     // the C ABI layout is unchanged. We use it (not raw `BunString`) so the
     // field's drop glue actually releases the WTF refcount — `BunString` is
     // `Copy` and has no `Drop`.
-    url: OwnedString,
-    redirected: bool,
+    url: JsCell<OwnedString>,
+    redirected: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
-    pub ref_count: u32,
+    pub ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     pub weak_ptr_data: WeakPtrData,
-    js_ref: JsRef,
+    js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
-    reported_estimated_size: usize,
+    reported_estimated_size: Cell<usize>,
 }
 
 impl Default for Response {
     fn default() -> Self {
         Self {
-            body: Body::default(),
-            init: Init::default(),
-            url: OwnedString::new(BunString::empty()),
-            redirected: false,
-            ref_count: 1,
+            body: JsCell::new(Body::default()),
+            init: JsCell::new(Init::default()),
+            url: JsCell::new(OwnedString::new(BunString::empty())),
+            redirected: Cell::new(false),
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
-            js_ref: JsRef::empty(),
-            reported_estimated_size: 0,
+            js_ref: JsCell::new(JsRef::empty()),
+            reported_estimated_size: Cell::new(0),
         }
     }
 }
@@ -267,7 +281,7 @@ impl BodyMixin for Response {
         // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.headers.as_ref().map(|h| {
+        self.init.get().headers.as_ref().map(|h| {
             core::ptr::NonNull::new(h.as_ptr()).expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
@@ -331,34 +345,36 @@ impl Response {
 impl Response {
     pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
         Response {
-            init: response_init,
-            body,
-            url: OwnedString::new(url),
-            redirected,
+            init: JsCell::new(response_init),
+            body: JsCell::new(body),
+            url: JsCell::new(OwnedString::new(url)),
+            redirected: Cell::new(redirected),
             ..Default::default()
         }
     }
 
     /// Takes ownership (+1) of `status_text`.
     #[inline]
-    pub fn set_init(&mut self, method: Method, status_code: u16, status_text: BunString) {
-        self.init.method = method;
-        self.init.status_code = status_code;
-        // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
-        // previous WTF impl — matching Zig's explicit `status_text.deref()`
-        // before reassignment (Response.zig:54).
-        self.init.status_text = OwnedString::new(status_text);
+    pub fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
+        self.init.with_mut(|init| {
+            init.method = method;
+            init.status_code = status_code;
+            // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
+            // previous WTF impl — matching Zig's explicit `status_text.deref()`
+            // before reassignment (Response.zig:54).
+            init.status_text = OwnedString::new(status_text);
+        });
     }
 
     #[inline]
-    pub fn set_init_headers(&mut self, headers: Option<HeadersRef>) {
+    pub fn set_init_headers(&self, headers: Option<HeadersRef>) {
         // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.headers = headers;
+        self.init.with_mut(|init| init.headers = headers);
     }
 
     #[inline]
     pub fn get_init_status_code(&self) -> u16 {
-        self.init.status_code
+        self.init.get().status_code
     }
 
     /// Borrowed (+0) — bitwise copy of the inner `BunString`, matching Zig's
@@ -366,21 +382,21 @@ impl Response {
     /// result; call `.clone()` on it if a +1 is needed.
     #[inline]
     pub fn get_init_status_text(&self) -> BunString {
-        self.init.status_text.get()
+        self.init.get().status_text.get()
     }
 
     /// Takes ownership (+1) of `url`.
     #[inline]
-    pub fn set_url(&mut self, url: BunString) {
+    pub fn set_url(&self, url: BunString) {
         // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
         // previous WTF impl — matching Zig's explicit `this.#url.deref()`
         // before reassignment (Response.zig:70).
-        self.url = OwnedString::new(url);
+        self.url.set(OwnedString::new(url));
     }
 
     #[inline]
     pub fn get_utf8_url(&self) -> bun_str::ZigStringSlice {
-        self.url.to_utf8()
+        self.url.get().to_utf8()
     }
 
     /// Internal accessor: borrowed (+0) bitwise copy of the URL string,
@@ -392,39 +408,47 @@ impl Response {
     /// `get_url` (codegen calls that name) and this becomes `url()`.
     #[inline]
     pub fn url(&self) -> BunString {
-        self.url.get()
+        self.url.get().get()
     }
 
     #[inline]
     pub fn get_init_headers(&self) -> Option<&FetchHeaders> {
-        self.init.headers.as_deref()
-    }
-
-    #[inline]
-    pub fn get_init_headers_mut(&mut self) -> Option<&mut FetchHeaders> {
-        self.init.headers.as_deref_mut()
-    }
-
-    #[inline]
-    pub fn swap_init_headers(&mut self) -> Option<HeadersRef> {
-        self.init.headers.take()
-    }
-
-    #[inline]
-    pub fn get_method(&self) -> Method {
-        self.init.method
-    }
-
-    pub fn estimated_size(this: &Response) -> usize {
-        this.reported_estimated_size
+        self.init.get().headers.as_deref()
     }
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
+    pub fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
+        // SAFETY: R-2 `JsCell` escape hatch — single-JS-thread invariant. The
+        // `&mut FetchHeaders` is derived from a stable C++ heap pointer and is
+        // not held across calls that re-enter Response host-fns.
+        unsafe { self.init.get_mut() }.headers.as_deref_mut()
+    }
+
+    #[inline]
+    pub fn swap_init_headers(&self) -> Option<HeadersRef> {
+        self.init.with_mut(|init| init.headers.take())
+    }
+
+    #[inline]
+    pub fn get_method(&self) -> Method {
+        self.init.get().method
+    }
+
+    pub fn estimated_size(this: &Response) -> usize {
+        this.reported_estimated_size.get()
+    }
+
+    /// R-2: returns `&mut BodyValue` from `&self` via the `JsCell` escape
+    /// hatch. Callers must keep the borrow short and not hold it across calls
+    /// that may re-enter a `Response` host-fn (which could project a second
+    /// `&mut` to the same `body`).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn get_body_value(&self) -> &mut BodyValue {
-        // R-2: `Body.value` is `JsCell<Value>`; project `&mut` through the
+        // R-2: both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
-        self.body.value_mut()
+        self.body.get().value_mut()
     }
 }
 
@@ -435,7 +459,7 @@ impl Response {
 impl Response {
     #[inline]
     pub fn get_body_len(&self) -> usize {
-        self.body.len() as usize
+        self.body.get().len() as usize
     }
 
     pub fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -449,16 +473,18 @@ impl Response {
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
     }
 
-    pub fn calculate_estimated_byte_size(&mut self) {
-        self.reported_estimated_size = self.body.value.get().estimated_size()
-            + self.url.byte_slice().len()
-            + self.init.status_text.byte_slice().len()
-            + mem::size_of::<Response>();
+    pub fn calculate_estimated_byte_size(&self) {
+        self.reported_estimated_size.set(
+            self.body.get().value.get().estimated_size()
+                + self.url.get().byte_slice().len()
+                + self.init.get().status_text.byte_slice().len()
+                + mem::size_of::<Response>(),
+        );
     }
 
-    fn check_body_stream_ref(&mut self, global_object: &JSGlobalObject) {
-        if let Some(js_value) = self.js_ref.try_get() {
-            if let BodyValue::Locked(locked) = self.body.value_mut() {
+    fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
+        if let Some(js_value) = self.js_ref.get().try_get() {
+            if let BodyValue::Locked(locked) = self.body.get().value_mut() {
                 if let Some(stream) = locked.readable.get(global_object) {
                     // we dont hold a strong reference to the stream we will guard it in js.gc.stream
                     // so we avoid cycled references
@@ -473,12 +499,18 @@ impl Response {
         }
     }
 
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
-        let js_value = js::to_js(std::ptr::from_mut::<Self>(self).cast::<()>(), global_object);
-        self.js_ref = JsRef::init_weak(js_value);
+        // R-2: cast through `*const` then `.cast_mut()` so the payload pointer
+        // (which the C++ side stores into `m_ctx`) is derived from `&self`
+        // without forging a `&mut`.
+        let js_value = js::to_js(
+            core::ptr::from_ref::<Self>(self).cast_mut().cast::<()>(),
+            global_object,
+        );
+        self.js_ref.set(JsRef::init_weak(js_value));
 
         self.check_body_stream_ref(global_object);
         js_value
@@ -486,7 +518,7 @@ impl Response {
 
     #[inline]
     pub fn get_body_readable_stream(&self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
-        if let Some(js_ref) = self.js_ref.try_get() {
+        if let Some(js_ref) = self.js_ref.get().try_get() {
             if let Some(stream) = js::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
                 return match ReadableStream::from_js(stream, global_object) {
@@ -498,27 +530,27 @@ impl Response {
                 };
             }
         }
-        if let BodyValue::Locked(locked) = self.body.value.get() {
+        if let BodyValue::Locked(locked) = self.body.get().value.get() {
             return locked.readable.get(global_object);
         }
         None
     }
 
     #[inline]
-    pub fn detach_readable_stream(&mut self, global_object: &JSGlobalObject) {
-        if let Some(js_ref) = self.js_ref.try_get() {
+    pub fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
+        if let Some(js_ref) = self.js_ref.get().try_get() {
             // Zig `js.gc.stream.clear` ⇒ `set(.., .zero)`.
             js::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
-        if let BodyValue::Locked(locked) = self.body.value_mut() {
+        if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             // old readable dropped; reset to empty
             locked.readable = Default::default();
         }
     }
 
     #[inline]
-    pub fn set_size_hint(&mut self, size_hint: super::blob::SizeType) {
-        if let BodyValue::Locked(locked) = self.body.value_mut() {
+    pub fn set_size_hint(&self, size_hint: super::blob::SizeType) {
+        if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;
             if let Some(readable) = locked.readable.get(locked.global()) {
                 if let super::readable_stream::Source::Bytes(bytes) = &readable.ptr {
@@ -549,7 +581,7 @@ pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObje
     if let Some(response) = this_value.as_::<Response>() {
         // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
         // R-2: deref as shared — `Body.value` is `JsCell`.
-        return JSValue::from(!unsafe { &*response }.body.value.get().is_definitely_empty());
+        return JSValue::from(!unsafe { &*response }.body.get().value.get().is_definitely_empty());
     } else if let Some(request) = this_value.as_::<Request>() {
         // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
         // R-2: deref as shared — `get_body_value` takes `&self`.
@@ -616,12 +648,12 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
 
 impl Response {
     pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.headers.as_deref()
+        self.init.get().headers.as_deref()
     }
 
     #[inline]
     pub fn status_code(&self) -> u16 {
-        self.init.status_code
+        self.init.get().status_code
     }
 }
 
@@ -629,20 +661,23 @@ pub struct Props {}
 
 // ─── un-gated getters & header helpers ──────────────────────────────────────
 impl Response {
-    pub fn redirect_location(&mut self) -> Option<ZigString> {
+    pub fn redirect_location(&self) -> Option<ZigString> {
         self.header(HTTPHeaderName::Location)
     }
 
-    pub fn header(&mut self, name: HTTPHeaderName) -> Option<ZigString> {
+    pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
         // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
         // owned `ZigString` instead of a borrowed slice. Callers do
         // `.slice()` themselves.
-        self.init.headers.as_mut()?.fast_get(name)
+        // SAFETY: R-2 `JsCell` escape hatch — the `&mut FetchHeaders` is a
+        // C++-side opaque handle; the FFI out-param write does not re-enter JS.
+        unsafe { self.init.get_mut() }.headers.as_mut()?.fast_get(name)
     }
 
     pub fn is_ok(&self) -> bool {
-        self.init.status_code >= 200 && self.init.status_code <= 299
+        let status_code = self.init.get().status_code;
+        status_code >= 200 && status_code <= 299
     }
 
     // PORT NOTE: Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
@@ -650,12 +685,12 @@ impl Response {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        this.url.to_js(global_this)
+        this.url.get().to_js(global_this)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.init.status_code < 200 {
+        if this.init.get().status_code < 200 {
             return Ok(global_this.common_strings().error());
         }
 
@@ -665,13 +700,13 @@ impl Response {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        this.init.status_text.to_js(global_this)
+        this.init.get().status_text.to_js(global_this)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
-        JSValue::from(this.redirected)
+        JSValue::from(this.redirected.get())
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
@@ -683,20 +718,25 @@ impl Response {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        JSValue::js_number(this.init.status_code as f64)
+        JSValue::js_number(this.init.get().status_code as f64)
     }
 
-    fn get_or_create_headers(&mut self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
-        if self.init.headers.is_none() {
-            self.init.headers = Some(HeadersRef::create_empty());
+    #[allow(clippy::mut_from_ref)]
+    fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+        // SAFETY: R-2 `JsCell` escape hatch — single-JS-thread invariant. The
+        // returned `&mut HeadersRef` borrows `self.init`; callers
+        // (`get_headers`, `construct_*`) do not hold the borrow across calls
+        // that re-enter Response host-fns.
+        let init = unsafe { self.init.get_mut() };
+        if init.headers.is_none() {
+            init.headers = Some(HeadersRef::create_empty());
 
-            if let BodyValue::Blob(blob) = self.body.value.get() {
+            if let BodyValue::Blob(blob) = self.body.get().value.get() {
                 // SAFETY: Blob.content_type is always a valid (possibly empty) slice
                 // pointer (see Blob::default()/set_content_type contract).
                 let content_type = unsafe { &*blob.content_type.get() };
                 if !content_type.is_empty() {
-                    self.init
-                        .headers
+                    init.headers
                         .as_mut()
                         .unwrap()
                         .put(HTTPHeaderName::ContentType, content_type, global_this)?;
@@ -704,25 +744,24 @@ impl Response {
             }
         }
 
-        Ok(self.init.headers.as_mut().unwrap())
+        Ok(init.headers.as_mut().unwrap())
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_headers(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
     pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
-        if let Some(headers) = self.init.headers.as_ref() {
-            // SAFETY: `HeadersRef` wraps a live C++ `FetchHeaders` handle;
-            // `fast_get` only writes a stack out-param via FFI. R-2: route via
-            // raw `*mut` from `as_ptr()` rather than `&mut self.init.headers`.
-            if let Some(value) = unsafe { (*headers.as_ptr()).fast_get(HTTPHeaderName::ContentType) } {
+        // SAFETY: R-2 `JsCell` escape hatch — `fast_get` (FFI out-param write)
+        // does not re-enter JS.
+        if let Some(headers) = unsafe { self.init.get_mut() }.headers.as_mut() {
+            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_slice()));
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.value.get() {
+        if let BodyValue::Blob(blob) = self.body.get().value.get() {
             // SAFETY: see note in get_or_create_headers.
             let content_type = unsafe { &*blob.content_type.get() };
             if !content_type.is_empty() {
@@ -740,7 +779,7 @@ impl Response {
 
 impl Response {
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
+        &self,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -754,7 +793,7 @@ impl Response {
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
         let js_err = |_: JsError| core::fmt::Error;
 
-        write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.body.len() as usize, Default::default()))?;
+        write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.get_body_len(), Default::default()))?;
 
         {
             formatter.indent_inc();
@@ -775,20 +814,20 @@ impl Response {
 
             formatter.write_indent(writer)?;
             write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \""))?;
-            write!(writer, "{}", Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (&self.url,)))?;
+            write!(writer, "{}", Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (self.url.get(),)))?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Double, writer, JSValue::js_number(self.init.status_code as f64), bun_jsc::JSType::NumberObject).map_err(js_err)?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Double, writer, JSValue::js_number(self.init.get().status_code as f64), bun_jsc::JSType::NumberObject).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> "))?;
-            write!(writer, "{}", Output::pretty_fmt_args("<r>\"<b>{}<r>\"", ENABLE_ANSI_COLORS, (&self.init.status_text,)))?;
+            write!(writer, "{}", Output::pretty_fmt_args("<r>\"<b>{}<r>\"", ENABLE_ANSI_COLORS, (&self.init.get().status_text,)))?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
@@ -801,12 +840,14 @@ impl Response {
 
             formatter.write_indent(writer)?;
             write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> "))?;
-            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.redirected), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
+            formatter.print_as::<_, ENABLE_ANSI_COLORS>(bun_jsc::FormatAs::Boolean, writer, JSValue::from(self.redirected.get()), bun_jsc::JSType::BooleanObject).map_err(js_err)?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
+            // `&mut self`; single-JS-thread invariant.
+            unsafe { self.body.get_mut() }.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             // indent restored by `_indent_guard` on scope exit (incl. error returns)
         }
         writer.write_str("\n")?;
@@ -817,7 +858,7 @@ impl Response {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn do_clone(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_clone(this: &Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
@@ -835,7 +876,7 @@ impl Response {
         // Update the original response's body cache with the new teed stream.
         // At this point, this.body.value.Locked.readable still holds the teed stream
         // because checkBodyStreamRef hasn't been called on the original response yet.
-        if let BodyValue::Locked(locked) = this.body.value.get() {
+        if let BodyValue::Locked(locked) = this.body.get().value.get() {
             if let Some(readable) = locked.readable.get(global_this) {
                 js::body_set_cached(this_value, global_this, readable.value);
             }
@@ -851,35 +892,39 @@ impl Response {
         unsafe { (*ptr).to_js(global_object) }
     }
 
-    pub fn clone_value(&mut self, global_this: &JSGlobalObject) -> JsResult<Response> {
+    pub fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
+        // SAFETY: R-2 `JsCell` escape hatch — `Body::clone`/
+        // `clone_with_readable_stream` take `&mut self` (they may tee a
+        // ReadableStream); single-JS-thread invariant.
+        let body_mut = unsafe { self.body.get_mut() };
         let body = 'brk: {
-            if let Some(js_ref) = self.js_ref.try_get() {
+            if let Some(js_ref) = self.js_ref.get().try_get() {
                 if let Some(stream) = js::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(readable) = readable.as_mut() {
-                        break 'brk self.body.clone_with_readable_stream(global_this, Some(readable))?;
+                        break 'brk body_mut.clone_with_readable_stream(global_this, Some(readable))?;
                     }
                 }
             }
 
-            self.body.clone(global_this)?
+            body_mut.clone(global_this)?
         };
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload (Response.zig:433).
         let body = scopeguard::guard(body, |b| b.reset());
-        let init = self.init.clone(global_this)?;
+        let init = self.init.get().clone(global_this)?;
         // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
         Ok(Response {
-            body: scopeguard::ScopeGuard::into_inner(body),
-            init,
-            url: self.url.clone(),
-            redirected: self.redirected,
+            body: JsCell::new(scopeguard::ScopeGuard::into_inner(body)),
+            init: JsCell::new(init),
+            url: JsCell::new(self.url.get().clone()),
+            redirected: Cell::new(self.redirected.get()),
             ..Default::default()
         })
     }
 
-    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
+    pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
         Ok(bun_core::heap::into_raw(Box::new(self.clone_value(global_this)?)))
     }
 
@@ -901,10 +946,10 @@ impl Response {
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url: OwnedString` — assignment drops the old value (WTF deref).
             // - `JsRef` — assignment drops the `Strong` arm (HandleSlot freed).
-            (*this).init = Init::default();
-            (*this).body.reset();
-            (*this).url = OwnedString::new(BunString::empty());
-            (*this).js_ref = JsRef::empty();
+            (*this).init.set(Init::default());
+            (*this).body.get_mut().reset();
+            (*this).url.set(OwnedString::new(BunString::empty()));
+            (*this).js_ref.set(JsRef::empty());
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
@@ -924,7 +969,7 @@ impl Response {
     pub fn ref_(this: *mut Response) -> *mut Response {
         // SAFETY: intrusive refcount; caller holds a live reference
         unsafe {
-            (*this).ref_count += 1;
+            (*this).ref_count.set((*this).ref_count.get() + 1);
         }
         this
     }
@@ -932,9 +977,10 @@ impl Response {
     pub fn unref(this: *mut Response) {
         // SAFETY: intrusive refcount; caller holds a live reference
         unsafe {
-            debug_assert!((*this).ref_count > 0);
-            (*this).ref_count -= 1;
-            if (*this).ref_count == 0 {
+            let rc = (*this).ref_count.get();
+            debug_assert!(rc > 0);
+            (*this).ref_count.set(rc - 1);
+            if rc == 1 {
                 Self::destroy(this);
             }
         }
@@ -945,7 +991,7 @@ impl Response {
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
-        this.js_ref.finalize();
+        this.js_ref.with_mut(JsRef::finalize);
         Self::unref(this);
     }
 
@@ -963,13 +1009,13 @@ impl Response {
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
         // stack value in a scopeguard that calls `body.reset()` (Zig's
         // `body.deinit`) on early return; disarmed before `heap::alloc`.
-        let mut response = scopeguard::guard(
+        let response = scopeguard::guard(
             Response {
-                body: Body::new(BodyValue::Empty),
-                init: Init { status_code: 200, ..Default::default() },
+                body: JsCell::new(Body::new(BodyValue::Empty)),
+                init: JsCell::new(Init { status_code: 200, ..Default::default() }),
                 ..Default::default()
             },
-            |r| r.body.reset(),
+            |r| r.body.get().reset(),
         );
         let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
 
@@ -1009,7 +1055,7 @@ impl Response {
                 if let Some(bytes) = unsafe { (*wtf).to_utf8_if_needed() } {
                     // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
                     unsafe { (*wtf).deref() };
-                    response.body.value.set(BodyValue::InternalBlob(InternalBlob {
+                    response.body.get().value.set(BodyValue::InternalBlob(InternalBlob {
                         // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
                         // transfers here as Vec<u8>.
                         bytes: bytes.into_vec(),
@@ -1019,7 +1065,7 @@ impl Response {
                     // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
                     // We already hold the +1 from `leak_wtf_impl`; transfer it
                     // into the body value.
-                    response.body.value.set(BodyValue::WTFStringImpl(wtf));
+                    response.body.get().value.set(BodyValue::WTFStringImpl(wtf));
                 }
             }
         }
@@ -1028,11 +1074,13 @@ impl Response {
             if arg_init.is_undefined_or_null() {
                 // no-op
             } else if arg_init.is_number() {
-                response.init.status_code =
-                    u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                response.init.with_mut(|i| {
+                    i.status_code =
+                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                });
             } else {
                 match Init::init(global_this, arg_init) {
-                    Ok(Some(init)) => response.init = init,
+                    Ok(Some(init)) => response.init.set(init),
                     Ok(None) => {}
                     Err(e) if e == bun_jsc::JsError::Thrown => return Ok(JSValue::ZERO),
                     Err(_) => {}
@@ -1080,10 +1128,10 @@ impl Response {
 
         let mut url_string_slice = ZigStringSlice::empty();
         // url_string_slice drops at scope exit
-        let mut response: Response = 'brk: {
-            let mut response = Response {
-                init: Init { status_code: 302, ..Default::default() },
-                body: Body::new(BodyValue::Empty),
+        let response: Response = 'brk: {
+            let response = Response {
+                init: JsCell::new(Init { status_code: 302, ..Default::default() }),
+                body: JsCell::new(Body::new(BodyValue::Empty)),
                 ..Default::default()
             };
 
@@ -1102,14 +1150,16 @@ impl Response {
                 if arg_init.is_undefined_or_null() {
                     // no-op
                 } else if arg_init.is_number() {
-                    response.init.status_code = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                    let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                    response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
                     // errdefer response.init.deinit() — handled by Init's drop glue on `?` below
-                    response.init = init;
+                    response.init.set(init);
 
-                    if response.init.status_code != 200 {
-                        response.init.status_code =
-                            Self::validate_redirect_status_code(global_this, i32::from(response.init.status_code))?;
+                    let status = response.init.get().status_code;
+                    if status != 200 {
+                        let status = Self::validate_redirect_status_code(global_this, i32::from(status))?;
+                        response.init.with_mut(|i| i.status_code = status);
                     }
                 }
             }
@@ -1131,15 +1181,15 @@ impl Response {
     pub fn construct_error(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let response = bun_core::heap::into_raw(Box::new(Response {
-            init: Init { status_code: 0, ..Default::default() },
-            body: Body::new(BodyValue::Empty),
+            init: JsCell::new(Init { status_code: 0, ..Default::default() }),
+            body: JsCell::new(Body::new(BodyValue::Empty)),
             ..Default::default()
         }));
 
         // SAFETY: `response` is freshly boxed and uniquely owned here.
         let js_value = unsafe { (*response).to_js(global_this) };
         // SAFETY: `to_js` does not free the payload; still uniquely owned.
-        unsafe { (*response).js_ref = JsRef::init_weak(js_value) };
+        unsafe { (*response).js_ref.set(JsRef::init_weak(js_value)) };
         Ok(js_value)
     }
 
@@ -1159,10 +1209,10 @@ impl Response {
                             "new Response(s3File) do not support ResponseInit options",
                         )));
                     }
-                    let mut response = Response {
-                        init: Init { status_code: 302, ..Default::default() },
-                        body: Body::new(BodyValue::Empty),
-                        js_ref: JsRef::init_weak(js_this),
+                    let response = Response {
+                        init: JsCell::new(Init { status_code: 302, ..Default::default() }),
+                        body: JsCell::new(Body::new(BodyValue::Empty)),
+                        js_ref: JsCell::new(JsRef::init_weak(js_this)),
                         ..Default::default()
                     };
 
@@ -1194,7 +1244,7 @@ impl Response {
                         }
                     };
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
-                    response.redirected = true;
+                    response.redirected.set(true);
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
@@ -1262,18 +1312,18 @@ impl Response {
         // codegen constructor thunk receives this `*mut Response` and binds it
         // to `js_this`.
         let response = bun_core::heap::into_raw(Box::new(Response {
-            body,
-            init,
-            js_ref: JsRef::init_weak(js_this),
+            body: JsCell::new(body),
+            init: JsCell::new(init),
+            js_ref: JsCell::new(JsRef::init_weak(js_this)),
             ..Default::default()
         }));
         // SAFETY: `response` is freshly boxed and uniquely owned by this fn
         // until returned; reborrow for the trailing (infallible) setup.
-        let response = unsafe { &mut *response };
+        let resp_ref = unsafe { &*response };
 
-        response.calculate_estimated_byte_size();
-        response.check_body_stream_ref(global_this);
-        Ok(std::ptr::from_mut::<Response>(response))
+        resp_ref.calculate_estimated_byte_size();
+        resp_ref.check_body_stream_ref(global_this);
+        Ok(response)
     }
 }
 
@@ -1356,7 +1406,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.clone(global_this)?));
+                return Ok(Some(resp.init.get().clone(global_this)?));
             }
         }
 
@@ -1433,8 +1483,8 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
     // TODO(port): Zig signature says `Response` but body calls bun.new(Response, ...) —
     // it actually returns *Response. Preserving the heap-alloc behavior.
     bun_core::heap::into_raw(Box::new(Response {
-        body: Body::new(BodyValue::Null),
-        init: Init { status_code: status, ..Default::default() },
+        body: JsCell::new(Body::new(BodyValue::Null)),
+        init: JsCell::new(Init { status_code: status, ..Default::default() }),
         ..Default::default()
     }))
 }

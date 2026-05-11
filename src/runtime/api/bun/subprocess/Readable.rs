@@ -8,6 +8,7 @@ use bun_sys::{self, Fd, FdExt as _};
 use crate::node::types::FdJsc as _;
 
 use bun_io::max_buf::MaxBuf;
+use bun_io_types::reader::BufferedReaderHandle;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
 use crate::api::bun_spawn::stdio::Stdio;
@@ -52,6 +53,16 @@ impl Readable {
         match self {
             Readable::Pipe(pipe) => pipe.has_pending_activity(),
             _ => false,
+        }
+    }
+
+    pub fn buffered_reader_handle(&self) -> Option<BufferedReaderHandle> {
+        match self {
+            Readable::Pipe(pipe) => {
+                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive.
+                BufferedReaderHandle::from_ptr(unsafe { &raw mut (*pipe.as_ptr()).reader })
+            }
+            _ => None,
         }
     }
 

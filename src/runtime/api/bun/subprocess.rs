@@ -16,6 +16,8 @@ use bun_jsc::{
 use bun_jsc::{JsClass, SysErrorJsc};
 use bun_sys::{self, Fd, FdExt, SignalCode};
 use enumset::{EnumSet, EnumSetType};
+use bun_runtime_types::subprocess::SubprocessExitState;
+use bun_spawn_types::ProcessHandle;
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
@@ -144,6 +146,7 @@ pub struct Subprocess<'a> {
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
     /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
     pub process: bun_ptr::BackRef<Process>,
+    pub exit_state: SubprocessExitState,
     pub stdin: Writable<'a>,
     pub stdout: Readable,
     pub stderr: Readable,
@@ -943,6 +946,18 @@ impl Subprocess<'_> {
 
     pub fn on_process_exit(&mut self, process: *mut Process, status: Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
+        let Some(process_handle) = ProcessHandle::from_ptr(process) else {
+            Output::debug_warn(format_args!(
+                "<d>[Subprocess]<r> onProcessExit called with null process"
+            ));
+            return;
+        };
+        if !self.exit_state.matches_process_handle(process_handle) {
+            Output::debug_warn(format_args!(
+                "<d>[Subprocess]<r> onProcessExit called with wrong process"
+            ));
+            return;
+        }
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).

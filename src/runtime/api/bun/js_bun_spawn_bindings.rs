@@ -1176,6 +1176,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
         process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        exit_state: bun_runtime_types::subprocess::SubprocessExitState::new(),
         pid_rusage: None,
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1314,6 +1315,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess.stdout_maxbuf,
         IS_SYNC,
     );
+    if let Some(reader) = subprocess.stdout.buffered_reader_handle() {
+        subprocess.exit_state.record_stdout_reader(reader);
+    }
     subprocess.stderr = Readable::init(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
         event_loop_nn,
@@ -1322,6 +1326,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess.stderr_maxbuf,
         IS_SYNC,
     );
+    if let Some(reader) = subprocess.stderr.buffered_reader_handle() {
+        subprocess.exit_state.record_stderr_reader(reader);
+    }
 
     // For inline terminal options: close parent's slave_fd so EOF is received when child exits
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
@@ -1337,6 +1344,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: see `process_mut` doc; `subprocess_ptr` is the live JSC-allocated
     // Subprocess that owns `process` and outlives it.
+    subprocess.exit_state.record_process_handle(
+        bun_spawn_types::ProcessHandle::from_ptr(subprocess.process.as_ptr())
+            .expect("subprocess Process pointer is non-null"),
+    );
     unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_handler(unsafe {
         bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
     });

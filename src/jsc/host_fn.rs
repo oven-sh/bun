@@ -498,6 +498,110 @@ pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global, this_value))
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `_shared` siblings — `&T` receiver instead of `&mut T`.
+//
+// Emitted by `generate-classes.ts` when a `.classes.ts` definition sets
+// `sharedThis: true` (R-2 noalias re-entrancy). `&mut T` carries LLVM
+// `noalias`, so a host-fn that re-enters JS while holding `&mut self` lets
+// the optimiser cache `*self` fields across the FFI call — proven miscompile
+// in `NodeHTTPResponse::cork` (b818e70e1c57). `&T` is `readonly`, not
+// `noalias`; aliased shared borrows are sound, and the user impl uses
+// `Cell`/`JsCell` for any field it mutates.
+//
+// The `&mut` originals above are kept until every type has migrated
+// (Phase 3 of `R-2-design.md` deletes them and drops the `_shared` suffix).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Prototype method (`sharedThis`): `fn(&self, &JSGlobalObject, &CallFrame) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_this_shared<T, R: IntoHostFnReturn>(
+    this: &T,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame) -> R,
+) -> JSValue {
+    host_fn_result(global, || f(this, global, callframe))
+}
+
+/// Prototype method (`sharedThis`, passThis):
+/// `fn(&self, &JSGlobalObject, &CallFrame, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_this_value_shared<T, R: IntoHostFnReturn>(
+    this: &T,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+    js_this: JSValue,
+    f: impl FnOnce(&T, &JSGlobalObject, &CallFrame, JSValue) -> R,
+) -> JSValue {
+    host_fn_result(global, || f(this, global, callframe, js_this))
+}
+
+/// Prototype getter (`sharedThis`): `fn(&self, &JSGlobalObject) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_getter_shared<T, R: IntoHostFnReturn>(
+    this: &T,
+    global: &JSGlobalObject,
+    f: impl FnOnce(&T, &JSGlobalObject) -> R,
+) -> JSValue {
+    host_fn_result(global, || f(this, global))
+}
+
+/// Prototype getter (`sharedThis`, this: true):
+/// `fn(&self, JSValue, &JSGlobalObject) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_getter_this_shared<T, R: IntoHostFnReturn>(
+    this: &T,
+    this_value: JSValue,
+    global: &JSGlobalObject,
+    f: impl FnOnce(&T, JSValue, &JSGlobalObject) -> R,
+) -> JSValue {
+    host_fn_result(global, || f(this, this_value, global))
+}
+
+/// Prototype setter (`sharedThis`): `fn(&self, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_setter_shared<T, R: IntoHostSetterReturn>(
+    this: &T,
+    global: &JSGlobalObject,
+    value: JSValue,
+    f: impl FnOnce(&T, &JSGlobalObject, JSValue) -> R,
+) -> bool {
+    host_setter_result(global, || f(this, global, value))
+}
+
+/// Prototype setter (`sharedThis`, this: true):
+/// `fn(&self, JSValue, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_setter_this_shared<T, R: IntoHostSetterReturn>(
+    this: &T,
+    this_value: JSValue,
+    global: &JSGlobalObject,
+    value: JSValue,
+    f: impl FnOnce(&T, JSValue, &JSGlobalObject, JSValue) -> R,
+) -> bool {
+    host_setter_result(global, || f(this, this_value, global, value))
+}
+
+/// `getInternalProperties` (`sharedThis`):
+/// `fn(&self, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
+    this: &T,
+    global: &JSGlobalObject,
+    this_value: JSValue,
+    f: impl FnOnce(&T, &JSGlobalObject, JSValue) -> R,
+) -> JSValue {
+    host_fn_result(global, || f(this, global, this_value))
+}
+
 /// Finalizer: `fn(Box<T>)`. The user impl receives owned `Box<Self>` —
 /// ownership is transferred from the C++ JSCell wrapper's `m_ctx` slot.
 /// This wrapper provides the panic barrier and the single `Box::from_raw`

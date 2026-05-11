@@ -2820,6 +2820,7 @@ function generateRust(
     structuredClone = false,
     getInternalProperties = false,
     rustPath,
+    sharedThis = false,
   } = {} as ClassDefinition,
 ) {
   proto = {
@@ -2862,6 +2863,12 @@ function generateRust(
     );
   }
   const T = typeName;
+  // R-2 noalias re-entrancy: opt-in per-type `&self` receiver. Default
+  // (`sharedThis: false`) keeps the legacy `&mut ${T}` so this whole block
+  // is byte-identical for every type that hasn't opted in yet. `_shared`
+  // helpers live in `src/jsc/host_fn.rs` alongside the `&mut` originals.
+  const recv = sharedThis ? `&${T}` : `&mut ${T}`;
+  const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 
   // memoryCost / estimatedSize / ZigStructSize
   if (memoryCost) {
@@ -2920,8 +2927,8 @@ function generateRust(
   if (getInternalProperties) {
     thunk(
       symbolName(typeName, "getInternalProperties"),
-      `(this: &mut ${T}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    host_fn::host_fn_internal_props(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
+      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
+      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
     );
   }
 
@@ -2941,10 +2948,10 @@ function generateRust(
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
-          `(this: &mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
+          `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
-            : `    host_fn::host_fn_getter(this, global, |t, g| ${T}::${id}(t, g))`,
+            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
 
@@ -2952,10 +2959,10 @@ function generateRust(
         const id = rustSnakeIdent(s);
         thunk(
           names.setter,
-          `(this: &mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
+          `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
-            ? `    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
-            : `    host_fn::host_fn_setter(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
+            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }
 
@@ -2968,16 +2975,16 @@ function generateRust(
           const fastId = rustSnakeIdent(DOMJITName(fn));
           thunk(
             names.DOMJIT,
-            `(this: &mut ${T}, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `(this: ${recv}, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
             `    ${T}::${fastId}(this, global${args.length ? ", " + argFwd : ""})`,
           );
         }
         thunk(
           names.fn,
-          `(this: &mut ${T}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+          `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           passThis
-            ? `    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
-            : `    host_fn::host_fn_this(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+            ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
+            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
         );
       }
     }
@@ -3037,13 +3044,13 @@ function generateRust(
   if (structuredClone) {
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
-      `(this: &mut ${T}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
+      `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
       `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
-        `(this: &mut ${T}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
+        `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
         `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
       );
     }

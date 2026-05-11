@@ -1731,13 +1731,27 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // SAFETY: loop_ is the process-global WindowsLoop singleton.
-            unsafe { (*self.loop_).wait() };
+            // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
+            // materialize a `&mut WindowsLoop` over the process-global
+            // singleton for the entire duration of `us_loop_run`/`uv_run`,
+            // and a concurrent `wake()` from a worker thread (BundleThread,
+            // HTTPThread) would alias it — two live `&mut T` to one
+            // allocation is UB under Stacked/Tree Borrows. Call the C entry
+            // point with the raw pointer directly so no Rust reference is
+            // ever formed.
+            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
+            // non-null after `init()`.
+            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_) };
         }
 
         pub fn wake(&self) {
-            // SAFETY: loop_ is the process-global WindowsLoop singleton.
-            unsafe { (*self.loop_).wakeup() };
+            // See `wait()` — this is the cross-thread wake path; forming a
+            // `&mut WindowsLoop` here would alias the event-loop thread's
+            // borrow held across `us_loop_run`. Pass the raw pointer to the
+            // thread-safe C wake (`uv_async_send`) instead.
+            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
+            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.

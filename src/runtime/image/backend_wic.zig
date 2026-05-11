@@ -375,8 +375,10 @@ const GUID_WICPixelFormat64bppRGBA: GUID = .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d
 // depth. The "Half"/"Float"/"FixedPoint" families are included because
 // WICConvertBitmapSource widens them to u16 RGBA (the float-to-int
 // conversion is `clamp(0..1) * 0xFFFF` in WIC's reference converter).
-// Covers TIFF-16, HEIC/AVIF 10/12/16-bit, and the HDR10 packed formats.
-const high_bpc_sources: [12]GUID = .{
+// Covers TIFF-16 (48bppRGB), HEIC/AVIF 10/12/16-bit (48bpp or 64bpp flavours),
+// and the 32bppR10G10B10A2 / HDR10 packed-10-bit formats that the Microsoft
+// HEIF Image Extension may emit for HEVC Main10 content.
+const high_bpc_sources: [14]GUID = .{
     // 48bppRGB / 48bppBGR — no-alpha 16-bpc (common TIFF variants).
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x15 } },
     .{ .d1 = 0xe605a384, .d2 = 0xb468, .d3 = 0x46ce, .d4 = .{ 0xbb, 0x2e, 0x36, 0xf1, 0x80, 0xe6, 0x43, 0x13 } },
@@ -394,6 +396,14 @@ const high_bpc_sources: [12]GUID = .{
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x3a } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x1d } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x41 } },
+    // 32bppR10G10B10A2 / 32bppR10G10B10A2HDR10 — 10-bit samples packed into
+    // a 32-bit DWORD. The HEIF Image Extension can emit either for Main10
+    // HEVC / 10-bit AVIF depending on the source's BT.2020 vs sRGB primaries.
+    // WICConvertBitmapSource scales 10-bit → 16-bit losslessly (the default
+    // converter does `value * 0xFFFF / 0x3FF`), so they slot into the same
+    // 64bppRGBA path as the 48/64 bpp formats above.
+    .{ .d1 = 0x604e1bb5, .d2 = 0x8a3c, .d3 = 0x4b65, .d4 = .{ 0xb1, 0x1c, 0xbc, 0x0b, 0x8d, 0xd7, 0x5b, 0x7f } },
+    .{ .d1 = 0x9c215c5d, .d2 = 0x1acc, .d3 = 0x4f0e, .d4 = .{ 0xa4, 0xbc, 0x70, 0xfb, 0x3a, 0xe8, 0xfd, 0x28 } },
 };
 
 fn isHighBitDepthSource(g: GUID) bool {

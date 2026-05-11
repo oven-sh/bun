@@ -1,11 +1,14 @@
 //! Thin Zig wrappers over the statically-linked image codecs and the
 //! highway resize/rotate kernels. The pipeline is RGBA8 everywhere except
-//! the PNG 16-bpc read/write path — decoders emit 8-bit RGBA by default,
-//! libspng can also emit 16-bit RGBA when the source PNG is 16 bpc so
-//! `PNG 16→PNG 16` with no ops survives at full precision (issue #30462).
-//! The geometry kernels (resize/rotate/flip/modulate) and every non-PNG
-//! encoder are u8-only, so any op or non-PNG output path downconverts via
-//! `downconvertTo8` before touching that code.
+//! the 16-bpc carry-through: libspng (PNG 16-bpc), CoreGraphics (HEIC /
+//! AVIF / TIFF with ImageIO depth ≥ 9) and WIC (high-bpc source pixel-
+//! format GUIDs — 48bpp RGB, 64bpp RGBA, packed 10-bit HDR10) all emit
+//! RGBA16 so high-bit-depth → PNG 16 with no ops survives at full
+//! precision (issue #30462). The geometry kernels (resize/rotate/flip/
+//! modulate) and every non-PNG-truecolour encoder are u8-only, so any
+//! pipeline op or non-PNG output path downconverts via `downconvertTo8`
+//! before touching that code. JPEG/WebP/BMP/GIF decoders always emit
+//! RGBA8, so those paths don't branch on channels.
 //!
 //! Memory ownership: decode returns `bun.default_allocator`-owned RGBA. Encode
 //! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
@@ -150,11 +153,15 @@ pub const Decoded = struct {
     height: u32,
     /// Bits per channel in `rgba`: 8 (one byte per channel, `width*height*4`
     /// bytes) or 16 (two host-endian bytes per channel, `width*height*8`
-    /// bytes). Only libspng's 16-bpc PNG decode path sets this to 16;
-    /// every other decoder produces 8. The geometry kernels and non-PNG
-    /// encoders are u8-only, so the pipeline calls `downconvertTo8`
-    /// before any op or non-PNG encode — PNG→PNG with no ops is the
-    /// only path that stays at 16. Issue #30462.
+    /// bytes). Set to 16 by libspng's 16-bpc PNG decode path, by the
+    /// CoreGraphics backend for any HEIC/AVIF/TIFF source whose ImageIO-
+    /// reported depth is ≥ 9, and by the WIC backend when the source's
+    /// native pixel-format GUID carries > 8 bpc (48/64 bpp families plus
+    /// the packed 10-bit HDR10 formats). Every other decoder produces 8.
+    /// Geometry kernels and non-PNG-truecolour encoders are u8-only, so
+    /// the pipeline calls `downconvertTo8` before any op or non-PNG
+    /// encode — high-bit-depth source → PNG truecolour with no ops is
+    /// the only path that stays at 16. Issue #30462.
     bit_depth: u8 = 8,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), `bun.default_allocator`-owned. `null` when the

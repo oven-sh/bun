@@ -757,9 +757,19 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(self.parent(), err) };
-                self.close();
+                // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+                // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
+                // a fresh `&mut Self` from the parent's intrusive `writer`
+                // field and may write `self.is_done` / `self.handle`.
+                // ASM-verified PROVEN_CACHED on the `self.close()` path's
+                // field reads. Launder so `close()` sees fresh state.
+                let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+                // SAFETY: parent BACKREF valid; `this` aliases the live
+                // `&mut self` and is the only mutable view used hereafter.
+                unsafe { Parent::on_error((*this).parent(), err) };
+                // SAFETY: `this` is still live (parent owns this writer; an
+                // on_error handler may end/detach but never frees mid-call).
+                unsafe { &mut *this }.close();
             }
             sys::Result::Ok(()) => {}
         }

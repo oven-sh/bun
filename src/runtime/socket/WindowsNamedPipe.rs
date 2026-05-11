@@ -1142,49 +1142,72 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&mut self) {
-        if self.wrapper.is_some() {
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `SSLWrapper::shutdown` re-enters via the handler vtable
+        // (`trigger_close_callback` → `ssl_on_close` → fresh
+        // `&mut WindowsNamedPipe` from `m_ctx`) and writes `self.flags` /
+        // `self.wrapper`. The launder + raw-pointer accesses below force LLVM
+        // to reload those fields after the call instead of caching the
+        // pre-call value (ASM-verified PROVEN_CACHED on `self.flags`).
+        // Mirrors the cork fix at b818e70e1c57.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread, no
+        // concurrent mutator. All reads/writes go through `this` so no
+        // `&mut self`-derived borrow is held across the re-entrant call.
+        if unsafe { (*this).wrapper.is_some() } {
             // Re-entrancy guard: `SSLWrapper::shutdown` calls
             // `trigger_close_callback` on SSL_ERROR_SSL/SYSCALL → `ssl_on_close`
             // → `release_resources()`. See `on_read` for the WRAPPER_BUSY
             // pattern (defers `self.wrapper = None`).
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+                unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
-            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
-            self.flags.insert(Flags::WRAPPER_BUSY);
+            let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { let _ = (*w).shutdown(false); }
             if !was_busy {
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
+                // SAFETY: `this` is still the live payload (re-entry only
+                // toggles flags / defers wrapper drop while WRAPPER_BUSY).
+                unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                if unsafe { (*this).flags.is_closed() } {
+                    unsafe { (*this).wrapper = None };
                 }
             }
         }
-        self.writer.end();
+        // SAFETY: `this` is still live; `writer.end()` is idempotent.
+        unsafe { (*this).writer.end() };
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub fn shutdown(&mut self) {
-        if self.wrapper.is_some() {
+        // PORT_NOTES_PLAN R-2: see `close` above — same `noalias`-cached-`flags`
+        // miscompile across `(*w).shutdown(false)`'s re-entry (ASM-verified
+        // PROVEN_CACHED). Launder so post-call reads of `flags`/`wrapper` are
+        // fresh.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+        if unsafe { (*this).wrapper.is_some() } {
             // Re-entrancy guard: see `close` above.
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+                unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
-            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
-            self.flags.insert(Flags::WRAPPER_BUSY);
+            let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { let _ = (*w).shutdown(false); }
             if !was_busy {
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
+                // SAFETY: `this` is still live (re-entry only toggles flags /
+                // defers wrapper drop while WRAPPER_BUSY).
+                unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                if unsafe { (*this).flags.is_closed() } {
+                    unsafe { (*this).wrapper = None };
                 }
             }
         }

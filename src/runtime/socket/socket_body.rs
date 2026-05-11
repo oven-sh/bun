@@ -2280,47 +2280,63 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     fn internal_flush(&mut self) {
-        if self.buffered_data_for_node_net.len() > 0 {
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `do_socket_write` → uSockets write → `on_writable`/`on_data` can
+        // re-enter via a fresh `&mut Self` from `m_ctx` and write
+        // `self.bytes_written` / `self.flags` / `self.buffered_data_for_node_net`.
+        // ASM-verified PROVEN_CACHED on the post-write field reads. Launder
+        // `self` so LLVM cannot prove those fields are unwritten across the
+        // FFI calls; mirrors the cork fix at b818e70e1c57.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread, no
+        // concurrent mutator. All field accesses go through `this` so no
+        // `&mut self`-derived borrow is held across the re-entrant calls.
+        if unsafe { (*this).buffered_data_for_node_net.len() } > 0 {
             // PORT NOTE: reshaped for borrowck — raw ptr/len snapshot so
             // `do_socket_write(&mut self, ..)` doesn't alias the field borrow.
             // SAFETY: ptr/len snapshot a live Vec allocation; `do_socket_write`
             // does not touch `buffered_data_for_node_net`.
             let buf_slice: &[u8] = unsafe {
                 core::slice::from_raw_parts(
-                    self.buffered_data_for_node_net.as_mut_ptr(),
-                    self.buffered_data_for_node_net.len() as usize,
+                    (*this).buffered_data_for_node_net.as_mut_ptr(),
+                    (*this).buffered_data_for_node_net.len() as usize,
                 )
             };
             let written: usize = usize::try_from(
-                self.do_socket_write(buf_slice)
+                // SAFETY: `&mut *this` is the unique live mutable view.
+                unsafe { &mut *this }.do_socket_write(buf_slice)
                     .max(0),
             )
             .unwrap();
-            self.bytes_written += written as u64;
+            // SAFETY: `this` is still live (re-entry never frees the socket
+            // while a `flush` host-fn frame is on the stack; see `flush` guard).
+            unsafe { (*this).bytes_written += written as u64 };
             if written > 0 {
-                if self.buffered_data_for_node_net.len() as usize > written {
+                if unsafe { (*this).buffered_data_for_node_net.len() } as usize > written {
                     let remaining_len =
-                        self.buffered_data_for_node_net.len() as usize - written;
+                        unsafe { (*this).buffered_data_for_node_net.len() } as usize - written;
                     // SAFETY: overlapping copy within the same buffer.
                     unsafe {
                         core::ptr::copy(
-                            self.buffered_data_for_node_net.as_mut_ptr().add(written),
-                            self.buffered_data_for_node_net.as_mut_ptr(),
+                            (*this).buffered_data_for_node_net.as_mut_ptr().add(written),
+                            (*this).buffered_data_for_node_net.as_mut_ptr(),
                             remaining_len,
                         );
                     }
-                    unsafe { self.buffered_data_for_node_net.set_len(remaining_len) };
+                    unsafe { (*this).buffered_data_for_node_net.set_len(remaining_len) };
                 } else {
-                    self.buffered_data_for_node_net.clear_and_free();
+                    unsafe { (*this).buffered_data_for_node_net.clear_and_free() };
                 }
             }
         }
 
-        let _ = self.try_write_empty_packet();
-        self.socket.flush();
+        // SAFETY: `this` is still live; `&mut *this` is the unique mutable view
+        // for each call (no other borrow held between them).
+        let _ = unsafe { &mut *this }.try_write_empty_packet();
+        unsafe { (*this).socket.flush() };
 
-        if self.can_end_after_flush() {
-            self.mark_inactive();
+        if unsafe { &*this }.can_end_after_flush() {
+            unsafe { &mut *this }.mark_inactive();
         }
     }
 

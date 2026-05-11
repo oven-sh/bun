@@ -1260,6 +1260,7 @@ pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/upda
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
 pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
+pub const enforceLockfileAgeFilter = @import("./PackageManager/PopulateManifestCache.zig").enforceLockfileAgeFilter;
 
 const string = []const u8;
 const stringZ = [:0]const u8;

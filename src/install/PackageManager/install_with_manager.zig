@@ -791,6 +791,21 @@ pub fn installWithManager(
 
     const save_format = load_result.saveFormat(&manager.options);
 
+    // Enforce `minimumReleaseAge` against versions already pinned in the
+    // lockfile. Resolution-time filtering only fires when Bun is choosing
+    // a new version; without this gate, a locked version that was
+    // published inside the cooldown window would be installed silently —
+    // exactly the scenario the setting is meant to prevent.
+    if (manager.options.minimum_release_age_ms != null) {
+        try manager.enforceLockfileAgeFilter();
+        if (manager.log.hasErrors()) {
+            try manager.log.print(Output.errorWriter());
+            manager.log.reset();
+            Output.note("remove the offending version from bun.lock, raise the bound, or add it to <d>install.minimumReleaseAgeExcludes<r>", .{});
+            Global.crash();
+        }
+    }
+
     if (manager.options.lockfile_only) {
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
 

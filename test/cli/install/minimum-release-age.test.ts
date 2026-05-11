@@ -1795,7 +1795,14 @@ registry = "${mockRegistryUrl}"`,
   });
 
   describe("frozen lockfile", () => {
-    test("frozen lockfile preserves existing versions regardless of minimum-release-age", async () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/30525
+    //
+    // Before the fix, resolution-time filtering was the only gate, so a version
+    // already pinned in bun.lock would install unconditionally — even under
+    // --frozen-lockfile. That defeats the supply-chain use case: a team adding
+    // the cooldown after an incident was no safer than one that didn't, because
+    // already-resolved bad versions remained installable.
+    test("rejects locked version that violates minimum-release-age", async () => {
       using dir = tempDir("frozen-lockfile", {
         "package.json": JSON.stringify({
           dependencies: {
@@ -1806,23 +1813,24 @@ registry = "${mockRegistryUrl}"`,
       });
 
       // First install without minimum-release-age to get latest
-      let proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      let exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+        const exitCode = await proc.exited;
+        expect(exitCode).toBe(0);
+      }
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("regular-package@3.0.0"); // Latest version
+      expect(lockfile).toContain("regular-package@3.0.0"); // Latest version (1 day old)
 
-      // Now try with frozen lockfile and minimum-release-age
-      // Frozen lockfile means no changes to lockfile - versions stay as-is
-      proc = Bun.spawn({
+      // --frozen-lockfile with a cooldown the locked version violates must fail.
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "install",
@@ -1837,40 +1845,116 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      const exitCode2 = await proc.exited;
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      // Should succeed - frozen lockfile means no changes, even if version is "too recent"
-      expect(exitCode2).toBe(0);
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("regular-package");
+      expect(stderr).toContain("3.0.0");
+      expect(stderr.toLowerCase()).toContain("minimum release age");
+    });
 
-      // Lockfile should remain unchanged
-      const lockfileAfter = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfileAfter).toContain("regular-package@3.0.0");
+    test("bun install (non-frozen) also rejects locked version that violates minimum-release-age", async () => {
+      using dir = tempDir("non-frozen-lockfile", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "regular-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await proc.exited).toBe(0);
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("regular-package");
+      expect(stderr).toContain("3.0.0");
+    });
+
+    test("excludes list lets a lockfile-pinned violator through", async () => {
+      using dir = tempDir("frozen-lockfile-excluded", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "regular-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await proc.exited).toBe(0);
+      }
+
+      // Now add a bunfig that configures the cooldown + an exclude for regular-package.
+      await Bun.write(
+        `${dir}/bunfig.toml`,
+        `[install]\nminimumReleaseAge = ${5 * SECONDS_PER_DAY}\nminimumReleaseAgeExcludes = ["regular-package"]\nregistry = "${mockRegistryUrl}"\n`,
+      );
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(await proc.exited).toBe(0);
+
+      const after = await Bun.file(`${dir}/bun.lock`).text();
+      expect(after).toContain("regular-package@3.0.0");
     });
 
     test("works with frozen lockfile when versions are old enough", async () => {
       using dir = tempDir("frozen-old-versions", {
         "package.json": JSON.stringify({
           dependencies: {
-            "regular-package": "2.1.0", // Old enough version
+            "regular-package": "2.1.0", // Old enough version (6 days)
           },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
       // First install to create lockfile
-      let proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await proc.exited).toBe(0);
+      }
 
-      let exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
-
-      // Install with frozen lockfile and minimum-release-age
-      proc = Bun.spawn({
+      // Install with frozen lockfile and minimum-release-age — locked version is
+      // older than the cooldown, so it should install.
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "install",
@@ -1885,8 +1969,7 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      expect(await proc.exited).toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");

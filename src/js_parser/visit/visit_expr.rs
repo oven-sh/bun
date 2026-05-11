@@ -1779,15 +1779,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.record_usage(p.exports_ref);
                     }
 
-                    // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<NonNull<Scope>>` here;
-                    // walk via raw pointer like the Zig.
-                    let mut scope_iter: Option<NonNull<js_ast::Scope>> =
-                        NonNull::new(p.current_scope);
+                    // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
+                    // walk via the safe arena back-pointer.
+                    let mut scope_iter: Option<js_ast::StoreRef<js_ast::Scope>> =
+                        NonNull::new(p.current_scope).map(js_ast::StoreRef::from);
                     while let Some(mut scope) = scope_iter {
-                        unsafe {
-                            scope.as_mut().contains_direct_eval = true;
-                            scope_iter = scope.as_ref().parent;
-                        }
+                        scope.contains_direct_eval = true;
+                        scope_iter = scope.parent;
                     }
 
                     // TODO: Log a build note for this like esbuild does

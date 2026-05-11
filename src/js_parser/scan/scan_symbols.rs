@@ -69,11 +69,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 // Is the symbol a member of this scope's TypeScript namespace?
-                if let Some(ts_namespace) = scope.ts_namespace {
-                    // SAFETY: ARENA-class backref per LIFETIMES.tsv
-                    let ts = unsafe { ts_namespace.as_ref() };
-                    // SAFETY: exported_members is an arena-owned map valid for 'a.
-                    let exported = unsafe { &*ts.exported_members };
+                if let Some(mut ts_namespace) = scope.ts_namespace {
+                    let ts = &*ts_namespace;
+                    let exported: &js_ast::TSNamespaceMemberMap = &ts.exported_members;
                     if let Some(member) = exported.get(name) {
                         if member.data.is_enum() == ts.is_enum_scope {
                             declare_loc = member.loc;
@@ -88,8 +86,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
                             let arg_ref = ts.arg_ref;
                             let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
-                            // SAFETY: re-borrow ts_namespace mutably after &mut self; arena-owned.
-                            let ts_mut = unsafe { &mut *ts_namespace.as_ptr() };
+                            // Re-borrow ts_namespace mutably after &mut self.
+                            let ts_mut = &mut *ts_namespace;
                             ts_mut.property_accesses.insert(name, new_ref);
                             self.symbols[new_ref.inner_index() as usize].namespace_alias =
                                 Some(js_ast::NamespaceAlias {

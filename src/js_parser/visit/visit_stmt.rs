@@ -1896,10 +1896,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut all_values_are_pure = true;
 
-        // SAFETY: ts_namespace is set for the enum scope (push_scope_for_visit_pass populated it
-        // during the parse pass); exported_members is arena-owned, valid for 'a.
-        let exported_members: *mut js_ast::TSNamespaceMemberMap =
-            unsafe { p.cur_scope().ts_namespace.unwrap().as_ref().exported_members };
+        // ts_namespace is set for the enum scope (push_scope_for_visit_pass populated it
+        // during the parse pass); exported_members is an arena-backed `StoreRef`.
+        let mut exported_members: js_ast::StoreRef<js_ast::TSNamespaceMemberMap> =
+            p.cur_scope().ts_namespace.unwrap().exported_members;
 
         // We normally don't fold numeric constants because they might increase code
         // size, but it's important to fold numeric constants inside enums since
@@ -1929,8 +1929,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 match underlying_value.data {
                     js_ast::ExprData::ENumber(num) => {
-                        // SAFETY: exported_members points to arena-owned map; no aliasing &mut.
-                        unsafe { &mut *exported_members }
+                        exported_members
                             .get_ptr_mut(name)
                             .unwrap()
                             .data = js_ast::ts::Data::EnumNumber(num.value);
@@ -1943,14 +1942,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EString(str_) => {
                         has_string_value = true;
 
-                        // SAFETY: see above.
-                        unsafe { &mut *exported_members }
+                        exported_members
                             .get_ptr_mut(name)
                             .unwrap()
-                            .data = js_ast::ts::Data::EnumString(&raw const *str_);
+                            .data = js_ast::ts::Data::EnumString(str_);
 
                         p.ref_to_ts_namespace_member
-                            .insert(value.ref_, js_ast::ts::Data::EnumString(&raw const *str_));
+                            .insert(value.ref_, js_ast::ts::Data::EnumString(str_));
                     }
                     _ => {
                         if visited.known_primitive() == js_ast::expr::PrimitiveType::String {
@@ -1967,8 +1965,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 next_numeric_value = Some(num + 1.0);
 
-                // SAFETY: see above.
-                unsafe { &mut *exported_members }.get_ptr_mut(name).unwrap().data =
+                exported_members.get_ptr_mut(name).unwrap().data =
                     js_ast::ts::Data::EnumNumber(num);
 
                 p.ref_to_ts_namespace_member

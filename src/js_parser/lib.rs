@@ -914,7 +914,7 @@ pub mod renamer {
 
     pub fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,
-        module_scope: &mut Scope,
+        module_scope: &Scope,
         symbols: &mut [Symbol],
     ) -> SlotCounts {
         let mut slot_counts = SlotCounts::default();
@@ -934,8 +934,7 @@ pub mod renamer {
         }
 
         for child in module_scope.children.slice() {
-            // SAFETY: child scopes are arena-allocated and live for the parse.
-            let child = unsafe { &mut *child.as_ptr() };
+            // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             slot_counts.union_max(assign_nested_scope_slots_helper(
                 &mut sorted_members,
                 child,
@@ -958,7 +957,7 @@ pub mod renamer {
 
     pub fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
-        scope: &mut Scope,
+        scope: &Scope,
         symbols: &mut [Symbol],
         slot_to_copy: SlotCounts,
     ) -> SlotCounts {
@@ -1006,8 +1005,7 @@ pub mod renamer {
         // Assign slots for the symbols of child scopes
         let mut slot_counts = slot.clone();
         for child in scope.children.slice() {
-            // SAFETY: child scopes are arena-allocated and live for the parse.
-            let child = unsafe { &mut *child.as_ptr() };
+            // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             slot_counts.union_max(assign_nested_scope_slots_helper(
                 sorted_members,
                 child,

@@ -1,10 +1,9 @@
-use core::ptr::NonNull;
-
 use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
 
 use crate::StrictModeKind;
 use crate::base::Ref;
+use crate::nodes::StoreRef;
 use crate::symbol::{self, Symbol};
 use crate::ts::TSNamespaceScope;
 
@@ -24,11 +23,14 @@ pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
 pub struct Scope {
     pub id: usize,
     pub kind: Kind,
-    // BACKREF: parent owns this scope via `children`; raw back-pointer.
-    pub parent: Option<NonNull<Scope>>,
+    // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
+    // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
+    // `unsafe { &*parent.as_ptr() }` at every walk site.
+    pub parent: Option<StoreRef<Scope>>,
     /// `AstVec` for the same reason as `members` above — Zig's
-    /// `ArrayListUnmanaged(*Scope)` was arena-backed.
-    pub children: AstVec<NonNull<Scope>>,
+    /// `ArrayListUnmanaged(*Scope)` was arena-backed. Elements are `StoreRef`
+    /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
+    pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
     /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
     pub generated: AstVec<Ref>,
@@ -50,8 +52,9 @@ pub struct Scope {
     pub is_after_const_local_prefix: bool,
 
     // This will be non-null if this is a TypeScript "namespace" or "enum"
-    // ARENA: allocated from p.arena, never freed per-field.
-    pub ts_namespace: Option<NonNull<TSNamespaceScope>>,
+    // ARENA: allocated from p.arena, never freed per-field. `StoreRef` so
+    // callers read `scope.ts_namespace?.exported_members` safely.
+    pub ts_namespace: Option<StoreRef<TSNamespaceScope>>,
 }
 
 impl Default for Scope {
@@ -74,7 +77,7 @@ impl Default for Scope {
     }
 }
 
-pub type NestedScopeMap = ArrayHashMap<u32, Vec<NonNull<Scope>>>;
+pub type NestedScopeMap = ArrayHashMap<u32, Vec<StoreRef<Scope>>>;
 
 impl Scope {
     // PERF(port): the parser's hot path computes the wyhash once and reuses it
@@ -201,10 +204,8 @@ impl Scope {
     pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
         if self.strict_mode == StrictModeKind::SloppyMode {
             self.strict_mode = kind;
-            for child in self.children.slice() {
-                // SAFETY: children are arena-allocated scopes owned by the parser;
-                // valid for the lifetime of the scope tree (BACKREF graph).
-                unsafe { child.as_ptr().as_mut().unwrap() }.recursive_set_strict_mode(kind);
+            for child in self.children.slice_mut() {
+                child.recursive_set_strict_mode(kind);
             }
         }
     }

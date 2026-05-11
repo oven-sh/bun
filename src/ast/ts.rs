@@ -52,8 +52,10 @@ pub struct TSNamespaceScope {
     pub arg_ref: Ref,
 
     /// This is shared between all sibling namespace blocks
-    // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across sibling scopes
-    pub exported_members: *mut TSNamespaceMemberMap,
+    // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across
+    // sibling scopes. `StoreRef` (arena back-pointer with safe `Deref`) so
+    // callers don't open-code `unsafe { &mut *exported_members }` at every use.
+    pub exported_members: crate::nodes::StoreRef<TSNamespaceMemberMap>,
 
     /// This is a lazily-generated map of identifiers that actually represent
     /// property accesses to this namespace's properties. For example:
@@ -117,18 +119,19 @@ pub struct TSNamespaceMember {
     pub data: Data,
 }
 
+#[derive(Clone, Copy)]
 pub enum Data {
     /// "namespace ns { export let it }"
     Property,
     /// "namespace ns { export namespace it {} }"
     // LIFETIMES.tsv: ARENA — assigned from ts_namespace.exported_members (parser-arena alloc)
-    Namespace(*mut TSNamespaceMemberMap),
+    Namespace(crate::nodes::StoreRef<TSNamespaceMemberMap>),
     /// "enum ns { it }"
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
     // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
     // TODO(port): &'bump EString once 'bump threaded crate-wide.
-    EnumString(*const EString),
+    EnumString(crate::nodes::StoreRef<EString>),
     /// "enum ns { it = something() }"
     EnumProperty,
 }

@@ -363,7 +363,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    &mut all_module_scopes[source_index as usize],
+                    &all_module_scopes[source_index as usize],
                     source_index,
                     &mut sorted,
                 );
@@ -403,7 +403,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    unsafe { &mut **scope },
+                    unsafe { &**scope },
                     source_index,
                     &mut sorted,
                 );

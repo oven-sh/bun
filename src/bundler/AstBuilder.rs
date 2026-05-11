@@ -134,7 +134,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let scope: *mut Scope = self.bump.alloc(Scope {
             kind,
             label_ref: None,
-            parent: NonNull::new(self.current_scope),
+            parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
             ..Default::default()
         });
         // SAFETY: `current_scope` is a live bump-arena allocation and uniquely accessed
@@ -142,7 +142,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // fresh allocation). `scope` came from `bump.alloc`, so it is non-null.
         unsafe { &mut *self.current_scope }
             .children
-            .append_assume_capacity(unsafe { NonNull::new_unchecked(scope) });
+            .append_assume_capacity(unsafe { NonNull::new_unchecked(scope) }.into());
         self.scopes.push(self.current_scope);
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         self.current_scope = scope;

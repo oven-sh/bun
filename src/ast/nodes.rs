@@ -116,6 +116,15 @@ impl<T> From<NonNull<T>> for StoreRef<T> {
         StoreRef(p)
     }
 }
+/// Pointer-identity comparison (matches the `NonNull<T>`/Zig `*T` semantics
+/// of the field this type replaces).
+impl<T> PartialEq for StoreRef<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl<T> Eq for StoreRef<T> {}
 
 pub type ExprNodeIndex = Expr;
 pub type StmtNodeIndex = Stmt;

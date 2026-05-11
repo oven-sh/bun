@@ -186,12 +186,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
 
         // Generate the namespace object
-        // PORT NOTE: returns &'a mut TSNamespaceScope (arena-owned). Take a raw pointer so we can
-        // re-borrow across the parser self-borrows below (Zig held a pointer into the arena).
-        let ts_namespace: *mut js_ast::TSNamespaceScope =
+        // Arena-owned `StoreRef<TSNamespaceScope>` (Zig held a pointer into the arena).
+        let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
-        // SAFETY: arena-owned for 'a; aliased only via this pointer + Scope.ts_namespace below.
-        let exported_members: *mut TSNamespaceMemberMap = unsafe { (*ts_namespace).exported_members };
+        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> = ts_namespace.exported_members;
         let ns_member_data = TSNamespaceMemberData::Namespace(exported_members);
 
         // Declare the namespace and create the scope
@@ -200,10 +198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             ref_: None,
         };
         let scope_index = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
-        // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
-        unsafe {
-            (*p.current_scope).ts_namespace = Some(NonNull::new_unchecked(ts_namespace));
-        }
+        p.current_scope_mut().ts_namespace = Some(ts_namespace);
 
         let old_has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
@@ -252,9 +247,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let fn_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
-                        // SAFETY: exported_members points into arena-owned TSNamespaceScope; only
-                        // borrowed via this pointer in this function.
-                        unsafe { &mut *exported_members }.put(
+                        exported_members.put(
                             fn_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
@@ -272,8 +265,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
-                        // SAFETY: see above.
-                        unsafe { &mut *exported_members }.put(
+                        exported_members.put(
                             class_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
@@ -293,8 +285,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let ns_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
-                            // SAFETY: see above.
-                            unsafe { &mut *exported_members }.put(
+                            exported_members.put(
                                 ns_name,
                                 TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
                             )?;
@@ -310,8 +301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let enum_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
-                            // SAFETY: see above.
-                            unsafe { &mut *exported_members }.put(
+                            exported_members.put(
                                 enum_name,
                                 TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
                             )?;
@@ -322,9 +312,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 StmtData::SLocal(local) => {
                     if local.is_export {
                         for decl in local.decls.slice() {
-                            // SAFETY: see above.
                             p.define_exported_namespace_binding(
-                                unsafe { &mut *exported_members },
+                                &mut exported_members,
                                 decl.binding,
                             )?;
                         }
@@ -408,8 +397,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, name_text)
                     .expect("unreachable");
             }
-            // SAFETY: ts_namespace is arena-owned; only borrowed via this raw pointer here.
-            unsafe { (*ts_namespace).arg_ref = arg_ref };
+            ts_namespace.arg_ref = arg_ref;
         }
         p.pop_scope();
 
@@ -541,20 +529,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // TODO(port): Zig `var arg_ref: Ref = undefined;` — initialized to NONE here; only read on
         // paths where it has been assigned below.
         let mut arg_ref: Ref = Ref::NONE;
-        let ts_namespace: *mut js_ast::TSNamespaceScope =
+        let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
-        // SAFETY: arena-owned for 'a; aliased only via this raw pointer + Scope.ts_namespace below.
-        let exported_members: *mut TSNamespaceMemberMap = unsafe { (*ts_namespace).exported_members };
+        let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> = ts_namespace.exported_members;
 
         // Declare the enum and create the scope
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?);
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
-            unsafe {
-                (*p.current_scope).ts_namespace = Some(NonNull::new_unchecked(ts_namespace));
-            }
+            p.current_scope_mut().ts_namespace = Some(ts_namespace);
             // Zig: putNoClobber — debug-assert no prior entry.
             let prev = p
                 .ref_to_ts_namespace_member
@@ -611,9 +595,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let value_loc = value.loc;
             values.push(value);
 
-            // SAFETY: exported_members points into arena-owned TSNamespaceScope; only borrowed via
-            // this pointer in this function.
-            unsafe { &mut *exported_members }.put(
+            exported_members.put(
                 value_name.slice(),
                 TSNamespaceMember {
                     loc: value_loc,
@@ -678,8 +660,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             p.ref_to_ts_namespace_member
                 .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));
-            // SAFETY: ts_namespace is arena-owned; only borrowed via this raw pointer here.
-            unsafe { (*ts_namespace).arg_ref = arg_ref };
+            ts_namespace.arg_ref = arg_ref;
 
             p.pop_scope();
         }

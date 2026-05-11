@@ -63,16 +63,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return RelocateVars { ok: false, ..Default::default() };
         }
 
-        // SAFETY: current_scope is arena-owned and valid for the parser lifetime; the
-        // parent backref chain terminates at module_scope (which has no parent).
-        let mut scope: *mut js_ast::Scope = p.current_scope;
-        while !unsafe { &*scope }.kind_stops_hoisting() {
-            let parent = unsafe { &*scope }.parent;
+        // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain walk
+        // run without raw-pointer `unsafe` and without borrowing `p`.
+        let mut scope = p.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            let parent = scope.parent;
             debug_assert!(parent.is_some());
-            scope = parent.unwrap().as_ptr();
+            scope = parent.unwrap();
         }
 
-        if !core::ptr::eq(scope, p.module_scope) {
+        if !core::ptr::eq(scope.as_ptr(), p.module_scope) {
             return RelocateVars { ok: false, ..Default::default() };
         }
 
@@ -722,9 +722,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         name_loc: bun_ast::Loc,
     ) -> Option<Expr> {
         let p = self;
-        // SAFETY: ts_namespace.map is `Option<*const TSNamespaceMemberMap>` set by the caller
-        // immediately before calling us; the map is arena-owned and valid for parser 'a.
-        let map = unsafe { &*p.ts_namespace.map.unwrap() };
+        let map: &js_ast::TSNamespaceMemberMap = &p.ts_namespace.map.unwrap();
         if let Some(value) = map.get(name) {
             match value.data {
                 js_ast::ts::Data::EnumNumber(num) => {
@@ -737,8 +735,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 js_ast::ts::Data::EnumString(str_ptr) => {
                     p.ignore_usage_of_identifier_in_dot_chain(*target);
-                    // SAFETY: arena-owned EString valid for 'a.
-                    let value = p.new_expr(unsafe { &*str_ptr }, loc);
+                    let value = p.new_expr(&*str_ptr, loc);
                     return Some(p.wrap_inlined_enum(value, name));
                 }
 
@@ -761,7 +758,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     p.ts_namespace = crate::p::RecentlyVisitedTSNamespace {
                         expr: expr.data,
-                        map: Some(namespace.cast_const()),
+                        map: Some(namespace),
                     };
 
                     return Some(expr);

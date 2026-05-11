@@ -193,7 +193,8 @@ pub use crate::visit::visit_binary::BinaryExpressionVisitor;
 
 pub struct RecentlyVisitedTSNamespace {
     pub expr: js_ast::ExprData,
-    pub map: Option<*const js_ast::TSNamespaceMemberMap>,
+    // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
+    pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
 // Unused in Zig (per LIFETIMES.tsv evidence).
@@ -756,6 +757,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: see `module_scope()`. `&mut self` ensures exclusivity for
         // the returned lifetime.
         unsafe { &mut *self.module_scope }
+    }
+
+    /// `current_scope` as an arena-backed [`StoreRef`](js_ast::StoreRef) handle.
+    ///
+    /// Use this for parent-chain walks that need to hold the cursor across
+    /// `&mut self` calls — `StoreRef` is `Copy` and does not borrow `self`, so
+    /// it sidesteps the borrowck conflict that `current_scope()` (which
+    /// returns a `&Scope` tied to `&self`) would hit, without an `unsafe`
+    /// raw-pointer deref at every loop iteration.
+    #[inline]
+    pub fn current_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
+        // `current_scope` is initialised to a valid arena-allocated Scope in
+        // `init()` and every reassignment stores another arena-owned non-null
+        // pointer; the runtime null check is unreachable in practice.
+        js_ast::StoreRef::from(NonNull::new(self.current_scope).expect("current_scope non-null after init()"))
     }
 
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
@@ -1505,8 +1521,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             for child in scope.children.slice() {
-                // SAFETY: scope.children stores arena-owned NonNull<Scope>; tree is acyclic
-                visit(symbols, char_freq, unsafe { child.as_ref() });
+                visit(symbols, char_freq, child);
             }
         }
         visit(self.symbols.as_slice(), &mut freq, self.module_scope());
@@ -1684,15 +1699,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .map(|a| (a.namespace_ref, a.alias));
             if let Some((ns_ref, alias_ptr)) = ns_alias_opt {
                 let alias: &'a [u8] = alias_ptr.slice();
-                if let Some(js_ast::ts::Data::Namespace(ns)) =
+                if let Some(&js_ast::ts::Data::Namespace(ns)) =
                     self.ref_to_ts_namespace_member.get(&ns_ref)
                 {
-                    let ns_map: *mut js_ast::TSNamespaceMemberMap = *ns;
-                    // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-                    if let Some(member) = unsafe { &*ns_map }.get(alias) {
-                        match &member.data {
+                    let ns_map: &js_ast::TSNamespaceMemberMap = &ns;
+                    if let Some(member) = ns_map.get(alias) {
+                        match member.data {
                             js_ast::ts::Data::EnumNumber(num) => {
-                                let num = *num;
                                 // SAFETY: arena-owned original_name slice.
                                 let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
                                 return self.wrap_inlined_enum(
@@ -1701,15 +1714,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 );
                             }
                             js_ast::ts::Data::EnumString(str_ptr) => {
-                                let str_ptr: *const E::EString = *str_ptr;
                                 // SAFETY: arena-owned original_name slice.
                                 let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
-                                // SAFETY: arena-owned EString valid for 'a.
-                                let value = self.new_expr(unsafe { &*str_ptr }, loc);
+                                let value = self.new_expr(&*str_ptr, loc);
                                 return self.wrap_inlined_enum(value, name);
                             }
                             js_ast::ts::Data::Namespace(map) => {
-                                let map: *const js_ast::TSNamespaceMemberMap = *map;
                                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
                                 let expr = self.new_expr(
                                     E::Dot { target, name: alias.into(), name_loc: loc, ..Default::default() },
@@ -1751,15 +1761,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         );
                     }
                     js_ast::ts::Data::EnumString(str_ptr) => {
-                        let str_ptr: *const E::EString = *str_ptr;
+                        let str_ptr = *str_ptr;
                         // SAFETY: arena-owned original_name slice.
                         let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
-                        // SAFETY: arena-owned EString valid for 'a.
-                        let value = self.new_expr(unsafe { &*str_ptr }, loc);
+                        let value = self.new_expr(&*str_ptr, loc);
                         return self.wrap_inlined_enum(value, name);
                     }
                     js_ast::ts::Data::Namespace(map) => {
-                        let map: *const js_ast::TSNamespaceMemberMap = *map;
+                        let map = *map;
                         let expr = Expr { data: js_ast::ExprData::EIdentifier(ident), loc };
                         self.ts_namespace = RecentlyVisitedTSNamespace { expr: expr.data, map: Some(map) };
                         return expr;
@@ -2913,14 +2922,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
                     let mut hash: Option<u64> = None;
 
-                    // SAFETY: scope_parent is an arena-owned NonNull<Scope>; only borrowed
-                    // immutably here for the catch-binding fast check.
-                    if unsafe { scope_parent.as_ref() }.kind == js_ast::scope::Kind::CatchBinding
+                    if scope_parent.kind == js_ast::scope::Kind::CatchBinding
                         && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::Hoisted
                     {
                         hash = Some(Scope::get_member_hash(name));
                         if let Some(existing_member) =
-                            unsafe { scope_parent.as_ref() }.get_member_with_hash(name, hash.unwrap())
+                            scope_parent.get_member_with_hash(name, hash.unwrap())
                         {
                             self.log()
                                 .add_symbol_already_declared_error(
@@ -2937,7 +2944,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         continue;
                     }
 
-                    let mut __scope: Option<NonNull<Scope>> = Some(scope_parent);
+                    let mut __scope: Option<js_ast::StoreRef<Scope>> = Some(scope_parent);
                     debug_assert!(__scope.is_some());
 
                     let mut is_sloppy_mode_block_level_fn_stmt = false;
@@ -2984,10 +2991,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
 
                     while let Some(mut _scope_ptr) = __scope {
-                        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime;
                         // `_scope_ptr` walks the parent chain so it never aliases `scope`
                         // (whose only live borrow is the by-value members snapshot above).
-                        let _scope = unsafe { _scope_ptr.as_mut() };
+                        let _scope = &mut *_scope_ptr;
                         let scope_kind = _scope.kind;
 
                         // Variable declarations hoisted past a "with" statement may actually end
@@ -3150,7 +3156,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let scope_ptr: *mut Scope = arena.alloc(Scope {
             kind: KIND,
             label_ref: None,
-            parent: Some(parent_nn),
+            parent: Some(parent_nn.into()),
             generated: bun_alloc::AstAlloc::vec(),
             ..Default::default()
         });
@@ -3163,7 +3169,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned Scope; `parent != scope` (fresh alloc) so the two
         // `&mut` do not alias.
         let parent_mut = unsafe { &mut *parent };
-        VecExt::append(&mut parent_mut.children, scope_nn);
+        VecExt::append(&mut parent_mut.children, scope_nn.into());
         scope.strict_mode = parent_mut.strict_mode;
 
         self.current_scope = scope_ptr;
@@ -3965,13 +3971,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         name: &[u8],
         is_export: bool,
         is_enum_scope: bool,
-    ) -> *mut js_ast::TSNamespaceScope {
-        let map: Option<*mut js_ast::TSNamespaceMemberMap> = 'brk: {
+    ) -> js_ast::StoreRef<js_ast::TSNamespaceScope> {
+        let map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>> = 'brk: {
             // Merge with a sibling namespace from the same scope
             if let Some(existing_member) = self.current_scope().members.get(name) {
                 if let Some(member_data) = self.ref_to_ts_namespace_member.get(&existing_member.ref_) {
-                    if let js_ast::ts::Data::Namespace(ns) = member_data {
-                        break 'brk Some((*ns).cast());
+                    if let js_ast::ts::Data::Namespace(ns) = *member_data {
+                        break 'brk Some(ns);
                     }
                 }
             }
@@ -3979,13 +3985,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Merge with a sibling namespace from a different scope
             if is_export {
                 if let Some(ns) = self.current_scope().ts_namespace {
-                    // SAFETY: arena-owned TSNamespaceScope/MemberMap valid for parser 'a lifetime
-                    let exported = unsafe { ns.as_ref() }.exported_members;
-                    if !exported.is_null() {
-                        if let Some(member) = unsafe { &*exported }.get(name) {
-                            if let js_ast::ts::Data::Namespace(m) = member.data {
-                                break 'brk Some(m.cast());
-                            }
+                    let exported: &js_ast::TSNamespaceMemberMap = &ns.exported_members;
+                    if let Some(member) = exported.get(name) {
+                        if let js_ast::ts::Data::Namespace(m) = member.data {
+                            break 'brk Some(m);
                         }
                     }
                 }
@@ -3995,7 +3998,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         };
 
         if let Some(existing) = map {
-            return std::ptr::from_mut(self.arena.alloc(js_ast::TSNamespaceScope {
+            return js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
@@ -4003,24 +4006,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }));
         }
 
-        // Otherwise, generate a new namespace object
-        // Batch the allocation of the namespace object and the map into a single allocation.
-        struct Pair {
-            map: js_ast::TSNamespaceMemberMap,
-            scope: js_ast::TSNamespaceScope,
-        }
-
-        let pair = self.arena.alloc(Pair {
-            map: Default::default(),
-            scope: js_ast::TSNamespaceScope {
-                exported_members: core::ptr::null_mut(), // patched below
-                is_enum_scope,
-                arg_ref: Ref::NONE,
-                property_accesses: Default::default(),
-            },
-        });
-        pair.scope.exported_members = &raw mut pair.map;
-        &raw mut pair.scope
+        // Otherwise, generate a new namespace object.
+        // PORT NOTE: Zig batched map+scope into one alloc and patched
+        // `exported_members` post-init. `StoreRef` is non-null so the field
+        // can't be null-then-patch; two bump allocs from the same arena is the
+        // same locality and avoids the self-referential init.
+        let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
+        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            exported_members: map,
+            is_enum_scope,
+            arg_ref: Ref::NONE,
+            property_accesses: Default::default(),
+        }))
     }
 
     // TODO:
@@ -6547,11 +6544,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn find_label_symbol(&mut self, loc: bun_ast::Loc, name: &[u8]) -> FindLabelSymbolResult {
         let mut res = FindLabelSymbolResult { r#ref: Ref::NONE, is_loop: false, found: false };
 
-        let mut _scope: Option<*mut Scope> = Some(self.current_scope);
+        // `StoreRef<Scope>` is a `Copy` arena handle with safe `Deref`, so the
+        // parent-chain walk needs no raw-pointer `unsafe` and does not borrow
+        // `self` (allowing `record_usage(&mut self)` inside the loop).
+        let mut _scope: Option<js_ast::StoreRef<Scope>> = Some(self.current_scope_ref());
 
-        while let Some(scope_ptr) = _scope {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            let scope = unsafe { &*scope_ptr };
+        while let Some(scope) = _scope {
             if scope.kind_stops_hoisting() {
                 break;
             }
@@ -6568,7 +6566,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     return res;
                 }
             }
-            _scope = scope.parent.map(|p| p.as_ptr());
+            _scope = scope.parent;
         }
 
         let r = js_lexer::range_of_identifier(self.source, loc);
@@ -6893,18 +6891,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
-            let mut scope = self.current_scope;
+            // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain
+            // walk run without raw-pointer `unsafe` and without borrowing
+            // `self`.
+            let mut scope = self.current_scope_ref();
             loop {
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                let s = unsafe { &*scope };
-                if s.kind == js_ast::scope::Kind::FunctionBody || s.kind == js_ast::scope::Kind::Block || s.kind == js_ast::scope::Kind::Entry {
+                if scope.kind == js_ast::scope::Kind::FunctionBody || scope.kind == js_ast::scope::Kind::Block || scope.kind == js_ast::scope::Kind::Entry {
                     break;
                 }
-                let Some(p) = s.parent else { break };
-                scope = p.as_ptr();
+                let Some(p) = scope.parent else { break };
+                scope = p;
             }
 
-            let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope);
+            let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope.as_ptr());
             // SAFETY: see ctx_storage_ptr note above; reborrow after &mut self calls.
             let ctx_storage = unsafe { &mut *ctx_storage_ptr };
             *ctx_storage = Some(crate::HookContext {
@@ -7466,7 +7465,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             renamer::assign_nested_scope_slots(
                 arena,
-                unsafe { &mut *self.module_scope },
+                unsafe { &*self.module_scope },
                 self.symbols.as_mut_slice(),
             )
         } else {
@@ -7602,25 +7601,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // Zig `.?` — must be present and a namespace for top-level enums.
                 unreachable!("top_level_enums entry missing namespace member data");
             };
-            let namespace: *mut js_ast::TSNamespaceMemberMap = *namespace;
+            let ns: &js_ast::TSNamespaceMemberMap = namespace;
             let mut inner_map = StringHashMap::<InlinedEnumValue>::default();
-            // SAFETY: arena-owned TSNamespaceMemberMap valid for parser 'a lifetime
-            let ns = unsafe { &*namespace };
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
                 let val = &ns.values()[i];
-                match &val.data {
+                match val.data {
                     js_ast::ts::Data::EnumNumber(num) => {
                         inner_map.put_assume_capacity(
                             key,
-                            InlinedEnumValue::encode(InlinedEnumValueDecoded::Number(*num)),
+                            InlinedEnumValue::encode(InlinedEnumValueDecoded::Number(num)),
                         );
                     }
                     js_ast::ts::Data::EnumString(str_) => {
                         inner_map.put_assume_capacity(
                             key,
-                            InlinedEnumValue::encode(InlinedEnumValueDecoded::String(*str_)),
+                            InlinedEnumValue::encode(InlinedEnumValueDecoded::String(str_.as_ptr())),
                         );
                     }
                     _ => continue,
@@ -8107,16 +8104,16 @@ impl LowerUsingDeclarationsContext {
         let err_ref = p.generate_temp_ref(Some(b"_err"));
         let has_err_ref = p.generate_temp_ref(Some(b"_hasErr"));
 
-        let mut scope: *mut Scope = p.current_scope;
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        while !unsafe { &*scope }.kind_stops_hoisting() {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            scope = unsafe { &*scope }.parent.unwrap().as_ptr();
+        // `StoreRef<Scope>` (Copy + safe `Deref`/`DerefMut`) lets the
+        // parent-chain walk and the `.generated` writes below run without
+        // raw-pointer `unsafe`, and does not borrow `p`.
+        let mut scope: js_ast::StoreRef<Scope> = p.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.unwrap();
         }
 
-        let is_top_level = core::ptr::eq(scope, p.module_scope);
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *scope }
+        let is_top_level = core::ptr::eq(scope.as_ptr(), p.module_scope);
+        scope
             .generated
             .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
         p.declared_symbols
@@ -8145,8 +8142,7 @@ impl LowerUsingDeclarationsContext {
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            VecExt::append(&mut unsafe { &mut *scope }.generated, promise_ref);
+            VecExt::append(&mut scope.generated, promise_ref);
             p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: promise_ref });
 
             let promise_ref_expr = p.new_expr(E::Identifier { ref_: promise_ref, ..Default::default() }, loc);

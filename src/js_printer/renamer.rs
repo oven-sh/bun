@@ -434,7 +434,7 @@ impl MinifyRenamer {
 }
 
 pub fn assign_nested_scope_slots(
-    module_scope: &mut js_ast::Scope,
+    module_scope: &js_ast::Scope,
     symbols: &mut [Symbol],
 ) -> js_ast::SlotCounts {
     let mut slot_counts = js_ast::SlotCounts::default();
@@ -454,9 +454,7 @@ pub fn assign_nested_scope_slots(
     }
 
     for child in module_scope.children.slice() {
-        // SAFETY: `Scope.children` stores arena-allocated child scope pointers
-        // valid for the life of the AST.
-        let child = unsafe { &mut *child.as_ptr() };
+        // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
         slot_counts.union_max(assign_nested_scope_slots_helper(
             &mut sorted_members,
             child,
@@ -480,7 +478,7 @@ pub fn assign_nested_scope_slots(
 
 pub fn assign_nested_scope_slots_helper(
     sorted_members: &mut Vec<u32>,
-    scope: &mut js_ast::Scope,
+    scope: &js_ast::Scope,
     symbols: &mut [Symbol],
     slot_to_copy: js_ast::SlotCounts,
 ) -> js_ast::SlotCounts {
@@ -530,9 +528,7 @@ pub fn assign_nested_scope_slots_helper(
     // Assign slots for the symbols of child scopes
     let mut slot_counts = slot.clone();
     for child in scope.children.slice() {
-        // SAFETY: `Scope.children` stores arena-allocated child scope pointers
-        // valid for the life of the AST.
-        let child = unsafe { &mut *child.as_ptr() };
+        // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
         slot_counts.union_max(assign_nested_scope_slots_helper(
             sorted_members,
             child,
@@ -683,9 +679,9 @@ impl NumberRenamer {
 
     pub fn assign_names_recursive(
         &mut self,
-        scope: &mut js_ast::Scope,
+        scope: &js_ast::Scope,
         source_index: u32,
-        parent: Option<*const NumberScope>,
+        parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
         let s: *mut NumberScope = self.number_scope_pool.get();
@@ -709,7 +705,7 @@ impl NumberRenamer {
     fn assign_names_in_scope(
         &mut self,
         s: &mut NumberScope,
-        scope: &mut js_ast::Scope,
+        scope: &js_ast::Scope,
         source_index: u32,
         sorted: &mut Vec<u32>,
     ) {
@@ -738,7 +734,7 @@ impl NumberRenamer {
     pub fn assign_names_recursive_with_number_scope(
         &mut self,
         initial_scope: *mut NumberScope,
-        scope_: &mut js_ast::Scope,
+        scope_: &js_ast::Scope,
         source_index: u32,
         sorted: &mut Vec<u32>,
     ) {
@@ -752,7 +748,12 @@ impl NumberRenamer {
                 // SAFETY: `new_child_scope` is a valid pool slot.
                 unsafe {
                     new_child_scope.write(NumberScope {
-                        parent: Some(s.cast_const()),
+                        // `s` is non-null (either `initial_scope` or a fresh
+                        // pool slot from a prior iteration); the new child
+                        // outlives this `ParentRef` only until `put()` below.
+                        parent: Some(bun_ptr::ParentRef::from(
+                            core::ptr::NonNull::new(s).expect("number_scope non-null"),
+                        )),
                         name_counts: StringHashMap::default(),
                     });
                 }
@@ -763,8 +764,8 @@ impl NumberRenamer {
             }
 
             if scope.children.len_u32() == 1 {
-                // SAFETY: children[0] is a valid arena-allocated `NonNull<Scope>` when len == 1.
-                scope = unsafe { &mut *scope.children.at(0).as_ptr() };
+                // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
+                scope = scope.children.at(0).get();
             } else {
                 break;
             }
@@ -772,9 +773,7 @@ impl NumberRenamer {
 
         // Symbols in child scopes may also have to be renamed to avoid conflicts
         for child in scope.children.slice() {
-            // SAFETY: `Scope.children` stores arena-allocated child scope pointers
-            // valid for the life of the AST.
-            let child = unsafe { &mut *child.as_ptr() };
+            // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             self.assign_names_recursive_with_number_scope(s, child, source_index, sorted);
         }
 
@@ -832,7 +831,12 @@ impl NumberRenamer {
 
 #[derive(Default)]
 pub struct NumberScope {
-    pub parent: Option<*const NumberScope>,
+    /// Backreference to the enclosing `NumberScope`. The parent is either
+    /// `NumberRenamer::root` or a pool slot allocated earlier in the same
+    /// `assign_names_recursive_with_number_scope` call, both of which strictly
+    /// outlive this child (children are `put()` back before their parent), so
+    /// `ParentRef::get()` is sound without per-site `unsafe`.
+    pub parent: Option<bun_ptr::ParentRef<NumberScope>>,
     pub name_counts: StringHashMap<u32>,
 }
 
@@ -855,11 +859,11 @@ impl NameUse {
             return NameUse::SameScope(count);
         }
 
-        let mut s: Option<*const NumberScope> = this.parent;
+        let mut s: Option<bun_ptr::ParentRef<NumberScope>> = this.parent;
 
-        while let Some(scope_ptr) = s {
-            // SAFETY: parent backref points to a live ancestor NumberScope
-            let scope = unsafe { &*scope_ptr };
+        while let Some(scope) = s {
+            // `ParentRef<NumberScope>: Deref` — safe backref deref under the
+            // parent-outlives-child invariant documented on the field.
             if scope.name_counts.contains_adapted(name, &ctx) {
                 return NameUse::Used;
             }
@@ -1181,9 +1185,7 @@ pub fn compute_reserved_names_for_scope(
     // traversing down the scope tree until we find it to get all reserved names
     if scope.contains_direct_eval {
         for child in scope.children.slice() {
-            // SAFETY: `Scope.children` stores arena-allocated child scope pointers
-            // valid for the life of the AST.
-            let child = unsafe { child.as_ref() };
+            // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             if child.contains_direct_eval {
                 compute_reserved_names_for_scope(child, symbols, names);
             }

@@ -2831,12 +2831,12 @@ impl<'a> BundleV2<'a> {
         self.linker.graph.ast = self.graph.ast.clone()?;
 
         for module_scope in self.linker.graph.ast.items_module_scope_mut() {
-            // SAFETY: `children` are arena-allocated `NonNull<Scope>`s; we re-point
-            // their `parent` BACKREF at the cloned module scope. The raw-pointer
-            // dance mirrors Zig's `child.parent = module_scope`.
-            let parent_ptr = NonNull::from(&mut *module_scope);
+            // `children` are arena-allocated `StoreRef<Scope>`s; we re-point
+            // their `parent` BACKREF at the cloned module scope. `StoreRef`'s
+            // safe `DerefMut` replaces the open-coded `unsafe { child.as_mut() }`.
+            let parent_ptr = bun_ast::StoreRef::from(NonNull::from(&mut *module_scope));
             for child in module_scope.children.slice_mut() {
-                unsafe { child.as_mut() }.parent = Some(parent_ptr);
+                child.parent = Some(parent_ptr);
             }
 
             if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

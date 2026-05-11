@@ -6812,9 +6812,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
-            // SAFETY: `Scope.children` are arena-allocated; `parent` is a raw
-            // back-pointer (`Option<NonNull<Scope>>`) by design.
-            unsafe { (*child.as_ptr()).parent = Some(NonNull::from(module_scope)); }
+            // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
+            // local so the write goes through the encapsulated arena invariant
+            // rather than an open-coded `(*ptr).field = …`.
+            let mut child = *child;
+            child.parent = Some(NonNull::from(module_scope).into());
         }
 
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);

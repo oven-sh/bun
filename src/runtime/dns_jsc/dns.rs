@@ -14,6 +14,7 @@ use bun_jsc::{
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_io::{self as Async, FilePoll, KeepAlive};
+use bun_io_types::dns::{DnsRequestHandle, DnsResolverHandle, GetAddrInfoRequestHandle};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};
 use bun_dns::{
@@ -107,6 +108,41 @@ unsafe impl<T> Send for SendPtr<T> {}
 pub(crate) fn js_event_loop_ctx() -> Async::EventLoopCtx {
     Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
+
+#[inline]
+pub fn with_resolver_handle<R>(
+    handle: DnsResolverHandle,
+    f: impl FnOnce(&mut Resolver) -> R,
+) -> R {
+    // SAFETY: DNS resolver FilePoll owners are recorded from live Resolver
+    // allocations by this module. Keep Resolver recovery next to the Resolver
+    // layout and c-ares re-entry rules.
+    unsafe { f(&mut *handle.as_ptr::<Resolver>()) }
+}
+
+#[cfg(target_os = "macos")]
+#[inline]
+pub fn on_get_addr_info_machport_change(handle: GetAddrInfoRequestHandle) {
+    get_addr_info_request::BackendLibInfo::on_machport_change(
+        handle.as_ptr::<GetAddrInfoRequest>(),
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[inline]
+pub fn on_get_addr_info_machport_change(_handle: GetAddrInfoRequestHandle) {}
+
+#[cfg(target_os = "macos")]
+#[inline]
+pub fn on_dns_request_machport_change(handle: DnsRequestHandle) {
+    internal::MacAsyncDNS::on_machport_change(
+        handle.as_ptr::<internal::Request>(),
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[inline]
+pub fn on_dns_request_machport_change(_handle: DnsRequestHandle) {}
 
 bun_output::declare_scope!(LibUVBackend, visible);
 bun_output::declare_scope!(ResolveInfoRequest, hidden);
@@ -274,7 +310,7 @@ pub mod lib_info {
             // TODO: WHAT?????????
             sys::Fd::from_native(i32::MAX - 1),
             Default::default(),
-            Async::Owner::typed::<bun_io_types::file_poll::GetAddrInfoRequest>(request.cast()),
+            Async::Owner::get_addr_info_request(request.cast()),
         );
         // SAFETY: FilePoll::init returns a live pool slot; exclusive on this thread.
         let poll = unsafe { &mut *poll_ptr };
@@ -2581,7 +2617,7 @@ pub mod internal {
             // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
             sys::Fd::from_native(machport as i32),
             Default::default(),
-            Async::Owner::typed::<bun_io_types::file_poll::Request>(req.cast::<()>()),
+            Async::Owner::dns_request(req.cast::<()>()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
         let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
@@ -4246,9 +4282,7 @@ impl Resolver {
                 return;
             }
 
-            let owner = Async::Owner::typed::<bun_io_types::file_poll::DnsResolver>(
-                std::ptr::from_mut::<Self>(self).cast::<()>(),
-            );
+            let owner = Async::Owner::dns_resolver(std::ptr::from_mut::<Self>(self).cast::<()>());
             // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
             // Hoisted above `poll_entry` so the `&self` borrow ends before `self.polls`
             // is borrowed mutably.

@@ -98,7 +98,7 @@ use crate::node::zlib::{native_brotli::NativeBrotli, native_zlib::NativeZlib, na
 use crate::node::node_zlib_binding;
 
 #[allow(unused_imports)]
-use crate::dns_jsc::{get_addr_info_request, GetAddrInfoRequest, Resolver as DNSResolver};
+use crate::dns_jsc::{get_addr_info_request, Resolver as DNSResolver};
 use crate::server::ServerAllConnectionsClosedTask;
 
 use crate::api::bun_process::Process;
@@ -1059,15 +1059,21 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             });
         }
         poll_tag::DNS_RESOLVER => {
-            let resolver = owner_as!(DNSResolver);
-            // SAFETY: `poll` outlives this call (caller contract).
-            resolver.on_dns_poll(unsafe { &mut *poll });
+            let resolver = owner
+                .dns_resolver_handle()
+                .expect("DNS_RESOLVER FilePoll owner carries a DnsResolverHandle");
+            crate::dns_jsc::with_resolver_handle(resolver, |resolver| {
+                // SAFETY: `poll` outlives this call (caller contract).
+                resolver.on_dns_poll(unsafe { &mut *poll });
+            });
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr() as *mut GetAddrInfoRequest;
-                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+                let request = owner
+                    .get_addr_info_request_handle()
+                    .expect("GET_ADDR_INFO_REQUEST FilePoll owner carries a GetAddrInfoRequestHandle");
+                crate::dns_jsc::on_get_addr_info_machport_change(request);
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1077,8 +1083,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let req = owner.ptr() as *mut crate::dns_jsc::internal::Request;
-                crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
+                let request = owner
+                    .dns_request_handle()
+                    .expect("REQUEST FilePoll owner carries a DnsRequestHandle");
+                crate::dns_jsc::on_dns_request_machport_change(request);
             }
             #[cfg(not(target_os = "macos"))]
             {

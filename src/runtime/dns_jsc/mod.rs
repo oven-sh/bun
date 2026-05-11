@@ -22,8 +22,8 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 // `dns_body` is the real port of `dns.zig` (c-ares channel, request types,
 // Resolver method bodies, `internal` cache). The earlier B-2 erased
 // "type-surface" duplicates that lived here have been dissolved — there is one
-// `Resolver`, and `dispatch.rs`'s `from_field_ptr!`/`owner_as!` casts now resolve
-// to the same allocation `dns_body::Resolver::init` produces.
+// `Resolver`, and the FilePoll handle adapters now resolve to the same
+// allocation `dns_body::Resolver::init` produces.
 
 pub use dns_body::{
     get_addr_info_request, get_host_by_addr_info_request, get_name_info_request,
@@ -31,5 +31,7 @@ pub use dns_body::{
 };
 pub use dns_body::{
     internal, CacheConfig, CacheHit, GetAddrInfoAsyncCallback, GetAddrInfoRequest, GlobalData,
-    InternalDNSRequest, Order, PendingCache, PendingCacheField, RecordType, Resolver,
+    InternalDNSRequest, Order, PendingCache, PendingCacheField,
+    RecordType, Resolver, on_dns_request_machport_change,
+    on_get_addr_info_machport_change, with_resolver_handle,
 };

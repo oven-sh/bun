@@ -1,5 +1,6 @@
 #![warn(unreachable_pub)]
 
+pub mod dns;
 pub mod file_poll;
 pub mod heap;
 pub mod keep_alive;

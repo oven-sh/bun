@@ -1,3 +1,4 @@
+use crate::dns::{DnsRequestHandle, DnsResolverHandle, GetAddrInfoRequestHandle};
 use crate::owner::OwnerToken;
 use crate::reader::BufferedReaderHandle;
 use crate::writer::PipeWriterHandle;
@@ -85,9 +86,6 @@ macro_rules! variants {
 }
 
 variants! {
-    DnsResolver => DnsResolver,
-    GetAddrInfoRequest => GetAddrInfoRequest,
-    Request => Request,
     ParentDeathWatchdog => ParentDeathWatchdog,
 }
 
@@ -142,9 +140,9 @@ pub enum Owner {
     ShellStaticPipeWriter(PipeWriterHandle),
     SecurityScanStaticPipeWriter(PipeWriterHandle),
     BufferedReader(BufferedReaderHandle),
-    DnsResolver(OwnerToken<DnsResolver>),
-    GetAddrInfoRequest(OwnerToken<GetAddrInfoRequest>),
-    Request(OwnerToken<Request>),
+    DnsResolver(DnsResolverHandle),
+    GetAddrInfoRequest(GetAddrInfoRequestHandle),
+    Request(DnsRequestHandle),
     Process(ProcessHandle),
     ShellBufferedWriter(PipeWriterHandle),
     TerminalPoll(PipeWriterHandle),
@@ -171,6 +169,27 @@ impl Owner {
         T::writer_owner(handle)
     }
 
+    #[inline]
+    pub fn dns_resolver(ptr: *mut ()) -> Self {
+        DnsResolverHandle::from_ptr(ptr)
+            .map(Self::DnsResolver)
+            .unwrap_or(Self::NULL)
+    }
+
+    #[inline]
+    pub fn get_addr_info_request(ptr: *mut ()) -> Self {
+        GetAddrInfoRequestHandle::from_ptr(ptr)
+            .map(Self::GetAddrInfoRequest)
+            .unwrap_or(Self::NULL)
+    }
+
+    #[inline]
+    pub fn dns_request(ptr: *mut ()) -> Self {
+        DnsRequestHandle::from_ptr(ptr)
+            .map(Self::Request)
+            .unwrap_or(Self::NULL)
+    }
+
     /// # Safety
     /// If `ptr` is non-null, it must point to a live owner of the concrete
     /// type represented by `kind`.
@@ -185,9 +204,9 @@ impl Owner {
             Kind::BufferedReader => BufferedReaderHandle::from_usize(ptr as usize)
                 .map(Self::BufferedReader)
                 .unwrap_or(Self::NULL),
-            Kind::DnsResolver => Self::typed::<DnsResolver>(ptr),
-            Kind::GetAddrInfoRequest => Self::typed::<GetAddrInfoRequest>(ptr),
-            Kind::Request => Self::typed::<Request>(ptr),
+            Kind::DnsResolver => Self::dns_resolver(ptr),
+            Kind::GetAddrInfoRequest => Self::get_addr_info_request(ptr),
+            Kind::Request => Self::dns_request(ptr),
             Kind::Process => ProcessHandle::from_usize(ptr as usize)
                 .map(Self::Process)
                 .unwrap_or(Self::NULL),
@@ -243,9 +262,9 @@ impl Owner {
             Self::ShellStaticPipeWriter(handle) => handle.get(),
             Self::SecurityScanStaticPipeWriter(handle) => handle.get(),
             Self::BufferedReader(handle) => handle.get(),
-            Self::DnsResolver(token) => token.get(),
-            Self::GetAddrInfoRequest(token) => token.get(),
-            Self::Request(token) => token.get(),
+            Self::DnsResolver(handle) => handle.get(),
+            Self::GetAddrInfoRequest(handle) => handle.get(),
+            Self::Request(handle) => handle.get(),
             Self::Process(handle) => handle.get(),
             Self::ShellBufferedWriter(handle) => handle.get(),
             Self::TerminalPoll(handle) => handle.get(),
@@ -285,6 +304,30 @@ impl Owner {
             | Self::SecurityScanStaticPipeWriter(handle)
             | Self::ShellBufferedWriter(handle)
             | Self::TerminalPoll(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn dns_resolver_handle(self) -> Option<DnsResolverHandle> {
+        match self {
+            Self::DnsResolver(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn get_addr_info_request_handle(self) -> Option<GetAddrInfoRequestHandle> {
+        match self {
+            Self::GetAddrInfoRequest(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn dns_request_handle(self) -> Option<DnsRequestHandle> {
+        match self {
+            Self::Request(handle) => Some(handle),
             _ => None,
         }
     }
@@ -341,6 +384,34 @@ mod tests {
         assert_eq!(owner.buffered_reader_handle(), Some(handle));
         assert_eq!(owner.kind(), Kind::BufferedReader);
         assert_eq!(owner.ptr(), ptr);
+    }
+
+    #[test]
+    fn raw_parts_preserve_dns_handles() {
+        let resolver_ptr = 0x7000usize as *mut ();
+        let get_addr_info_ptr = 0x8000usize as *mut ();
+        let request_ptr = 0x9000usize as *mut ();
+
+        let resolver = unsafe { Owner::from_raw_parts(Kind::DnsResolver, resolver_ptr) };
+        let get_addr_info =
+            unsafe { Owner::from_raw_parts(Kind::GetAddrInfoRequest, get_addr_info_ptr) };
+        let request = unsafe { Owner::from_raw_parts(Kind::Request, request_ptr) };
+
+        assert_eq!(
+            resolver.dns_resolver_handle(),
+            DnsResolverHandle::from_usize(resolver_ptr as usize)
+        );
+        assert_eq!(
+            get_addr_info.get_addr_info_request_handle(),
+            GetAddrInfoRequestHandle::from_usize(get_addr_info_ptr as usize)
+        );
+        assert_eq!(
+            request.dns_request_handle(),
+            DnsRequestHandle::from_usize(request_ptr as usize)
+        );
+        assert_eq!(resolver.ptr(), resolver_ptr);
+        assert_eq!(get_addr_info.ptr(), get_addr_info_ptr);
+        assert_eq!(request.ptr(), request_ptr);
     }
 
     #[test]

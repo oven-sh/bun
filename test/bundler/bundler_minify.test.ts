@@ -1317,20 +1317,13 @@ describe("bundler", () => {
   // All variants must produce this exact minified output (with my fix); any
   // variant that differs means the comment's characters leaked into the
   // renamer's histogram.
-  const issue30489ExpectedOutput =
-    'var e=1,r=2,a=3,c=4,f=5,n=6;function o(){return e+r+a+c+f+n}export{o as go};\n';
+  const issue30489ExpectedOutput = "var e=1,r=2,a=3,c=4,f=5,n=6;function o(){return e+r+a+c+f+n}export{o as go};\n";
   const issue30489Variants = {
     baseline: issue30489Baseline,
     leadingLineComment: `// ${issue30489Filler}\n` + issue30489Baseline,
     leadingBlockComment: `/* ${issue30489Filler} */\n` + issue30489Baseline,
-    midFileLineComment: issue30489Baseline.replace(
-      "export function",
-      `// ${issue30489Filler}\nexport function`,
-    ),
-    midFileBlockComment: issue30489Baseline.replace(
-      "export function",
-      `/* ${issue30489Filler} */\nexport function`,
-    ),
+    midFileLineComment: issue30489Baseline.replace("export function", `// ${issue30489Filler}\nexport function`),
+    midFileBlockComment: issue30489Baseline.replace("export function", `/* ${issue30489Filler} */\nexport function`),
     trailingLineComment: issue30489Baseline + `// ${issue30489Filler}\n`,
     trailingBlockComment: issue30489Baseline + `/* ${issue30489Filler} */\n`,
   };

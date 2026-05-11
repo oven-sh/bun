@@ -1084,9 +1084,20 @@ impl PackageManager {
         // SAFETY: env is set during init() and never null afterward
         unsafe { self.env.unwrap().as_ref() }
     }
+    /// Reborrow the process-global env loader.
+    ///
+    /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
+    /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
+    /// outside the manager (set once in `init()`), and callers interleave env
+    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
+    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
     #[inline]
-    pub fn env_mut(&mut self) -> &mut dot_env::Loader<'static> {
-        // SAFETY: env is set during init() and never null afterward
+    #[allow(clippy::mut_from_ref)]
+    pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader<'static> {
+        // SAFETY: `env` is set during `init()` and never null afterward; the
+        // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
+        // that lives outside `self`, so the unbounded `'a` is sound under the
+        // same single-threaded contract as `log_mut`/`scripts_node_mut`.
         unsafe { self.env.unwrap().as_mut() }
     }
 }

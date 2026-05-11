@@ -1211,8 +1211,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
                 let resolved = Repository::find_commit(
-                    // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                    unsafe { this.env.unwrap().as_mut() },
+                    this.env_mut(),
                     this.log_mut(),
                     bun_sys::Dir::from_fd(repo_fd),
                     alias,
@@ -1722,8 +1721,7 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                env: crate::repository::SharedEnv::get(unsafe { this.env.unwrap().as_mut() }),
+                env: crate::repository::SharedEnv::get(this.env_mut()),
                 dep_id,
                 res: *res,
             }),
@@ -1804,8 +1802,7 @@ pub fn enqueue_git_checkout(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                    env: crate::repository::SharedEnv::get(this.env.unwrap().as_mut()),
+                    env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
             apply_patch_task: if let Some(h) = patch_name_and_version_hash {

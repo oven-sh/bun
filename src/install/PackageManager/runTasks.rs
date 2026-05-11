@@ -1372,9 +1372,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     use crate::repository_real::RepositoryExt as _;
                     let resolved = crate::repository_real::Repository::find_commit(
-                        // SAFETY: `env` is set during `PackageManager::init` and
-                        // outlives all tasks.
-                        unsafe { manager.env.expect("infallible: env loaded").as_mut() },
+                        manager.env_mut(),
                         manager.log_mut(),
                         bun_sys::Dir { fd: repo_fd },
                         dep_name,

@@ -76,6 +76,15 @@ pub use process::{
     SignalCodeExt, SpawnOptions, SpawnProcessResult, SpawnResultExt, Status,
     StdioKind, WaiterThread,
 };
+pub use bun_spawn_types::ProcessHandle;
+
+#[inline]
+pub fn with_process_handle<R>(handle: ProcessHandle, f: impl FnOnce(&mut Process) -> R) -> R {
+    // SAFETY: ProcessHandle values are recorded from live Process allocations by
+    // bun_spawn before they are handed to lower FilePoll/readiness layers. Keep
+    // the raw Process recovery in this crate, which owns Process.
+    unsafe { f(&mut *handle.as_ptr::<Process>()) }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProcessExitTarget {

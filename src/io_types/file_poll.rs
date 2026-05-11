@@ -1,4 +1,5 @@
 use crate::owner::OwnerToken;
+use bun_spawn_types::ProcessHandle;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +85,6 @@ variants! {
     DnsResolver => DnsResolver,
     GetAddrInfoRequest => GetAddrInfoRequest,
     Request => Request,
-    Process => Process,
     ShellBufferedWriter => ShellBufferedWriter,
     TerminalPoll => TerminalPoll,
     ParentDeathWatchdog => ParentDeathWatchdog,
@@ -112,7 +112,7 @@ pub enum Owner {
     DnsResolver(OwnerToken<DnsResolver>),
     GetAddrInfoRequest(OwnerToken<GetAddrInfoRequest>),
     Request(OwnerToken<Request>),
-    Process(OwnerToken<Process>),
+    Process(ProcessHandle),
     ShellBufferedWriter(OwnerToken<ShellBufferedWriter>),
     TerminalPoll(OwnerToken<TerminalPoll>),
     ParentDeathWatchdog(OwnerToken<ParentDeathWatchdog>),
@@ -145,7 +145,9 @@ impl Owner {
             Kind::DnsResolver => Self::typed::<DnsResolver>(ptr),
             Kind::GetAddrInfoRequest => Self::typed::<GetAddrInfoRequest>(ptr),
             Kind::Request => Self::typed::<Request>(ptr),
-            Kind::Process => Self::typed::<Process>(ptr),
+            Kind::Process => ProcessHandle::from_usize(ptr as usize)
+                .map(Self::Process)
+                .unwrap_or(Self::NULL),
             Kind::ShellBufferedWriter => Self::typed::<ShellBufferedWriter>(ptr),
             Kind::TerminalPoll => Self::typed::<TerminalPoll>(ptr),
             Kind::ParentDeathWatchdog => Self::typed::<ParentDeathWatchdog>(ptr),
@@ -199,7 +201,7 @@ impl Owner {
             Self::DnsResolver(token) => token.get(),
             Self::GetAddrInfoRequest(token) => token.get(),
             Self::Request(token) => token.get(),
-            Self::Process(token) => token.get(),
+            Self::Process(handle) => handle.get(),
             Self::ShellBufferedWriter(token) => token.get(),
             Self::TerminalPoll(token) => token.get(),
             Self::ParentDeathWatchdog(token) => token.get(),
@@ -210,6 +212,14 @@ impl Owner {
     #[inline]
     pub fn ptr(self) -> *mut () {
         self.addr() as *mut ()
+    }
+
+    #[inline]
+    pub const fn process_handle(self) -> Option<ProcessHandle> {
+        match self {
+            Self::Process(handle) => Some(handle),
+            _ => None,
+        }
     }
 
     #[inline]
@@ -244,8 +254,10 @@ mod tests {
     fn raw_parts_reenter_the_closed_owner_shape() {
         let ptr = 0x5000usize as *mut ();
         let owner = unsafe { Owner::from_raw_parts(Kind::Process, ptr) };
+        let handle = ProcessHandle::from_usize(ptr as usize).unwrap();
 
-        assert_eq!(owner, Owner::typed::<Process>(ptr));
+        assert_eq!(owner, Owner::Process(handle));
+        assert_eq!(owner.process_handle(), Some(handle));
         assert_eq!(owner.kind(), Kind::Process);
         assert_eq!(owner.ptr(), ptr);
     }

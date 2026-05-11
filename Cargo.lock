@@ -1149,6 +1149,9 @@ dependencies = [
 [[package]]
 name = "bun_io_types"
 version = "0.0.0"
+dependencies = [
+ "bun_spawn_types",
+]
 
 [[package]]
 name = "bun_js"

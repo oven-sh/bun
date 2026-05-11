@@ -430,8 +430,8 @@ impl Process {
                     ctx,
                     Fd::from_native(watchfd),
                     bun_io::file_poll::FlagsSet::default(),
-                    bun_io::Owner::typed::<bun_io_types::file_poll::Process>(
-                        std::ptr::from_mut::<Process>(self).cast(),
+                    bun_io::Owner::Process(
+                        bun_spawn_types::ProcessHandle::from_ref(self),
                     ),
                 )
             };

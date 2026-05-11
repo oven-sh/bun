@@ -985,8 +985,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
         }
         poll_tag::PROCESS => {
-            let proc = owner_as!(Process);
-            if let Some(delivery) = proc.on_wait_pid_from_event_loop_task() {
+            let process = owner
+                .process_handle()
+                .expect("PROCESS FilePoll owner carries a ProcessHandle");
+            if let Some(delivery) =
+                bun_spawn::with_process_handle(process, Process::on_wait_pid_from_event_loop_task)
+            {
                 dispatch_process_exit_delivery(delivery);
             }
         }

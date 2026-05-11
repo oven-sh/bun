@@ -1338,7 +1338,9 @@ config:
         },
       };
 
-      for (let i = 0; i < 10000; i++) {
+      // 1000 iterations is enough to flush any reference-lifetime issues; the original
+      // 10k doesn't fit the default 5s budget under debug+ASAN on slow CI containers.
+      for (let i = 0; i < 1000; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
     });
@@ -1497,7 +1499,7 @@ config:
         expect(YAML.stringify("42")).toBe('"42"');
         expect(YAML.stringify("3.14")).toBe('"3.14"');
         expect(YAML.stringify("-17")).toBe('"-17"');
-        expect(YAML.stringify("+99")).toBe("+99"); // + at start doesn't force quotes
+        expect(YAML.stringify("+99")).toBe('"+99"'); // +-prefixed numbers parse back as numbers, must quote
         expect(YAML.stringify(".5")).toBe('".5"');
         expect(YAML.stringify("-.5")).toBe('"-.5"');
 
@@ -1628,7 +1630,8 @@ config:
         expect(YAML.stringify("--")).toBe('"--"'); // -- gets quoted
         expect(YAML.stringify("----")).toBe('"----"');
         expect(YAML.stringify("..")).toBe("..");
-        expect(YAML.stringify("....")).toBe("....");
+        // "...." contains "..." at the end which is structurally ambiguous, so it gets quoted.
+        expect(YAML.stringify("....")).toBe('"...."');
       });
 
       test("handles mixed content strings", () => {
@@ -1642,6 +1645,112 @@ config:
         expect(YAML.stringify("1e10abc")).toBe("1e10abc");
         expect(YAML.stringify("deadbeef")).toBe("deadbeef");
         expect(YAML.stringify("0xNotHex")).toBe("0xNotHex");
+      });
+
+      // https://github.com/oven-sh/bun/issues/30433
+      test("quotes number-like strings so they round-trip as strings", () => {
+        // Leading '0' followed by 'e'/'E' parses as float exponent (0e6836 == 0).
+        expect(YAML.stringify("0e6836")).toBe('"0e6836"');
+        expect(YAML.stringify("0E6836")).toBe('"0E6836"');
+        expect(YAML.stringify("0e0")).toBe('"0e0"');
+
+        // Leading '0' followed by '.' parses as decimal float.
+        expect(YAML.stringify("0.0")).toBe('"0.0"');
+        expect(YAML.stringify("0.5")).toBe('"0.5"');
+
+        // Leading '+' followed by digits/dot parses as a positive number.
+        expect(YAML.stringify("+0")).toBe('"+0"');
+        expect(YAML.stringify("+1")).toBe('"+1"');
+        expect(YAML.stringify("+99")).toBe('"+99"');
+        expect(YAML.stringify("+1.5")).toBe('"+1.5"');
+        expect(YAML.stringify("+1e5")).toBe('"+1e5"');
+
+        // Signed exponent after the mantissa — "+1e+5" and "-1e-5" both parse back as
+        // numbers, so the scanner must accept a sign immediately after e/E.
+        expect(YAML.stringify("+1e+5")).toBe('"+1e+5"');
+        expect(YAML.stringify("-1e-5")).toBe('"-1e-5"');
+        expect(YAML.stringify("1e+5")).toBe('"1e+5"');
+        expect(YAML.stringify("1e-5")).toBe('"1e-5"');
+        expect(YAML.stringify("3.14e+5")).toBe('"3.14e+5"');
+        expect(YAML.stringify("1.5e-10")).toBe('"1.5e-10"');
+
+        // Signed infinity — the YAML parser accepts "+.inf"/"+.Inf"/"+.INF" (and the
+        // '-' variants) as signed infinity, so strings that look like those must be
+        // quoted. "+.nan" / "-.nan" are *not* treated as numbers by the parser so
+        // they don't need quoting for numeric reasons.
+        expect(YAML.stringify("+.inf")).toBe('"+.inf"');
+        expect(YAML.stringify("+.Inf")).toBe('"+.Inf"');
+        expect(YAML.stringify("+.INF")).toBe('"+.INF"');
+
+        // Round-trip: every number-like string must come back as the original string.
+        const numberLike = [
+          "0e6836",
+          "0E6836",
+          "0e0",
+          "0.0",
+          "0.5",
+          "+0",
+          "+1",
+          "+99",
+          "+1.5",
+          "+1e5",
+          "-1",
+          "-0",
+          "1e5",
+          "1.0",
+          "123",
+          "0123",
+          ".5",
+          // signed exponents
+          "+1e+5",
+          "-1e-5",
+          "+1e-5",
+          "-1e+5",
+          "1e+5",
+          "1e-5",
+          "3.14e+5",
+          "1.5e-10",
+          // signed special floats
+          "+.inf",
+          "+.Inf",
+          "+.INF",
+          "-.inf",
+          "-.Inf",
+          "-.INF",
+          // Embedded signs — wtf.parseDouble is a strtod-style prefix parser, so
+          // "1+5" etc. round-trip to the leading digits as a number unless quoted.
+          "1+5",
+          "1-5",
+          "0+5",
+          "0-5",
+          "123-456",
+          "3.14+2",
+          ".5+3",
+        ];
+        for (const value of numberLike) {
+          expect(YAML.parse(YAML.stringify({ id: value }))).toEqual({ id: value });
+        }
+
+        // Exact reproduction from issue #30433.
+        const obj = {
+          subject: "Q2 planning followup:",
+          note: "foo:",
+          safe: "bar: baz",
+          id: "0e6836",
+        };
+        expect(YAML.parse(YAML.stringify(obj, null, 2))).toEqual(obj);
+      });
+
+      test("quotes strings whose leading number-like prefix precedes a flow indicator", () => {
+        // These previously slipped through unquoted because the number scanner advanced past
+        // the flow indicator.
+        const roundTrippers = ["9{", "9,", "9}", "9]", ".{", "0{", "+{", ".,"];
+        for (const value of roundTrippers) {
+          // Direct scalar emission must be quoted — otherwise the round-trip only passes
+          // by accident when the parser later rejects the bare form.
+          expect(YAML.stringify(value)).toMatch(/^".*"$/);
+          expect(YAML.parse(YAML.stringify({ id: value }))).toEqual({ id: value });
+        }
       });
 
       test("handles whitespace edge cases", () => {

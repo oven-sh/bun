@@ -91,11 +91,9 @@ function findChrome(): string | undefined {
       "Microsoft\\Edge Dev\\Application\\msedge.exe",
       "Microsoft\\Edge SxS\\Application\\msedge.exe",
     ];
-    const roots = [
-      process.env["ProgramFiles"],
-      process.env["ProgramFiles(x86)"],
-      process.env["LOCALAPPDATA"],
-    ].filter((r): r is string => Boolean(r));
+    const roots = [process.env["ProgramFiles"], process.env["ProgramFiles(x86)"], process.env["LOCALAPPDATA"]].filter(
+      (r): r is string => Boolean(r),
+    );
     for (const rel of relative) {
       for (const root of roots) {
         const full = join(root, rel);

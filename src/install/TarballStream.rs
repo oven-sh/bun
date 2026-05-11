@@ -949,11 +949,18 @@ impl TarballStream {
                 .delete_tree((*this).tmpname.as_bytes());
         }
 
-        // SAFETY: `this` was allocated via heap::alloc in `init()`; this is
-        // the sole owner and the only place it is reclaimed. No `&mut Self`
-        // is in scope (raw-ptr receiver), so nothing dangles. After this
-        // line `this` is freed — nothing below may touch it.
-        drop(bun_core::heap::take(this));
+        // The `Box<TarballStream>` lives in `(*network).tarball_stream`
+        // (runTasks.rs:1863 stores `Some(heap::take(init(..)))` there). Take
+        // it out via the Option and drop the Box — this both runs `Drop` and
+        // leaves `tarball_stream = None` so `HiveArray::put`'s
+        // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
+        // dangling Box. Before 1e76047 the dangling `Some` was harmless
+        // (overwritten on next `get()`); now it use-after-frees.
+        debug_assert!(
+            (*network).tarball_stream.as_deref().map(|s| s as *const _) == Some(this as *const _),
+            "TarballStream::finish: network.tarball_stream != this",
+        );
+        drop((*network).tarball_stream.take());
 
         // `task.apply_patch_task` is intentionally not touched: the
         // buffered `.extract` path (`enqueueExtractNPMPackage` →

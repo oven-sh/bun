@@ -102,12 +102,16 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   }
   if (aIdx < 0) throw new Error("no u32 hash collision found in 200k filenames");
 
+  // 20 items: two independent Fisher–Yates shuffles collide by chance
+  // with probability 1/20! (~4e-19), so `orderA != orderB` is effectively
+  // a deterministic assertion of "distinct PRNG seeds were used".
+  const words = Array.from({ length: 20 }, (_, i) => `w${i}`);
   // Same body in both files so any difference in observed order comes
   // from the per-file PRNG, not the tests themselves. Stdout prefixes
   // let us attribute each "RUN" line to its file.
   const body = (tag: string) => `
       import { test, expect } from "bun:test";
-      test.each(["alpha","bravo","charlie","delta","echo","foxtrot","golf"])(
+      test.each(${JSON.stringify(words)})(
         "order: %s",
         (word) => { console.log("RUN ${tag} " + word); expect(typeof word).toBe("string"); },
       );
@@ -122,8 +126,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const orderA = stdout
     .split("\n")
@@ -133,7 +136,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
     .split("\n")
     .filter(l => l.startsWith("RUN B "))
     .map(l => l.slice(6));
-  const sorted = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"].sort();
+  const sorted = [...words].sort();
   // Both files must have produced a full run. Under the old truncated-
   // hash key the second file's Source was dropped entirely; loading it
   // still happened via the module system, so its tests do run, but the
@@ -144,6 +147,10 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   // so their shuffled orders must differ. With the old truncated-hash
   // key both arrays are identical.
   expect(orderA).not.toEqual(orderB);
+  // Surface subprocess stderr if the run exited non-zero before asserting
+  // exit code — otherwise a CI failure is just "expected 0, got N".
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 }, 60_000);
 
 test.concurrent("randomizes order of files", async () => {

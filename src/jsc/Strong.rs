@@ -8,6 +8,7 @@ use crate::{JSGlobalObject, JSValue};
 
 pub type Impl = bun_jsc_types::StrongRefSlot;
 pub type Handle = bun_jsc_types::StrongRefHandle;
+pub type OptionalHandle = bun_jsc_types::OptionalStrongRefHandle;
 
 // PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
 pub struct Strong {
@@ -70,18 +71,18 @@ impl Drop for Strong {
 // pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
 pub struct Optional {
-    handle: Option<Handle>,
+    handle: OptionalHandle,
 }
 
 impl Default for Optional {
     fn default() -> Self {
-        Self { handle: None }
+        Self { handle: OptionalHandle::empty() }
     }
 }
 
 impl Optional {
     pub const fn empty() -> Optional {
-        Optional { handle: None }
+        Optional { handle: OptionalHandle::empty() }
     }
 
     /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
@@ -92,14 +93,14 @@ impl Optional {
     /// (or equivalent) and must not be owned by any other `Strong`/`Optional`.
     pub unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
         Optional {
-            handle: handle.map(|handle| unsafe { Handle::from_non_null(handle) }),
+            handle: unsafe { OptionalHandle::from_non_null(handle) },
         }
     }
 
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Optional {
         if !value.is_empty() {
-            Optional { handle: Some(init_handle(global, value)) }
+            Optional { handle: OptionalHandle::new(init_handle(global, value)) }
         } else {
             Optional::empty()
         }
@@ -107,7 +108,7 @@ impl Optional {
 
     /// Clears the value, but does not de-allocate the Strong reference.
     pub fn clear_without_deallocation(&mut self) {
-        let Some(r) = self.handle else { return };
+        let Some(r) = self.handle.get() else { return };
         clear_handle(r);
     }
 
@@ -121,7 +122,7 @@ impl Optional {
     }
 
     pub fn get(&self) -> Option<JSValue> {
-        let imp = self.handle?;
+        let imp = self.handle.get()?;
         let result = get_handle(imp);
         if result.is_empty() {
             return None;
@@ -130,7 +131,7 @@ impl Optional {
     }
 
     pub fn swap(&mut self) -> JSValue {
-        let Some(imp) = self.handle else { return JSValue::ZERO };
+        let Some(imp) = self.handle.get() else { return JSValue::ZERO };
         let result = get_handle(imp);
         if result.is_empty() {
             return JSValue::ZERO;
@@ -140,7 +141,7 @@ impl Optional {
     }
 
     pub fn has(&self) -> bool {
-        let Some(r) = self.handle else { return false };
+        let Some(r) = self.handle.get() else { return false };
         !get_handle(r).is_empty()
     }
 
@@ -162,11 +163,11 @@ impl Optional {
     }
 
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
-        let Some(r) = self.handle else {
+        let Some(r) = self.handle.get() else {
             if value.is_empty() {
                 return;
             }
-            self.handle = Some(init_handle(global, value));
+            self.handle.set(init_handle(global, value));
             return;
         };
         set_handle(r, global, value);

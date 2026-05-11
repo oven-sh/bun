@@ -52,6 +52,52 @@ impl StrongRefHandle {
     }
 }
 
+/// Nullable identity for a JSC strong-reference slot.
+///
+/// This is the shape behind `jsc.Strong.Optional`: it may be empty, or it may
+/// carry a slot allocated and eventually destroyed by the JSC owner crate. It
+/// deliberately has no `Drop`; destruction is an effect owned by `bun_jsc`.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OptionalStrongRefHandle(Option<StrongRefHandle>);
+
+impl OptionalStrongRefHandle {
+    #[inline(always)]
+    pub const fn empty() -> Self {
+        Self(None)
+    }
+
+    #[inline(always)]
+    pub fn new(handle: StrongRefHandle) -> Self {
+        Self(Some(handle))
+    }
+
+    /// Wrap an optional slot pointer allocated by the JSC strong-reference table.
+    ///
+    /// # Safety
+    /// Any non-null `slot` must satisfy [`StrongRefHandle::from_non_null`]'s
+    /// provenance/lifetime contract.
+    #[inline(always)]
+    pub unsafe fn from_non_null(slot: Option<NonNull<StrongRefSlot>>) -> Self {
+        Self(slot.map(|slot| unsafe { StrongRefHandle::from_non_null(slot) }))
+    }
+
+    #[inline(always)]
+    pub fn get(self) -> Option<StrongRefHandle> {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn take(&mut self) -> Option<StrongRefHandle> {
+        self.0.take()
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, handle: StrongRefHandle) {
+        self.0 = Some(handle);
+    }
+}
+
 /// VM-lifetime handle to a JSC-owned global object.
 ///
 /// This is only pointer identity. The concrete JSC crate supplies the typed
@@ -134,5 +180,35 @@ mod tests {
             Some(handle)
         );
         assert_eq!(unsafe { StrongRefHandle::from_raw(core::ptr::null_mut()) }, None);
+    }
+
+    #[test]
+    fn optional_strong_ref_handle_preserves_nullable_pointer_shape() {
+        assert_eq!(
+            core::mem::size_of::<OptionalStrongRefHandle>(),
+            core::mem::size_of::<usize>()
+        );
+
+        let mut empty = OptionalStrongRefHandle::empty();
+        assert_eq!(empty.get(), None);
+        assert_eq!(empty.take(), None);
+
+        let slot = NonNull::<StrongRefSlot>::dangling();
+        let handle = unsafe { StrongRefHandle::from_non_null(slot) };
+        let mut optional = OptionalStrongRefHandle::new(handle);
+        assert_eq!(optional.get(), Some(handle));
+        assert_eq!(optional.take(), Some(handle));
+        assert_eq!(optional.get(), None);
+
+        optional.set(handle);
+        assert_eq!(optional.get(), Some(handle));
+        assert_eq!(
+            unsafe { OptionalStrongRefHandle::from_non_null(Some(slot)) },
+            OptionalStrongRefHandle::new(handle)
+        );
+        assert_eq!(
+            unsafe { OptionalStrongRefHandle::from_non_null(None) },
+            OptionalStrongRefHandle::empty()
+        );
     }
 }

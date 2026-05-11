@@ -1428,19 +1428,23 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
 }
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
-    fn on_websocket_upgrade(
-        &mut self,
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
         res: *mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         debug_assert_eq!(id, 0);
+        // SAFETY: DevServer always registers `*mut Self` with `id == 0`
+        // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
+        // callback's duration.
+        let this = unsafe { &mut *this };
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        let dw = bun_core::heap::into_raw(HmrSocket::new(self, res));
-        let _ = self.active_websocket_connections.insert(dw, ());
+        let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
+        let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
             dw,
             req.header(b"sec-websocket-key").unwrap_or(b""),

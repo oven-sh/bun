@@ -1249,15 +1249,17 @@ where
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
-    fn on_websocket_upgrade(
-        &mut self,
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
         res: *mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        Self::on_web_socket_upgrade(self, bun_opaque::opaque_deref_mut(res), req, context, id);
+        // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
+        // dispatch inside `on_web_socket_upgrade`.
+        unsafe { Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id) };
     }
 }
 
@@ -2980,8 +2982,16 @@ where
         Self::handle_request(server_ptr, should_deinit_ptr, prepared, req, response_value);
     }
 
-    pub fn on_web_socket_upgrade(
-        &mut self,
+    /// # Safety
+    /// `this` is the raw user-data pointer registered with `app.ws(...)` cast
+    /// to `*mut Self`. Its **actual pointee type depends on `id`**: `id == 1`
+    /// registers a `*mut UserRoute<SSL,DEBUG>` (mod.rs per-route ws), `id == 0`
+    /// registers `*mut Self` (mod.rs `/*` fallback). The receiver is therefore
+    /// kept raw and only dereferenced *after* dispatching on `id`, so no
+    /// wrong-typed `&mut Self` reference is ever materialized (which would be
+    /// instant UB regardless of whether it is read).
+    pub unsafe fn on_web_socket_upgrade(
+        this: *mut Self,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
@@ -2989,33 +2999,39 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // This is actually a UserRoute if id is 1 so it's safe to cast
-            // SAFETY: uws passes the UserRoute* as the context when id == 1
-            let user_route = unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<UserRoute<SSL, DEBUG>>() };
+            // SAFETY: for `id == 1` the registered user-data IS
+            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
+            // live for the request's duration. Raw-ptr cast only — no
+            // intermediate `&mut Self` was ever created.
+            let user_route = unsafe { &mut *this.cast::<UserRoute<SSL, DEBUG>>() };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
-        if self.config.on_node_http_request.is_some() {
+        let self_ptr: *mut Self = this;
+        // SAFETY: for `id == 0` the registered user-data IS `*mut Self`
+        // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
+        // duration.
+        let this = unsafe { &mut *self_ptr };
+        if this.config.on_node_http_request.is_some() {
             // PORT NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
-            Self::on_node_http_request_with_upgrade_ctx(self, req, resp, upgrade_ctx);
+            Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
             return;
         }
-        if self.config.on_request.is_none() {
+        if this.config.on_request.is_none() {
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
             resp.write_status(b"403 Forbidden");
             resp.end_without_body(true);
             return;
         }
-        self.pending_requests += 1;
+        this.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*self.request_pool).get() };
+        let ctx_slot = unsafe { (*this.request_pool).get() };
         let mut should_deinit_context = false;
-        let self_ptr: *mut Self = self;
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot,
             self_ptr,
@@ -3027,13 +3043,13 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero.
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
-        let signal = AbortSignal::new(&self.global());
+        let signal = AbortSignal::new(&this.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
@@ -3065,15 +3081,15 @@ where
         ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-        let global = self.global();
+        let global = this.global();
         let args = [
             request_object.to_js(&global),
-            self.js_value_assert_alive(),
+            this.js_value_assert_alive(),
         ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match self.config.on_request.as_ref().unwrap().get().call(&global, self.js_value_assert_alive(), &args) {
+        let response_value = match this.config.on_request.as_ref().unwrap().get().call(&global, this.js_value_assert_alive(), &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };

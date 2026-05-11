@@ -4837,13 +4837,13 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        // Storage tracks path_is_buffer to match emission:
-                        // raw bytes as Latin-1 when parentPath will be a Buffer,
-                        // otherwise a properly-decoded JS string.
+                        // Storage tracks path_is_buffer to match emission, and
+                        // honors args.encoding for string paths to stay aligned
+                        // with the non-recursive and sync-recursive paths.
                         dirent_path_prev = if (args.path_is_buffer)
                             bun.String.cloneLatin1(path_u8)
                         else
-                            bun.String.cloneUTF8(path_u8);
+                            jsc.WebCore.encoding.toBunString(path_u8, args.encoding);
                     }
                     dirent_path_prev.ref();
 
@@ -4851,7 +4851,7 @@ pub const NodeFS = struct {
                         .name = if (args.encoding == .buffer)
                             bun.String.cloneLatin1(utf8_name)
                         else
-                            bun.String.cloneUTF8(utf8_name),
+                            jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                         .path = dirent_path_prev,
                         .kind = effective_kind,
                         .name_as_buffer = args.encoding == .buffer,

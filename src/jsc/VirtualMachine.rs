@@ -4726,13 +4726,14 @@ impl VirtualMachine {
             if let Some(build_error) = value.as_::<crate::BuildMessage>() {
                 // SAFETY: `as_` returns a live `*mut BuildMessage` backed by
                 // the JSCell's private data; valid while `value` is alive.
-                let build_error = unsafe { &mut *build_error };
-                if !build_error.logged {
+                // R-2: shared borrow — `logged` is `Cell<bool>`.
+                let build_error = unsafe { &*build_error };
+                if !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
                     write_msg!(build_error.msg, writer, allow_ansi_color);
-                    build_error.logged = true;
+                    build_error.logged.set(true);
                     let _ = writer.write_all(b"\n");
                 }
                 self.had_errors = self.had_errors || build_error.msg.kind == bun_ast::Kind::Err;

@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use std::io::Write as _;
 
 
@@ -5,16 +6,19 @@ use crate::zig_string::ZigString;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
+// R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
+// mutated post-construction (`logged`, flipped by `VirtualMachine::print_error_*`)
+// is `Cell<bool>` so re-entrant JS cannot stack two `&mut` to the same `m_ctx`.
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
     // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc.
-    pub logged: bool,
+    pub logged: Cell<bool>,
 }
 
 impl Default for BuildMessage {
     fn default() -> Self {
-        Self { msg: bun_ast::Msg::default(), logged: false }
+        Self { msg: bun_ast::Msg::default(), logged: Cell::new(false) }
     }
 }
 
@@ -43,7 +47,7 @@ impl BuildMessage {
         Ok(array)
     }
 
-    pub fn to_string_fn(&mut self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         // std.fmt.allocPrint → write! into Vec<u8>; Rust aborts on OOM so the
         // `catch { throwOutOfMemoryValue }` branch is unreachable here.
         let mut text: Vec<u8> = Vec::new();
@@ -83,7 +87,7 @@ impl BuildMessage {
         let build_error = BuildMessage {
             msg: msg.clone(),
             // resolve_result: resolve_result.*,
-            logged: false,
+            logged: Cell::new(false),
         };
 
         Ok(build_error.to_js(global))
@@ -91,7 +95,7 @@ impl BuildMessage {
 
     #[crate::host_fn(method)]
     pub fn to_string(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -100,7 +104,7 @@ impl BuildMessage {
 
     #[crate::host_fn(method)]
     pub fn to_primitive(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -122,7 +126,7 @@ impl BuildMessage {
 
     #[crate::host_fn(method)]
     pub fn to_json(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {

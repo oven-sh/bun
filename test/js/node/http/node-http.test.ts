@@ -1785,4 +1785,91 @@ describe("HTTP Server Security Tests - Advanced", () => {
     const text = await response.text();
     expect(text).toBe("Hello World");
   });
+
+  // Regression: `@azure/msal-node`'s `LoopbackClient.closeServer` calls
+  //   server.close();
+  //   server.closeAllConnections();
+  //   server.unref();
+  // in sequence. Bun used to null out the internal server reference in
+  // `close()`, so the subsequent `closeAllConnections()` was a no-op —
+  // the keep-alive socket kept the event loop alive and the process hung.
+  // Issue: https://github.com/oven-sh/bun/issues/30501
+  test("closeAllConnections() after close() force-closes in-flight sockets", async () => {
+    const { promise: requestReceived, resolve: resolveReceived } = Promise.withResolvers<void>();
+    const server = http.createServer((req, _res) => {
+      // Signal receipt but DO NOT reply — socket is "in flight" (not idle)
+      // when the teardown sequence runs. This is the case where close()
+      // alone (which only closes idle connections) cannot reclaim the
+      // socket, and closeAllConnections() must do it.
+      resolveReceived();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = connect(port, "127.0.0.1");
+    const { promise: sockClosed, resolve: resolveClosed } = Promise.withResolvers<void>();
+    sock.on("close", () => resolveClosed());
+    sock.on("error", () => {});
+    await once(sock, "connect");
+    sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+    await requestReceived;
+
+    // msal-style teardown — no waiting between calls
+    server.close();
+    server.closeAllConnections();
+    server.unref();
+
+    // The client socket must be force-closed by closeAllConnections().
+    // Without the fix, the socket stays open indefinitely (msal hang).
+    await sockClosed;
+  });
+
+  // Same scenario end-to-end: a subprocess sets up the server + keep-alive
+  // client and tears down with the msal sequence. If the teardown doesn't
+  // close the in-flight connection, the subprocess never exits and the
+  // awaited `proc.exited` here never settles — the test runner's own
+  // timeout catches that.
+  // Issue: https://github.com/oven-sh/bun/issues/30501
+  test("process exits after close()+closeAllConnections()+unref() teardown", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const net = require("node:net");
+        const server = http.createServer((req, _res) => {
+          // Never reply — keep the socket in-flight (not idle) so that
+          // only closeAllConnections() (abrupt) can reclaim it.
+          server.close();
+          server.closeAllConnections();
+          server.unref();
+          process.stdout.write("TEARDOWN_DONE\\n");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          const sock = net.connect(port, "127.0.0.1", () => {
+            sock.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          });
+          sock.on("data", () => {});
+          sock.on("error", () => {});
+        });
+        // Fail-safe: if the loop somehow stays alive past 5s, print a
+        // sentinel and exit non-zero so the test can distinguish a hang
+        // from a real assertion failure.
+        setTimeout(() => {
+          process.stdout.write("STILL_ALIVE\\n");
+          process.exit(2);
+        }, 5000).unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("TEARDOWN_DONE");
+    expect(stdout).not.toContain("STILL_ALIVE");
+    expect(exitCode).toBe(0);
+  });
 });

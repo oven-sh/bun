@@ -1367,24 +1367,35 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) jsc.JSValue {
             const rc = this.getAllClosedPromise(this.globalThis);
 
-            if (this.hasListener()) {
-                const abrupt = brk: {
-                    if (abruptly) |val| {
-                        if (val.isBoolean() and val.toBoolean()) {
-                            break :brk true;
-                        }
+            const abrupt = brk: {
+                if (abruptly) |val| {
+                    if (val.isBoolean() and val.toBoolean()) {
+                        break :brk true;
                     }
-                    break :brk false;
-                };
+                }
+                break :brk false;
+            };
 
-                this.stop(abrupt);
+            // For an abrupt stop, the app may still have open connections
+            // even after a graceful `stop(false)` cleared `this.listener`.
+            // `stopListening` force-closes those via `this.app.?.close()`
+            // only when it actually enters the abrupt branch, so we can't
+            // gate on `hasListener()` here. `stop`/`stopListening` are
+            // idempotent — second calls short-circuit via the `terminated`
+            // flag and the `deinit_scheduled` flag — so this is safe.
+            if (abrupt) {
+                if (this.hasListener() or (this.app != null and !this.flags.terminated)) {
+                    this.stop(true);
+                }
+            } else if (this.hasListener()) {
+                this.stop(false);
             }
 
             return rc;
         }
 
         pub fn disposeFromJS(this: *ThisServer) jsc.JSValue {
-            if (this.hasListener()) {
+            if (this.hasListener() or (this.app != null and !this.flags.terminated)) {
                 this.stop(true);
             }
 
@@ -1669,6 +1680,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         this.notifyInspectorServerStopped();
                         if (abrupt) this.flags.terminated = true;
                     }
+                }
+                // Upgrading from graceful (`stop(false)`) to abrupt:
+                // `stop(false)` already nulled the listener, but the uWS
+                // App still owns open/idle keep-alive connections that
+                // would otherwise pin the event loop. `this.app.?.close()`
+                // force-closes every remaining socket on the app. This is
+                // the path that makes `server.close(); server.closeAllConnections();`
+                // actually drain msal-style loopback servers.
+                if (abrupt and !this.flags.terminated and this.app != null) {
+                    if (this.config.websocket) |*ws| {
+                        ws.handler.app = null;
+                    }
+                    this.flags.terminated = true;
+                    this.app.?.close();
                 }
                 return;
             };

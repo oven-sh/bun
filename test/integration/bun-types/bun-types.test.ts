@@ -357,12 +357,7 @@ describe("@types/bun integration test", () => {
     // import. We verify the specifier itself rather than trusting only that
     // the compiler "worked", because ambient-module merging can paper over
     // the misresolution in the fresh-install layout.
-    const nsSource = ts.createSourceFile(
-      bunNsPath,
-      readFileSync(bunNsPath, "utf8"),
-      ts.ScriptTarget.ESNext,
-      true,
-    );
+    const nsSource = ts.createSourceFile(bunNsPath, readFileSync(bunNsPath, "utf8"), ts.ScriptTarget.ESNext, true);
     let specifier: string | undefined;
     nsSource.forEachChild(node => {
       if (

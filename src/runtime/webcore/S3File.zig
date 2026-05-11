@@ -624,6 +624,7 @@ pub fn constructInternal(
     const path = (try jsc.Node.PathLike.fromJS(globalObject, &args)) orelse {
         return globalObject.throwInvalidArguments("Expected file path string", .{});
     };
+    errdefer path.deinit();
     return constructS3FileInternal(globalObject, path, args.nextEat());
 }
 

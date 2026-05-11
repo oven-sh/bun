@@ -2069,6 +2069,7 @@ pub fn constructBunFile(
 
     if (path == .path) {
         if (strings.hasPrefixComptime(path.path.slice(), "s3://")) {
+            errdefer path.deinit();
             return try S3File.constructInternalJS(globalObject, path.path, options);
         }
     }

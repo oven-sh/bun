@@ -305,7 +305,7 @@ pub const S3Client = struct {
         const path = (try jsc.Node.PathLike.fromJS(globalThis, &args)) orelse {
             return globalThis.throwInvalidArguments("Expected file path string", .{});
         };
-
+        errdefer path.deinit();
         return try S3File.constructInternalJS(globalThis, path, args.nextEat());
     }
     pub fn staticStat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

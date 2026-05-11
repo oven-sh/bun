@@ -300,21 +300,19 @@ impl MimallocArena {
         // accurate regardless of which alloc path was used. Keep the cheap
         // counter as a fast-positive: if even the *tracked* bytes already
         // exceed `limit`, skip the page walk.
+        // NOTE: under-limit does NOT call `mi_heap_collect` — that should
+        // basically never be called outside debugging. The under-limit branch
+        // is ONLY correct for arenas whose allocations are individually
+        // `Drop`'d by the caller before reset (e.g., the transpile scratch
+        // arena, where the parser's own RAII frees its temporaries). For
+        // arenas holding bulk-free-only data (e.g., `store_ast_alloc_heap`,
+        // whose `Ast.named_exports` etc. are intentionally never `Drop`'d),
+        // the caller MUST use plain `reset()` instead — retain there leaks
+        // every iteration's data until the limit happens to trip.
         if self.bytes_since_reset.get() > limit || self.heap_committed_exceeds(limit) {
             self.reset();
             true
         } else {
-            // Under limit: retain pages, but DO process deferred/cross-thread
-            // frees so the next iteration's allocations can reuse this
-            // iteration's now-dead blocks (this is what Zig's
-            // `arena.reset(.{.retain_with_limit=..})` cursor-bump achieves).
-            // Without this, darwin-aarch64's free path leaves blocks on the
-            // thread-delayed list — committed grows ~330 KB/iter and the
-            // limit may never trip (mi_heap_visit_blocks walks live arenas
-            // only; OS-backed pages on darwin sit elsewhere) → 83 MB on
-            // require-cache "via require() with a lot of long export names".
-            // SAFETY: heap_ptr() valid (owns asserted above).
-            unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
             // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
             // that was *under* the limit can still allocate on the new thread.
             #[cfg(debug_assertions)]

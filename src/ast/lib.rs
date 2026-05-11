@@ -3220,19 +3220,24 @@ pub mod store_ast_alloc_heap {
         // SAFETY: `arena` is the live `Box::into_raw` allocation from
         // `enter()`; this thread is its only mutator.
         //
-        // This runs once per source file in the bundler (`Transpiler::
-        // reset_store`) and once per resolve-queue iteration. A full
-        // `mi_heap_destroy + mi_heap_new` per file memsets a fresh per-heap
-        // arena bitmap on the next first alloc; retain up to 8 MiB of garbage
-        // between files instead. The AST nodes themselves (block-store) are
-        // bump-reset every file regardless, so the only effect of *not*
-        // destroying here is that previous files' embedded `AstVec` buffers
-        // become unreachable garbage in this heap until the limit is crossed
-        // — they cannot be dereferenced again because their owning AST nodes
-        // are gone. `set_thread_heap` re-publishes `heap_ptr()`, which is
-        // unchanged when under the limit and the new heap when over it.
+        // This is the `AstAlloc` side-heap holding `Ast.named_exports`,
+        // `AstVec` buffers, etc. — data that is intentionally NEVER `Drop`'d
+        // (the whole point of routing through `AstAlloc` is bulk-free here).
+        // `9ae903e` changed this to `reset_retain_with_limit(8M)` to avoid
+        // the per-file `mi_heap_new` bitmap memset, but that is WRONG for
+        // this heap: the previous file's allocations are never individually
+        // freed, so under the limit they accumulate as unreachable garbage.
+        // With `AstAlloc` bypassing `track_alloc` (calls `mi_heap_malloc`
+        // directly via the raw `*mut mi_heap_t`) AND `heap_committed_exceeds`
+        // being unreliable on darwin (OS-backed pages not walked by
+        // `mi_heap_visit_blocks`), the limit never trips → 83→61 MB on
+        // require-cache "long export names". Zig's
+        // `arena.reset(.{.retain_with_limit=..})` is on a BUMP allocator
+        // where reset always rewinds the cursor (= bulk-free); only the
+        // backing buffer is retained. `MimallocArena` is not a bump
+        // allocator, so the only correct mapping is destroy+new.
         unsafe {
-            (*arena).reset_retain_with_limit(8 * 1024 * 1024);
+            (*arena).reset();
             bun_alloc::ast_alloc::set_thread_heap((*arena).heap_ptr());
         }
     }

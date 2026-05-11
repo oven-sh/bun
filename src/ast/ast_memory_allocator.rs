@@ -69,13 +69,12 @@ impl ASTMemoryAllocator {
         // `RuntimeTranspilerStore::run()` calls grows unboundedly (one full
         // AST worth of nodes per import).
         //
-        // Retain (not destroy) up to 8 MiB: this runs once per async
-        // `import()` on a transpiler-pool worker, and a fresh `mi_heap`'s
-        // first alloc memsets a per-heap arena bitmap. `Scope::enter` →
-        // `push()` re-publishes `heap_ptr()` to `AST_HEAP`, so when the limit
-        // *is* crossed and a real `reset()` runs underneath, the new heap
-        // pointer is wired through correctly.
-        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
+        // This is the `AST_HEAP` for `AstAlloc` data (`named_exports` etc.)
+        // — bulk-free-only. `9ae903e` made this `reset_retain_with_limit(8M)`
+        // but `AstAlloc` bypasses `track_alloc` (raw `mi_heap_malloc`), so
+        // the limit never trips and every previous import's AST data leaks.
+        // See `store_ast_alloc_heap::reset` for the full analysis.
+        self.arena.reset();
         self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),

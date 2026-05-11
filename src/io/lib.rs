@@ -94,7 +94,11 @@ bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
-        fn alloc_file_poll() -> *mut FilePoll;
+        // PORT NOTE: `alloc_file_poll() -> *mut FilePoll` was removed — it
+        // returned an *uninitialized* hive slot, and any caller forming
+        // `&mut FilePoll` over it hit validity-invariant UB on the niche-
+        // bearing enum fields. `FilePoll::init` now goes through
+        // `file_polls_ptr()` + `Store::get_init` (write-before-read).
         fn increment_pending_unref_counter();
         fn ref_concurrently();
         fn unref_concurrently();

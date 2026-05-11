@@ -677,9 +677,7 @@ impl FilePoll {
 
     pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
-        // SAFETY: sole `&mut Store` borrow in this scope. (`alloc_file_poll`
-        // resolved to `file_polls().get()` on every vtable impl, so going
-        // through `file_polls()` directly is equivalent.)
+        // SAFETY: sole `&mut Store` borrow in this scope.
         let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
         syslog!(
             "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
@@ -1425,12 +1423,6 @@ impl Store {
             pending_free_head: ptr::null_mut(),
             pending_free_tail: ptr::null_mut(),
         }
-    }
-
-    #[deprecated = "returns *mut FilePoll to uninitialized memory; use get_init"]
-    pub fn get(&mut self) -> *mut FilePoll {
-        #[allow(deprecated)]
-        self.hive.get()
     }
 
     /// Claim a hive slot and move `value` into it. Infallible (heap fallback).

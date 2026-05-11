@@ -1745,10 +1745,6 @@ bun_io::link_impl_EventLoopCtx! {
             let rare = vm_from_owner(this.cast()).rare_data();
             &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
-        alloc_file_poll() => {
-            let rare = vm_from_owner(this.cast()).rare_data();
-            rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init())).get()
-        },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
         // would alias the JS thread's `&mut`. Raw place RMW only (the

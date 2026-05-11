@@ -901,6 +901,44 @@ pub mod strings {
         convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
+    /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh
+    /// UTF-8 `Vec`.
+    ///
+    /// `to_utf8_alloc` takes `&[u16]`, but constructing a `&[u16]` from a
+    /// `&[u8]` whose pointer is not 2-byte-aligned is immediate language-level
+    /// UB (`core::slice::from_raw_parts` requires `data` be aligned for `T`),
+    /// regardless of how the consumer reads the memory. Callers that hold a
+    /// `Vec<u8>` / `&[u8]` of LE bytes (e.g. BOM-stripping a file buffer) MUST
+    /// route through this helper instead of casting.
+    ///
+    /// The bytes are first copied into a freshly-allocated, properly-aligned
+    /// `Vec<u16>` via a raw byte `memcpy` (no per-element decode — simdutf
+    /// interprets the buffer as little-endian and Bun targets only LE hosts),
+    /// then handed to `to_utf8_alloc`. An odd trailing byte is dropped, which
+    /// matches the prior `len() / 2` truncation.
+    pub fn to_utf8_alloc_from_le_bytes(le_bytes: &[u8]) -> Vec<u8> {
+        let n_u16 = le_bytes.len() / 2;
+        if n_u16 == 0 {
+            return Vec::new();
+        }
+        let mut aligned: Vec<u16> = Vec::with_capacity(n_u16);
+        // SAFETY: `aligned.as_mut_ptr()` is a fresh `Vec<u16>` allocation, so it
+        // is 2-byte-aligned and has `n_u16 * 2` writable bytes of capacity. We
+        // copy exactly that many bytes from `le_bytes` (which has at least
+        // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
+        // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
+        // possibly-misaligned source.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                le_bytes.as_ptr(),
+                aligned.as_mut_ptr().cast::<u8>(),
+                n_u16 * 2,
+            );
+            aligned.set_len(n_u16);
+        }
+        to_utf8_alloc(&aligned)
+    }
+
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
         list.reserve(need + 16);

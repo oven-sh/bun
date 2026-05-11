@@ -94,13 +94,12 @@ impl BOM {
                 bytes
             }
             BOM::Utf16Le => {
+                // `trimmed` is `&[u8]` at offset 2 of a `Vec<u8>` allocation; its
+                // alignment is not guaranteed ≥ 2, so reinterpreting it as `&[u16]`
+                // (the Zig `@alignCast` port) is UB in Rust. Route through the
+                // byte-level helper which copies into an aligned `Vec<u16>` first.
                 let trimmed = &bytes[Self::UTF16_LE_BYTES.len()..];
-                // SAFETY: `trimmed` reinterprets [u8] as [u16] LE; alignment may be 1 — Zig used
-                // `@alignCast`. simdutf reads byte-aligned on every supported target.
-                let trimmed_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(trimmed.as_ptr().cast::<u16>(), trimmed.len() / 2)
-                };
-                let out = strings::to_utf8_alloc(trimmed_u16);
+                let out = strings::to_utf8_alloc_from_le_bytes(trimmed);
                 drop(bytes);
                 out
             }
@@ -127,12 +126,9 @@ impl BOM {
                 &list[..len - n]
             }
             BOM::Utf16Le => {
-                let trimmed = &list[Self::UTF16_LE_BYTES.len()..];
-                // SAFETY: see `remove_and_convert_to_utf8_and_free`.
-                let trimmed_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(trimmed.as_ptr().cast::<u16>(), trimmed.len() / 2)
-                };
-                let out = strings::to_utf8_alloc(trimmed_u16);
+                // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
+                // u16-alignment guarantee, so use the byte-level transcode helper.
+                let out = strings::to_utf8_alloc_from_le_bytes(&list[Self::UTF16_LE_BYTES.len()..]);
                 if list.capacity() < out.len() {
                     list.reserve(out.len() - list.len());
                 }

@@ -1016,10 +1016,10 @@ impl Subprocess<'_> {
             // exits. ConPTY's conhost stays alive after the child exits, so close
             // the pseudoconsole now to deliver EOF and fire the terminal's exit
             // callback. Leaves the Terminal itself open to match POSIX.
-            if let Some(mut terminal) = self.terminal.get() {
+            if let Some(terminal) = self.terminal.get() {
                 // SAFETY: terminal pointer is valid while subprocess is alive;
-                // single mutator thread.
-                unsafe { terminal.as_mut() }.close_pseudoconsole();
+                // single JS thread. R-2: `close_pseudoconsole` takes `&self`.
+                unsafe { terminal.as_ref() }.close_pseudoconsole();
             }
         }
 

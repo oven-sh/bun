@@ -614,6 +614,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   if (options.ca_file_name) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    /* Construction-time CA path installs the default trust store + user CAs.
+     * Flip the marker so a later `us_ssl_ctx_add_ca_pem` appends to THIS
+     * store instead of swapping in a fresh one (which would discard these
+     * CAs), and so the client branch of `us_internal_ssl_attach` doesn't
+     * override the store with the shared default roots. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
 
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
@@ -638,6 +644,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       if (cert_store == NULL) {
         cert_store = us_get_default_ca_store();
         SSL_CTX_set_cert_store(ssl_context, cert_store);
+        /* See comment above the ca_file_name branch. */
+        SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
       }
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
@@ -652,6 +660,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   } else if (options.request_cert) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    /* See comment above the ca_file_name branch — `requestCert: true` also
+     * installs a populated trust store that a later addCACert must preserve. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,

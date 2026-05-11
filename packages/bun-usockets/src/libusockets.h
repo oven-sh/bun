@@ -439,6 +439,17 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 
+/* Node's `SecureContext.addCACert`. Parses `pem` as one or more PEM-encoded
+ * X.509 certificates and appends them to `ssl_ctx`'s verify store. On the
+ * first call into a CTX whose verify_mode is still SSL_VERIFY_NONE (no `ca`
+ * in options), swaps in us_get_default_ca_store() and flips verify_mode to
+ * SSL_VERIFY_PEER so the per-socket client override in us_internal_ssl_attach
+ * doesn't discard the added CA. Duplicates are silently ignored (Node
+ * behavior). Returns the number of certificates added (0 if `pem` was empty
+ * or contained no PEM blocks — not an error). Silently no-ops on NULL/0-len
+ * input to mirror Node. */
+int us_ssl_ctx_add_ca_pem(struct ssl_ctx_st *ssl_ctx, const char *pem, size_t pem_len);
+
 /* Public interfaces for loops */
 
 /* Returns a new event loop with user data extension */

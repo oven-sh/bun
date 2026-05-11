@@ -390,9 +390,9 @@ impl PosixBufferedReader {
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.handle.set_owner(Owner::BufferedReader(reader));
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -400,8 +400,9 @@ impl PosixBufferedReader {
 
     pub fn set_target(&mut self, target: BufferedReaderTarget) {
         self.vtable.target = Some(target);
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.handle.set_owner(Owner::BufferedReader(reader));
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -579,18 +580,19 @@ impl PosixBufferedReader {
         // so no raw-pointer escape is needed.
         let ev = self.vtable.event_loop();
         let lp = self.vtable.loop_();
-        let owner_ptr = std::ptr::from_mut(self).cast::<c_void>();
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::typed::<file_poll::BufferedReader>(owner_ptr.cast())));
+            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::BufferedReader(reader)));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
         };
-        poll.set_owner(Owner::typed::<file_poll::BufferedReader>(owner_ptr.cast()));
+        poll.set_owner(Owner::BufferedReader(reader));
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);

@@ -1,4 +1,5 @@
 use crate::owner::OwnerToken;
+use crate::reader::BufferedReaderHandle;
 use bun_spawn_types::ProcessHandle;
 
 #[repr(u8)]
@@ -81,14 +82,12 @@ variants! {
     StaticPipeWriter => StaticPipeWriter,
     ShellStaticPipeWriter => ShellStaticPipeWriter,
     SecurityScanStaticPipeWriter => SecurityScanStaticPipeWriter,
-    BufferedReader => BufferedReader,
     DnsResolver => DnsResolver,
     GetAddrInfoRequest => GetAddrInfoRequest,
     Request => Request,
     ShellBufferedWriter => ShellBufferedWriter,
     TerminalPoll => TerminalPoll,
     ParentDeathWatchdog => ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader => LifecycleScriptSubprocessOutputReader,
 }
 
 impl Variant for Null {
@@ -108,7 +107,7 @@ pub enum Owner {
     StaticPipeWriter(OwnerToken<StaticPipeWriter>),
     ShellStaticPipeWriter(OwnerToken<ShellStaticPipeWriter>),
     SecurityScanStaticPipeWriter(OwnerToken<SecurityScanStaticPipeWriter>),
-    BufferedReader(OwnerToken<BufferedReader>),
+    BufferedReader(BufferedReaderHandle),
     DnsResolver(OwnerToken<DnsResolver>),
     GetAddrInfoRequest(OwnerToken<GetAddrInfoRequest>),
     Request(OwnerToken<Request>),
@@ -116,7 +115,7 @@ pub enum Owner {
     ShellBufferedWriter(OwnerToken<ShellBufferedWriter>),
     TerminalPoll(OwnerToken<TerminalPoll>),
     ParentDeathWatchdog(OwnerToken<ParentDeathWatchdog>),
-    LifecycleScriptSubprocessOutputReader(OwnerToken<LifecycleScriptSubprocessOutputReader>),
+    LifecycleScriptSubprocessOutputReader(BufferedReaderHandle),
 }
 
 impl Owner {
@@ -141,7 +140,9 @@ impl Owner {
             Kind::StaticPipeWriter => Self::typed::<StaticPipeWriter>(ptr),
             Kind::ShellStaticPipeWriter => Self::typed::<ShellStaticPipeWriter>(ptr),
             Kind::SecurityScanStaticPipeWriter => Self::typed::<SecurityScanStaticPipeWriter>(ptr),
-            Kind::BufferedReader => Self::typed::<BufferedReader>(ptr),
+            Kind::BufferedReader => BufferedReaderHandle::from_usize(ptr as usize)
+                .map(Self::BufferedReader)
+                .unwrap_or(Self::NULL),
             Kind::DnsResolver => Self::typed::<DnsResolver>(ptr),
             Kind::GetAddrInfoRequest => Self::typed::<GetAddrInfoRequest>(ptr),
             Kind::Request => Self::typed::<Request>(ptr),
@@ -152,7 +153,9 @@ impl Owner {
             Kind::TerminalPoll => Self::typed::<TerminalPoll>(ptr),
             Kind::ParentDeathWatchdog => Self::typed::<ParentDeathWatchdog>(ptr),
             Kind::LifecycleScriptSubprocessOutputReader => {
-                Self::typed::<LifecycleScriptSubprocessOutputReader>(ptr)
+                BufferedReaderHandle::from_usize(ptr as usize)
+                    .map(Self::LifecycleScriptSubprocessOutputReader)
+                    .unwrap_or(Self::NULL)
             }
         }
     }
@@ -197,7 +200,7 @@ impl Owner {
             Self::StaticPipeWriter(token) => token.get(),
             Self::ShellStaticPipeWriter(token) => token.get(),
             Self::SecurityScanStaticPipeWriter(token) => token.get(),
-            Self::BufferedReader(token) => token.get(),
+            Self::BufferedReader(handle) => handle.get(),
             Self::DnsResolver(token) => token.get(),
             Self::GetAddrInfoRequest(token) => token.get(),
             Self::Request(token) => token.get(),
@@ -205,7 +208,7 @@ impl Owner {
             Self::ShellBufferedWriter(token) => token.get(),
             Self::TerminalPoll(token) => token.get(),
             Self::ParentDeathWatchdog(token) => token.get(),
-            Self::LifecycleScriptSubprocessOutputReader(token) => token.get(),
+            Self::LifecycleScriptSubprocessOutputReader(handle) => handle.get(),
         }
     }
 
@@ -218,6 +221,15 @@ impl Owner {
     pub const fn process_handle(self) -> Option<ProcessHandle> {
         match self {
             Self::Process(handle) => Some(handle),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn buffered_reader_handle(self) -> Option<BufferedReaderHandle> {
+        match self {
+            Self::BufferedReader(handle)
+            | Self::LifecycleScriptSubprocessOutputReader(handle) => Some(handle),
             _ => None,
         }
     }
@@ -259,6 +271,18 @@ mod tests {
         assert_eq!(owner, Owner::Process(handle));
         assert_eq!(owner.process_handle(), Some(handle));
         assert_eq!(owner.kind(), Kind::Process);
+        assert_eq!(owner.ptr(), ptr);
+    }
+
+    #[test]
+    fn raw_parts_preserve_buffered_reader_handle() {
+        let ptr = 0x6000usize as *mut ();
+        let owner = unsafe { Owner::from_raw_parts(Kind::BufferedReader, ptr) };
+        let handle = BufferedReaderHandle::from_usize(ptr as usize).unwrap();
+
+        assert_eq!(owner, Owner::BufferedReader(handle));
+        assert_eq!(owner.buffered_reader_handle(), Some(handle));
+        assert_eq!(owner.kind(), Kind::BufferedReader);
         assert_eq!(owner.ptr(), ptr);
     }
 

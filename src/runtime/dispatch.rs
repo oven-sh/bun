@@ -981,8 +981,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 
     match owner.kind() {
         poll_tag::BUFFERED_READER => {
-            let reader = owner_as!(bun_io::BufferedReader);
-            bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
+            let reader = owner
+                .buffered_reader_handle()
+                .expect("BUFFERED_READER FilePoll owner carries a BufferedReaderHandle");
+            bun_io::with_buffered_reader_handle(reader, |reader| {
+                bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
+            });
         }
         poll_tag::PROCESS => {
             let process = owner
@@ -1068,8 +1072,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             // The real `bun_install::lifecycle_script_runner` is gated; the
             // active stub re-exports only `LifecycleScriptSubprocess`, so name
             // the underlying type directly (spec lifecycle_script_runner.zig:48).
-            let h = owner_as!(bun_io::BufferedReader);
-            bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup);
+            let reader = owner
+                .buffered_reader_handle()
+                .expect("lifecycle output FilePoll owner carries a BufferedReaderHandle");
+            bun_io::with_buffered_reader_handle(reader, |reader| {
+                bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
+            });
         }
 
         poll_tag::NULL | _ => {

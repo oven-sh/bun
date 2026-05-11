@@ -520,6 +520,21 @@ impl Worker {
     pub fn deinit_soon(&mut self) {
         if let Some(thread) = unsafe { self.thread.as_ref() } {
             thread.push_idle_task(&raw mut self.deinit_task);
+        } else {
+            // `thread` is `ThreadPoolLib::Thread::current()` captured at
+            // creation. When null, the Worker was created on a non-pool thread
+            // (the bundler thread running an inline parse). `deinit_soon` is
+            // also called from the bundler thread (`deinit_without_freeing_arena`
+            // iterates `workers_assignments`), so we are on the owning thread
+            // and can tear down synchronously. Zig spec (ThreadPool.zig:232)
+            // silently no-ops here, leaking the Worker — including its
+            // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
+            // parse produced) and `data.transpiler` per `Bun.build()` call.
+            //
+            // SAFETY: `self` is the heap-allocated Worker; sole owner now that
+            // the caller is about to `clear_retaining_capacity()` the
+            // `workers_assignments` map.
+            unsafe { Self::deinit(self as *mut Self) };
         }
     }
 

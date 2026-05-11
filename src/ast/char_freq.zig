@@ -61,11 +61,18 @@ fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
         deltas[@as(usize, c)] += delta;
     }
 
-    freqs[0..26].* = deltas['a' .. 'a' + 26].*;
-    freqs[26 .. 26 * 2].* = deltas['A' .. 'A' + 26].*;
-    freqs[26 * 2 .. 62].* = deltas['0' .. '0' + 10].*;
-    freqs[62] = deltas['_'];
-    freqs[63] = deltas['$'];
+    // Accumulate into freqs rather than overwrite — scan() may be called
+    // multiple times (source + each comment + each import path), and every
+    // call with text.len >= scan_big_chunk_size would otherwise clobber the
+    // histogram built by previous calls.
+    freqs[0..26].* = @as(@Vector(26, i32), freqs[0..26].*) +
+        @as(@Vector(26, i32), deltas['a' .. 'a' + 26].*);
+    freqs[26 .. 26 * 2].* = @as(@Vector(26, i32), freqs[26 .. 26 * 2].*) +
+        @as(@Vector(26, i32), deltas['A' .. 'A' + 26].*);
+    freqs[26 * 2 .. 62].* = @as(@Vector(10, i32), freqs[26 * 2 .. 62].*) +
+        @as(@Vector(10, i32), deltas['0' .. '0' + 10].*);
+    freqs[62] += deltas['_'];
+    freqs[63] += deltas['$'];
 }
 
 fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {

@@ -1496,7 +1496,12 @@ pub const Parser = struct {
         return Parser{
             .options = _options,
             .allocator = allocator,
-            .lexer = try js_lexer.Lexer.init(log, source, allocator),
+            .lexer = try js_lexer.Lexer.initWithTrackComments(
+                log,
+                source,
+                allocator,
+                _options.features.minify_identifiers,
+            ),
             .define = define,
             .source = source,
             .log = log,

@@ -1,13 +1,8 @@
-// Regression for oven-sh/bun#30477:
-// `experimentalDecorators: true` in a tsconfig that `extends` another
-// parent was silently dropped during the extends-merge, so Bun emitted
-// stage-3 (TC39) decorators instead of legacy ones.
-//
-// Also covers the `--tsconfig-override` flag path, which attaches the
-// tsconfig to the filesystem root DirInfo — the transpiler must pick
-// it up via `enclosing_tsconfig_json` for the working directory.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+// https://github.com/oven-sh/bun/issues/30477
+// experimentalDecorators was silently dropped across tsconfig extends chains.
 
 // The probe decorator distinguishes legacy vs stage-3 emit at runtime:
 // legacy decorators pass exactly one argument (the target class);
@@ -75,6 +70,84 @@ test("experimentalDecorators inherited from the base tsconfig still wins", async
 
   expect(stdout).toBe("legacy\nOK\n");
   expect(exitCode).toBe(0);
+});
+
+// The following two cases pin down TypeScript's per-key override semantics for
+// `extends`: a child's explicit value wins over the parent's, even when the
+// child's value is `false`. Without this, `or`-merging made `true` sticky —
+// a base config could force legacy decorators on every child that extended it.
+test("child experimentalDecorators: false overrides parent true (disables legacy)", async () => {
+  using dir = tempDir("bun-30477-child-false-exp", {
+    "base-tsconfig.json": JSON.stringify({
+      compilerOptions: { target: "esnext", experimentalDecorators: true },
+    }),
+    "tsconfig.json": JSON.stringify({
+      extends: "./base-tsconfig.json",
+      compilerOptions: { module: "esnext", experimentalDecorators: false },
+    }),
+    "index.ts": PROBE_SOURCE,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Child explicitly opts out of legacy decorators — stage-3 should win.
+  expect(stdout).toBe("stage-3\nOK\n");
+  expect(exitCode).toBe(0);
+});
+
+test("child emitDecoratorMetadata: false overrides parent true", async () => {
+  // When emitDecoratorMetadata is true, Bun emits __legacyMetadataTS(...)
+  // calls into __legacyDecorateClassTS. A child that sets it back to false
+  // must prevent that emission.
+  const META_SOURCE = `
+function probe(target: unknown, key: unknown) { /* legacy signature */ }
+
+class Foo {
+  @probe
+  foo(a: number) {}
+}
+
+console.log(typeof Foo);
+`;
+  using dir = tempDir("bun-30477-child-false-meta", {
+    "base-tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        target: "esnext",
+        experimentalDecorators: true,
+        emitDecoratorMetadata: true,
+      },
+    }),
+    "tsconfig.json": JSON.stringify({
+      extends: "./base-tsconfig.json",
+      compilerOptions: { module: "esnext", emitDecoratorMetadata: false },
+    }),
+    "index.ts": META_SOURCE,
+  });
+
+  // `bun build` lets us inspect the transpiled output directly.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target", "bun", "./index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (exitCode !== 0) {
+    console.log("stderr:", stderr);
+  }
+  expect(exitCode).toBe(0);
+  // __legacyMetadataTS is only emitted when emitDecoratorMetadata is on.
+  // Child opted out, so the bundled output must NOT contain it.
+  expect(stdout).not.toContain("__legacyMetadataTS");
 });
 
 test("--tsconfig-override picks up experimentalDecorators via extends", async () => {

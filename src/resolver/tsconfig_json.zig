@@ -40,8 +40,11 @@ pub const TSConfigJSON = struct {
 
     preserve_imports_not_used_as_values: ?bool = false,
 
-    emit_decorator_metadata: bool = false,
-    experimental_decorators: bool = false,
+    // Optional so the extends-merge can distinguish "child didn't say" from
+    // "child explicitly set false". TypeScript's `extends` semantics are
+    // per-key override: a child's `false` wipes out a parent's `true`.
+    emit_decorator_metadata: ?bool = null,
+    experimental_decorators: ?bool = null,
 
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;

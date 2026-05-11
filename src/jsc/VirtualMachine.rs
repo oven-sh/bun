@@ -4750,14 +4750,15 @@ impl VirtualMachine {
                 return true;
             } else if let Some(resolve_error) = value.as_::<crate::ResolveMessage>() {
                 // SAFETY: see above; `*mut ResolveMessage` is live while
-                // `value` is alive.
-                let resolve_error = unsafe { &mut *resolve_error };
-                if !resolve_error.logged {
+                // `value` is alive. R-2: deref as shared (`&*`); the only
+                // mutated field (`logged`) is `Cell<bool>`.
+                let resolve_error = unsafe { &*resolve_error };
+                if !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
                     }
                     write_msg!(resolve_error.msg, writer, allow_ansi_color);
-                    resolve_error.logged = true;
+                    resolve_error.logged.set(true);
                     let _ = writer.write_all(b"\n");
                 }
                 self.had_errors = self.had_errors || resolve_error.msg.kind == bun_ast::Kind::Err;

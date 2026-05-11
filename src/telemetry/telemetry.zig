@@ -808,7 +808,7 @@ pub fn jsAttach(
     ref_obj.put(globalObject, "id", JSValue.jsNumber(@as(f64, @floatFromInt(id))));
 
     // Create the dispose function and bind it to ref_obj
-    const dispose_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("dispose"), 0, jsInstrumentRefDispose, false);
+    const dispose_fn = jsc.host_fn.NewRuntimeFunction(globalObject, ZigString.static("dispose"), 0, &jsInstrumentRefDispose, false, null);
     const bound_dispose = dispose_fn.bind(globalObject, ref_obj, &bun.String.static("dispose"), 0, &.{}) catch return .js_undefined;
 
     // Get Symbol.dispose from VM

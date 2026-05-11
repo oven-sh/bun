@@ -1,6 +1,16 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isPosix, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  bunTest,
+  isLinux,
+  isPosix,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
@@ -621,11 +631,7 @@ describe("--env-file", () => {
       const payload = entries.join("\n") + "\n";
 
       await using writer = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `require("fs").writeFileSync(${JSON.stringify(fifoPath)}, ${JSON.stringify(payload)})`,
-        ],
+        cmd: [bunExe(), "-e", `require("fs").writeFileSync(${JSON.stringify(fifoPath)}, ${JSON.stringify(payload)})`],
         env: bunEnv,
         stderr: "inherit",
       });

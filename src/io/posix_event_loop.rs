@@ -1447,8 +1447,9 @@ impl Store {
             unsafe {
                 next = (*current).next_to_free;
                 (*current).next_to_free = ptr::null_mut();
+                // FilePoll has no drop glue; `put` is a no-op drop + recycle.
+                self.hive.put(current);
             }
-            self.hive.put(current);
         }
         self.pending_free_head = ptr::null_mut();
         self.pending_free_tail = ptr::null_mut();
@@ -1461,7 +1462,9 @@ impl Store {
         // alias-tolerant `poll: *FilePoll` and touch fields only through raw
         // pointer ops — same rationale as `process_deferred_frees` above.
         if !ever_registered {
-            self.hive.put(poll);
+            // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
+            // drop glue, so `put` is a no-op drop + recycle.
+            unsafe { self.hive.put(poll) };
             return;
         }
 

@@ -701,11 +701,9 @@ impl NumberRenamer {
 
         // PORT NOTE: Zig `defer { s.deinit(); pool.put(s) }` — fn is infallible,
         // so no scopeguard needed; cleanup runs unconditionally below.
-        // SAFETY: s came from number_scope_pool.get() and was initialized above.
-        unsafe {
-            core::ptr::drop_in_place(s);
-        }
-        self.number_scope_pool.put(s);
+        // SAFETY: s came from number_scope_pool.get() and was initialized above;
+        // `put` drops `name_counts` in place before recycling the slot.
+        unsafe { self.number_scope_pool.put(s) };
     }
 
     fn assign_names_in_scope(
@@ -781,11 +779,9 @@ impl NumberRenamer {
         }
 
         if s != initial_scope {
-            // SAFETY: s is a pool slot we allocated in the loop above
-            unsafe {
-                core::ptr::drop_in_place(s);
-            }
-            self.number_scope_pool.put(s);
+            // SAFETY: s is a pool slot we allocated and initialized in the loop
+            // above; `put` drops `name_counts` in place before recycling.
+            unsafe { self.number_scope_pool.put(s) };
         }
     }
 

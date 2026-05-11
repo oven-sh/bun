@@ -2063,7 +2063,12 @@ impl DevServer {
                                 Some(saved) => saved,
                                 // Zig: `catch return` — abort the deferral on failure.
                                 None => {
-                                    self.deferred_request_pool.put(deferred_ptr);
+                                    // SAFETY: `deferred_ptr` is a hive slot from
+                                    // `get()` above; `pool::Node<T>` has no drop
+                                    // glue (`data` is `MaybeUninit`), so `put`'s
+                                    // in-place drop is a no-op even though `data`
+                                    // was never written on this error path.
+                                    unsafe { self.deferred_request_pool.put(deferred_ptr) };
                                     return Ok(());
                                 }
                             }
@@ -2873,12 +2878,15 @@ impl DeferredRequest {
     fn __free(&mut self) {
         // SAFETY: self is the .data field of a Node in deferred_request_pool
         let node = unsafe {
-            &mut *bun_core::from_field_ptr!(deferred_request::Node, data, std::ptr::from_mut(self))
+            bun_core::from_field_ptr!(deferred_request::Node, data, std::ptr::from_mut(self))
         };
-        // SAFETY: dev backref is valid while the pool entry exists
-        unsafe { &mut *self.dev.cast_mut() }
-            .deferred_request_pool
-            .put(node);
+        // SAFETY: dev backref is valid while the pool entry exists; `node` is a
+        // fully-initialized hive slot. `pool::Node<T>` has no drop glue (`data`
+        // is `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`
+        // already tore down the payload.
+        unsafe {
+            (*self.dev.cast_mut()).deferred_request_pool.put(node);
+        }
     }
 
     /// *WARNING*: Do not call this directly, instead call `.deref_()`

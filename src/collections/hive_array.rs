@@ -69,7 +69,17 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         (value as usize) >= (start as usize) && (value as usize) < (end as usize)
     }
 
-    pub fn put(&mut self, value: *mut T) -> bool {
+    /// Return a slot to the pool, dropping the contained `T` in place.
+    ///
+    /// Returns `false` (and drops nothing) if `value` does not point into
+    /// this hive's buffer.
+    ///
+    /// # Safety
+    /// If `value` points into this hive, it must point to a fully-initialized
+    /// `T` previously obtained via [`get`](Self::get) and written by the
+    /// caller. The slot is dropped in place; passing a moved-from or
+    /// uninitialized slot is UB for `T` with drop glue.
+    pub unsafe fn put(&mut self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -77,10 +87,18 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         debug_assert!(self.used.is_set(index as usize));
         debug_assert!(self.buffer[index as usize].as_ptr().cast::<T>() == value.cast_const());
 
-        // PORT NOTE: Zig wrote `value.* = undefined;`. T has no destructor in Zig;
-        // the slot is simply marked logically uninitialized again.
-        // SAFETY: `value` points to `size_of::<T>` bytes within `buffer`.
-        unsafe { asan::poison(value.cast(), size_of::<T>()) };
+        // PORT NOTE: Zig wrote `value.* = undefined;` — Zig has no destructors,
+        // so the slot was simply marked logically uninitialized. In the Rust
+        // port several `T` carry owned heap data (e.g. `NumberScope.name_counts:
+        // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
+        // before recycling so the put/get cycle does not leak it. Callers that
+        // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
+        // trivially-droppable residuals, so this is idempotent for them.
+        // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
+        unsafe {
+            core::ptr::drop_in_place(value);
+            asan::poison(value.cast(), size_of::<T>());
+        }
 
         self.used.unset(index as usize);
         true
@@ -152,17 +170,26 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         false
     }
 
-    pub fn put(&mut self, value: *mut T) {
+    /// Return a slot to the pool, dropping the contained `T`.
+    ///
+    /// # Safety
+    /// `value` must point to a fully-initialized `T` previously obtained from
+    /// [`get`](Self::get) / [`get_and_see_if_new`](Self::get_and_see_if_new) /
+    /// [`try_get`](Self::try_get) on this `Fallback` and subsequently written
+    /// by the caller.
+    pub unsafe fn put(&mut self, value: *mut T) {
         if CAPACITY > 0 {
-            if self.hive.put(value) {
+            // SAFETY: caller contract — `value` is fully initialized.
+            if unsafe { self.hive.put(value) } {
                 return;
             }
         }
 
         // SAFETY: `value` was produced by `heap::into_raw(Box::<T>::new_uninit())`
-        // in `get_impl`/`get_and_see_if_new`/`try_get` above, since it is not in the hive.
-        // The slot is treated as uninitialized (Zig's `allocator.destroy` does not drop).
-        unsafe { bun_core::heap::destroy(value.cast::<MaybeUninit<T>>()) };
+        // in `get_impl`/`get_and_see_if_new`/`try_get` above (it is not in the
+        // hive), and the caller has since fully initialized it. `destroy`
+        // reconstructs the `Box<T>` and runs `T::drop`.
+        unsafe { bun_core::heap::destroy(value) };
     }
 }
 
@@ -224,10 +251,9 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
             // SAFETY: `self` was produced by `init` above, so `pool` is the
             // pool that owns this slot and is still live (caller contract on
             // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
-            // to dropping `value` in place; `Fallback::put` then poisons/recycles
-            // the slot without running any destructor.
+            // to `T::drop`, which `Fallback::put` now runs (it drops the whole
+            // `HiveRef` in place before recycling/freeing the slot).
             unsafe {
-                core::ptr::drop_in_place(core::ptr::addr_of_mut!(self.value));
                 (*pool).put(std::ptr::from_mut::<Self>(self));
             }
             return None;
@@ -252,15 +278,19 @@ mod tests {
 
         {
             let b = a.get().unwrap();
+            // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
+            unsafe { *b = 0 };
             assert!(a.get().unwrap() != b);
             assert_eq!(a.index_of(b), Some(0));
-            assert!(a.put(b));
+            // SAFETY: `b` is a fully-initialized hive slot.
+            assert!(unsafe { a.put(b) });
             assert!(a.get().unwrap() == b);
             let c = a.get().unwrap();
             // SAFETY: `c` points into `a.buffer` and was just unpoisoned by `get()`.
             unsafe { *c = 123 };
             let mut d: Int = 12345;
-            assert!(a.put(&mut d) == false);
+            // SAFETY: `&mut d` is foreign — `put` returns `false` and drops nothing.
+            assert!(unsafe { a.put(&mut d) } == false);
             assert!(a.r#in(&d) == false);
         }
 
@@ -268,8 +298,11 @@ mod tests {
         {
             for i in 0..SIZE {
                 let b = a.get().unwrap();
+                // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
+                unsafe { *b = 0 };
                 assert_eq!(a.index_of(b), Some(u32::try_from(i).expect("int cast")));
-                assert!(a.put(b));
+                // SAFETY: `b` is a fully-initialized hive slot.
+                assert!(unsafe { a.put(b) });
                 assert!(a.get().unwrap() == b);
             }
             for _ in 0..SIZE {

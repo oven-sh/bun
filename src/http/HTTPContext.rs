@@ -750,7 +750,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
-                let ok = self.pending_sockets.put(socket_ptr);
+                // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
+                // owned-heap fields (ssl_config/tunnel/target_hostname/h2_session)
+                // were just moved out / cleared, so the in-place drop in `put`
+                // touches only trivially-droppable residuals.
+                let ok = unsafe { self.pending_sockets.put(socket_ptr) };
                 debug_assert!(ok);
                 bun_core::scoped_log!(
                     HTTPContext,

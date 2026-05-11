@@ -821,9 +821,16 @@ impl NetworkTask {
         }
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
-            manager
-                .preallocated_resolve_tasks
-                .put(self.streaming_extract_task);
+            // SAFETY: `streaming_extract_task` was obtained from this same
+            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
+            // (cleared immediately below); `put()` is `unsafe` because it now
+            // runs `T::drop` on the slot — here `*mut Task` is a raw pointer
+            // (no `Drop`), so the only obligation is the from-this-pool one.
+            unsafe {
+                manager
+                    .preallocated_resolve_tasks
+                    .put(self.streaming_extract_task);
+            }
             self.streaming_extract_task = ptr::null_mut();
         }
     }

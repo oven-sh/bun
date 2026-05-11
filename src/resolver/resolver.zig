@@ -851,9 +851,9 @@ pub const Resolver = struct {
 
                     return .{ .not_found = {} };
                 } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
-                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) {
+                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) graph_lookup: {
                         const buf = bufs(.import_path_for_standalone_module_graph);
-                        const joined = bun.path.joinAbsStringBuf(source_dir, buf, &.{import_path}, .loose);
+                        const joined = bun.path.joinAbsStringBufChecked(source_dir, buf, &.{import_path}, .loose) orelse break :graph_lookup;
 
                         // Support relative paths in the graph
                         if (graph.findAssumeStandalonePath(joined)) |file| {

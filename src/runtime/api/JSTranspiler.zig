@@ -500,9 +500,16 @@ pub const TransformTask = struct {
         var ast_scope = ast_memory_allocator.enter(allocator);
         defer ast_scope.exit();
 
+        // The parser allocates error message text using the transpiler's
+        // allocator (the arena above). Collect messages in a local log and
+        // deep-copy them into `this.log` before the arena is destroyed so
+        // `then()` on the JS thread does not read freed memory.
+        var local_log = logger.Log.init(allocator);
+        local_log.level = this.log.level;
+        defer bun.handleOom(local_log.appendToWithRecycled(&this.log, true));
+
         this.transpiler.setAllocator(allocator);
-        this.transpiler.setLog(&this.log);
-        this.log.msgs.allocator = bun.default_allocator;
+        this.transpiler.setLog(&local_log);
 
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)

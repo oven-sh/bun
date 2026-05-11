@@ -3,6 +3,7 @@ use core::mem::size_of;
 
 use bun_io::Loop as AsyncLoop;
 use bun_io::{BufferedWriter, WriteStatus};
+use bun_io_types::file_poll;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_jsc::EventLoopHandle;
@@ -25,11 +26,11 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
-    /// `bun_io::poll_tag` constant for this process's `StaticPipeWriter`
-    /// `FilePoll` owner. Threaded down to `PosixBufferedWriterParent` so the
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll` can
-    /// recover the monomorphized `*mut PosixBufferedWriter<StaticPipeWriter<Self>>`.
-    const POLL_OWNER_TAG: bun_io::PollTag;
+    /// Marker type for this process's `StaticPipeWriter` `FilePoll` owner.
+    /// Threaded down to `PosixBufferedWriterParent` so the per-tag dispatch in
+    /// `bun_runtime::dispatch::__bun_run_file_poll` can recover the
+    /// monomorphized `*mut PosixBufferedWriter<StaticPipeWriter<Self>>`.
+    type PollOwner: file_poll::Variant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
@@ -95,7 +96,7 @@ pub type Poll<P> = IOWriter<P>;
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     for StaticPipeWriter<P>
 {
-    const POLL_OWNER_TAG: bun_io::PollTag = P::POLL_OWNER_TAG;
+    type PollOwner = P::PollOwner;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
         // never materializes `&mut StaticPipeWriter`, so this is the unique

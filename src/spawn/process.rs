@@ -411,8 +411,7 @@ impl Process {
                     ctx,
                     Fd::from_native(watchfd),
                     bun_io::file_poll::FlagsSet::default(),
-                    bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
+                    bun_io::Owner::typed::<bun_io_types::file_poll::Process>(
                         std::ptr::from_mut::<Process>(self).cast(),
                     ),
                 )

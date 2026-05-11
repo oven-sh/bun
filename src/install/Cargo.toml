@@ -45,6 +45,7 @@ bun_ini.workspace = true
 bun_install_types.workspace = true
 bun_interchange.workspace = true
 bun_io.workspace = true
+bun_io_types.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
 bun_libarchive.workspace = true

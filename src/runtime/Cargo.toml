@@ -53,6 +53,7 @@ bun_install.workspace = true
 bun_install_types.workspace = true
 bun_interchange.workspace = true
 bun_io.workspace = true
+bun_io_types.workspace = true
 bun_js.workspace = true
 bun_js_parser.workspace = true
 bun_js_parser_jsc.workspace = true

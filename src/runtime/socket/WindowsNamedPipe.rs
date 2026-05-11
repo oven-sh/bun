@@ -1454,7 +1454,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     // runtime); the impl exists purely so the `StreamingWriter<Self>` field
     // type-checks. NULL keeps the dispatch table from being silently wrong if
     // a poll is ever (incorrectly) created.
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::NULL;
+    type PollOwner = bun_io_types::file_poll::Null;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via `set_parent`; unique for the

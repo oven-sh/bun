@@ -38,7 +38,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::{env_var, ZStr};
 use bun_sys::{self, Fd, O};
 
-use crate::posix_event_loop::{poll_tag, EventLoopCtx, FilePoll, Owner};
+use crate::posix_event_loop::{EventLoopCtx, FilePoll, Owner};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -288,7 +288,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             handle,
             Fd::from_native(original_ppid),
             Default::default(),
-            Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
+            Owner::typed::<bun_io_types::file_poll::ParentDeathWatchdog>(instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.

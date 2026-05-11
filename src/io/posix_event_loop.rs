@@ -285,78 +285,9 @@ const EV_EOF: u16 = 0x8000;
 // owns the per-tag `match` so the variant types are never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
-/// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly — same enum-dispatch
-/// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PollTag {
-    Null = 0,
-    FileSink,
-    StaticPipeWriter,
-    ShellStaticPipeWriter,
-    SecurityScanStaticPipeWriter,
-    BufferedReader,
-    DnsResolver,
-    GetAddrInfoRequest,
-    Request,
-    Process,
-    ShellBufferedWriter,
-    TerminalPoll,
-    ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader,
-}
-
-/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
-/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
-/// names; the literal values are unchanged. New code should use
-/// `PollTag::FileSink` directly.
-pub mod poll_tag {
-    use super::PollTag;
-    pub const NULL: PollTag = PollTag::Null;
-    pub const FILE_SINK: PollTag = PollTag::FileSink;
-    pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
-    pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
-    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
-    pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
-    pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
-    pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
-    pub const PROCESS: PollTag = PollTag::Process;
-    pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
-    pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
-    pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
-        PollTag::LifecycleScriptSubprocessOutputReader;
-}
-
-#[derive(Copy, Clone)]
-pub struct Owner {
-    pub tag: PollTag,
-    pub ptr: *mut (),
-}
-
-impl Owner {
-    pub const NULL: Owner = Owner { tag: PollTag::Null, ptr: core::ptr::null_mut() };
-    #[inline]
-    pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner { tag, ptr }
-    }
-    #[inline]
-    pub fn is_null(&self) -> bool {
-        self.ptr.is_null()
-    }
-    #[inline]
-    pub fn clear(&mut self) {
-        *self = Self::NULL;
-    }
-    #[inline]
-    pub fn tag(&self) -> PollTag {
-        self.tag
-    }
-}
+pub type PollTag = bun_io_types::file_poll::Kind;
+pub type Owner = bun_io_types::file_poll::Owner;
+pub use bun_io_types::file_poll::kind as poll_tag;
 
 unsafe extern "Rust" {
     fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);

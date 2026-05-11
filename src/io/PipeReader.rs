@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollRef, Owner, PollTag, FilePollFlag, FilePollKind};
+use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
+use bun_io_types::file_poll;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -230,7 +231,7 @@ impl PosixBufferedReader {
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -240,7 +241,7 @@ impl PosixBufferedReader {
         self.vtable.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -414,12 +415,12 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::new(PollTag::BufferedReader, owner_ptr.cast())));
+            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::typed::<file_poll::BufferedReader>(owner_ptr.cast())));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
         };
-        poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
+        poll.set_owner(Owner::typed::<file_poll::BufferedReader>(owner_ptr.cast()));
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);

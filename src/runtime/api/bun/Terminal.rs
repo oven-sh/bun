@@ -1886,7 +1886,7 @@ impl BufferedReaderParent for Terminal {
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
+    type PollOwner = bun_io_types::file_poll::TerminalPoll;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via `writer.parent = terminal`;

@@ -918,9 +918,7 @@ pub struct CloseAction<'a> {
 
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
-use bun_runtime_types::{
-    OwnerToken as TypedOwnerToken, PollableKind, PollableToken, ReadFilePollable, WriteFilePollable,
-};
+use bun_io_types::{owner::OwnerToken as TypedOwnerToken, pollable};
 
 // TODO(port): repr must match `bun.TaggedPointer.Tag` (15-bit tag in TaggedPtr).
 #[repr(u16)]
@@ -934,22 +932,22 @@ pub enum PollableTag {
 /// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
 /// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
 /// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so the producer and
-/// consumer both go through the shared `_types` PollableToken.
+/// consumer both go through `bun_io_types::pollable::Token`.
 /// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
 #[derive(Clone, Copy)]
 struct Pollable {
-    token: PollableToken,
+    token: pollable::Token,
 }
 
 impl Pollable {
     pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let token = match t {
-            PollableTag::Empty => PollableToken::from_raw(0),
+            PollableTag::Empty => pollable::Token::from_raw(0),
             PollableTag::ReadFile => {
-                PollableToken::encode::<ReadFilePollable>(Self::owner_token(p))
+                pollable::Token::encode::<pollable::ReadFile>(Self::owner_token(p))
             }
             PollableTag::WriteFile => {
-                PollableToken::encode::<WriteFilePollable>(Self::owner_token(p))
+                pollable::Token::encode::<pollable::WriteFile>(Self::owner_token(p))
             }
         };
         Pollable { token }
@@ -957,7 +955,7 @@ impl Pollable {
 
     pub(crate) fn from(int: u64) -> Pollable {
         Pollable {
-            token: PollableToken::from_raw(int),
+            token: pollable::Token::from_raw(int),
         }
     }
 
@@ -971,9 +969,9 @@ impl Pollable {
 
     pub(crate) fn tag(self) -> PollableTag {
         match self.token.kind_checked() {
-            Some(PollableKind::Empty) => PollableTag::Empty,
-            Some(PollableKind::ReadFile) => PollableTag::ReadFile,
-            Some(PollableKind::WriteFile) => PollableTag::WriteFile,
+            Some(pollable::Kind::Empty) => PollableTag::Empty,
+            Some(pollable::Kind::ReadFile) => PollableTag::ReadFile,
+            Some(pollable::Kind::WriteFile) => PollableTag::WriteFile,
             // Only `init` writes the tag bits, so any other value is memory
             // corruption / a logic bug — match Zig's safety-checked
             // `@enumFromInt` and trap rather than fabricate a discriminant.

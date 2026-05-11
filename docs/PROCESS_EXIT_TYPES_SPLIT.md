@@ -1,73 +1,144 @@
-# Closed Dispatch `_types` Split PoC
+# Domain-Owned `_types` Split
 
-Status: PoC branch with compileable type crates and focused tests.
+Status: production-shaped branch. The IO dispatch boundary is wired through a
+domain-owned `bun_io_types` crate; the same rule is the target for the remaining
+process-exit, installer, runtime-task, and reader dispatch families.
 
-The pattern in this branch is closed typed storage below, ordinary Rust dispatch
-above. A `_types` crate may own inert state, discriminants, typed owner tokens,
-and pure reducers. When a transition needs runtime-local behavior, JSC handles,
-allocator/lifetime ownership, process ref changes, or kernel registration, the
-types layer returns a typed action and the owning crate performs the effect.
+The rule is simple: low/shared crates own inert shape, high/owning crates apply
+effects.
 
 ```
-Consistent rule
-  ├─> `_types` crates own shape
-  │     ├─> closed enums instead of erased `{ tag, *mut () }`
-  │     ├─> typed owner tokens instead of bare pointer identity
-  │     ├─> value-only event inputs such as ProcessExitContext
-  │     └─> pure state reducers for readiness gates and completion ordering
-  └─> owner crates own effects
-        ├─> JSC entry, VM notification, promise resolution, and microtask drains
-        ├─> process status writes, ref drops, kills, and platform handles
+Domain-owned `_types` architecture
+  ├─> shared type crates own shape
+  │     ├─> closed discriminants
+  │     ├─> marker types for erased owner slots
+  │     ├─> typed owner tokens around pointer identity
+  │     ├─> kernel-facing packed tokens where the OS requires a scalar
+  │     └─> pure transition state when a subsystem has value-only reducers
+  └─> owning crates apply effects
+        ├─> JSC / VM entry, promise resolution, and microtask drains
+        ├─> process status writes, ref changes, kills, and platform handles
         ├─> FilePoll / kqueue / epoll registration and deregistration
-        └─> C++/WebKit opaque task execution
+        ├─> package-manager callbacks, lifecycle bookkeeping, and scanner output
+        └─> C++ / WebKit opaque work execution
 ```
 
-## Implemented Topology
+## Crate Topology
 
 ```
-PoC crate topology
+Natural sibling crates
+  ├─> bun_io_types
+  │     ├─> owner::OwnerToken<T>
+  │     │     - non-zero typed pointer identity
+  │     ├─> pollable::Token
+  │     │     - preserves the epoll/kqueue u64 packing boundary
+  │     └─> file_poll
+  │           ├─> Kind
+  │           ├─> Owner { kind, addr }
+  │           └─> marker variants such as Process, FileSink, BufferedReader, DnsResolver
   ├─> bun_spawn_types
   │     ├─> Status / Exited / WaitPidResult / Rusage
   │     ├─> ProcessIdentity
   │     └─> ProcessExitContext
-  │           - value-only: process identity + status + rusage
-  │           - no `&mut Process`, no type-erased process method table
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     └─> SecurityScanExit
-  │           - package-manager-local completion state
-  │           - pure transitions returning LifecycleScriptExitAction / SecurityScanExitAction
-  └─> bun_runtime_types
-        ├─> ProcessExit
-        │     ├─> Subprocess / LifecycleScript / SecurityScan / Shell
-        │     ├─> FilterRunHandle / MultiRunHandle / TestParallelWorker
-        │     ├─> CronRegister / CronRemove
-        │     └─> ChromeProcess / HostProcess / SyncWindows
-        ├─> RuntimeTask
-        │     ├─> ShellRm / ReadFile / ArchiveExtract
-        │     ├─> Cpp / JscDeferredWork
-        │     ├─> JscTimer(Immediate | WtfTimer)
-        │     ├─> Concurrent(owner + AutoDelete/Manual)
-        │     ├─> PosixSignal(u8)
-        │     └─> NativePromiseDeferredDeref(usize)
-        ├─> FilePollOwner
-        │     ├─> Process / FileSink
-        │     ├─> runtime/shell/security static pipe writers
-        │     ├─> DNS / getaddrinfo
-        │     └─> ShellBufferedWriter
-        ├─> PollableToken
-        │     └─> kernel-facing u64 decoded into typed ReadFile/WriteFile owners
-        └─> BufferedReaderParent
-              ├─> subprocess / shell / terminal
-              ├─> cron register/remove
-              └─> lifecycle script / security scan
+  └─> owning crates
+        ├─> bun_io stores IO owner/token values and owns kernel registration
+        ├─> bun_spawn owns process wait state and process lifetime
+        ├─> bun_install owns package-manager lifecycle/security effects
+        └─> bun_runtime owns JSC, shell, webcore, DNS, cron, and runtime task effects
 ```
 
-## Process Exit Shape
+## IO Dispatch
 
-Process exit is value-in, effect-out. The type crate does not receive a mutable
-process reference. It updates only the closed handler state and returns the work
-that the runtime crate should perform.
+FilePoll has a Bun-owned pointer relationship; Pollable has a kernel scalar
+relationship. They therefore use two related but distinct shapes in
+`bun_io_types`.
+
+```
+FilePoll production path
+  ├─> producers
+  │     ├─> bun_spawn::Process
+  │     ├─> bun_io::BufferedReader / pipe writers
+  │     ├─> runtime FileSink / Terminal / shell writers / subprocess writers
+  │     ├─> install SecurityScanSubprocess writer
+  │     ├─> runtime DNS resolver and macOS DNS request polls
+  │     └─> ParentDeathWatchdog
+  ├─> construction
+  │     ├─> direct producers call Owner::typed::<file_poll::Variant>(ptr)
+  │     └─> generic writer parents expose type PollOwner: file_poll::Variant
+  ├─> storage
+  │     └─> bun_io::FilePoll stores bun_io_types::file_poll::Owner
+  └─> consumer
+        └─> bun_runtime::dispatch::__bun_run_file_poll
+              ├─> matches owner.kind()
+              ├─> recovers owner.ptr() in the one runtime dispatch site
+              └─> calls the concrete handler for that closed owner kind
+```
+
+The important detail is that writer families no longer thread a raw
+`PollTag` constant. A producer declares the owner marker type instead:
+
+```rust
+impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
+    type PollOwner = bun_io_types::file_poll::FileSink;
+
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        FileSink::on_write(unsafe { &mut *this }, amount, status)
+    }
+}
+```
+
+The generic writer code then constructs the correct owner without knowing which
+higher crate supplied the parent:
+
+```rust
+FilePollRef::init(
+    loop_,
+    fd,
+    Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()),
+)
+```
+
+Pollable remains scalar because that is the kernel ABI:
+
+```
+Pollable production path
+  ├─> producer: bun_io::Poll::register_for_epoll / apply_kqueue
+  │     └─> Pollable::init(tag, poll) encodes through bun_io_types::pollable::Token
+  ├─> kernel boundary
+  │     └─> epoll_event.data.u64 / kevent.udata carries the packed token
+  └─> consumer: bun_io::IoRequestLoop::tick_epoll / Poll::on_update_kqueue
+        ├─> Pollable::from(raw) wraps the same Token
+        ├─> Pollable::tag() recovers pollable::Kind
+        └─> Pollable::poll() recovers the embedded Poll pointer for runtime dispatch
+```
+
+## Process Exit
+
+Process exit should use the same boundary, with value-only state below and
+effect application above.
+
+```
+Process-exit target shape
+  ├─> bun_spawn_types
+  │     ├─> ProcessIdentity
+  │     ├─> ProcessExitContext { process, status, rusage }
+  │     └─> common process status / rusage values
+  ├─> bun_install_types
+  │     ├─> LifecycleScriptExit
+  │     │     └─> returns LifecycleScriptExitAction
+  │     └─> SecurityScanExit
+  │           └─> returns SecurityScanExitAction
+  └─> owning crates
+        ├─> bun_spawn observes waitpid / platform wait completion
+        ├─> bun_runtime applies subprocess, shell, cron, webview, and JSC effects
+        └─> bun_install applies package-manager lifecycle/security effects
+```
+
+The type-level transition receives values, mutates only its own state, and
+returns an action:
 
 ```rust
 pub struct ProcessExitContext<'a> {
@@ -104,137 +175,88 @@ pub enum ProcessExitEffect {
 }
 ```
 
-That makes the high crate responsible for applying effects:
-
 ```
-runtime process-exit handling
-  ├─> waitpid / platform wait produces ProcessExitContext
-  ├─> ProcessExitState::on_process_exit(&ctx)
-  │     ├─> mutates only the stored typed handler state
-  │     └─> returns ProcessExitEffect
-  └─> bun_runtime applies the effect
-        ├─> update Process.status from ProcessStatusUpdate
-        ├─> notify VM / promise / cron / scanner / webview owners
-        ├─> drop process refs where WebviewExitAction requests it
-        └─> drain microtasks where SubprocessExitAction requests it
+Effect application
+  ├─> status writes stay with the live Process owner
+  ├─> promise / callback / microtask work stays with bun_runtime
+  ├─> lifecycle and security scan package-manager work stays with bun_install
+  ├─> process refs and WebKit/JSC handles stay in their owning crate
+  └─> pure completion ordering and readiness gates can live in sibling types crates
 ```
 
-The install examples follow the same rule. `LifecycleScriptExit` and
-`SecurityScanExit` live in `bun_install_types` because their state belongs to
-the installer domain, but they only perform local bookkeeping and return
-actions. They do not touch the package manager, IPC reader, process object, or
-JSC.
+## Runtime Tasks
 
-## Runtime Task Shape
-
-Runtime task dispatch is modeled as a closed enum plus a high host trait:
-
-```rust
-pub enum RuntimeTask {
-    ShellRm(ShellRmTask),
-    ReadFile(ReadFileTask),
-    ArchiveExtract(ArchiveExtractTask),
-    Cpp(CppTask),
-    JscDeferredWork(JscDeferredWorkTask),
-    JscTimer(JscTimerTask),
-    Concurrent(ConcurrentRuntimeTask),
-    PosixSignal(PosixSignalTask),
-    NativePromiseDeferredDeref(NativePromiseDeferredDerefTask),
-}
-```
+Runtime tasks follow the same split: the queue item shape can be a closed enum,
+but execution remains in the runtime crate because it owns JSC, C++, timers,
+auto-delete semantics, and promise deref behavior.
 
 ```
-task dispatch risks covered
-  ├─> normal pointer-like tasks
+Runtime task target shape
+  ├─> closed queue item
   │     ├─> ShellRm
   │     ├─> ReadFile
-  │     └─> ArchiveExtract
-  ├─> opaque JSC / C++ tasks
-  │     ├─> CppTask
-  │     └─> JscDeferredWorkTask
-  ├─> timer/immediate wakeups
-  │     └─> JscTimerTask::Immediate / JscTimerTask::WtfTimer
-  ├─> cross-thread return ownership
-  │     └─> ConcurrentRuntimeTask { owner, deinit: AutoDelete | Manual }
-  └─> non-pointer payloads that were shoved through pointer storage before
-        ├─> PosixSignalTask { signal: u8 }
-        └─> NativePromiseDeferredDerefTask { index: usize }
+  │     ├─> ArchiveExtract
+  │     ├─> Cpp
+  │     ├─> JscDeferredWork
+  │     ├─> JscTimer(Immediate | WtfTimer)
+  │     ├─> Concurrent(owner + AutoDelete/Manual)
+  │     ├─> PosixSignal(u8)
+  │     └─> NativePromiseDeferredDeref(usize)
+  └─> runtime executor
+        ├─> enters JSC / C++ / WebKit
+        ├─> applies auto-delete ownership
+        ├─> derefs native promises
+        └─> drains microtasks
 ```
 
-The type crate owns the queue item shape. `bun_runtime` still owns entry into
-JSC, task execution, auto-delete semantics, promise deref, and microtask
-draining.
+## Reader Parents
 
-## IO Shape
-
-FilePoll and Pollable are separate because one is a Bun owner relationship and
-the other crosses a kernel `u64` boundary.
+BufferedReader parent state is another owner relationship. The shape belongs
+with IO/domain types; the effects stay with the owner that consumes the bytes.
 
 ```
-IO dispatch risks covered
-  ├─> FilePollOwner
-  │     ├─> typed enum stored in Bun-owned poll state
-  │     ├─> no erased owner pointer
-  │     └─> high FilePollHost performs the owner-specific effect
-  ├─> PollableToken
-  │     ├─> preserves the kernel-facing u64 token
-  │     ├─> decodes into PollableOwner::ReadFile / PollableOwner::WriteFile
-  │     └─> keeps the raw boundary explicit instead of infecting every caller
-  └─> BufferedReaderParent
-        ├─> stores the parent relationship as a closed enum
-        ├─> covers subprocess, shell, terminal, cron, lifecycle, security scan
-        └─> lets each owning crate handle chunks, EOF, errors, and overflow
+BufferedReader target shape
+  ├─> shared shape
+  │     ├─> subprocess stdout/stderr
+  │     ├─> shell subprocess output
+  │     ├─> terminal output
+  │     ├─> lifecycle script output
+  │     ├─> security scan output
+  │     └─> cron register/remove output
+  └─> owner effects
+        ├─> chunk delivery
+        ├─> EOF / error handling
+        ├─> max-buffer behavior
+        ├─> promise / callback delivery
+        └─> package-manager or runtime-local cleanup
 ```
 
-The PoC now wires the Pollable side through production code rather than only the
-type-level model:
+## Safety Invariants
 
 ```
-Real Pollable producer/consumer path
-  ├─> producer: bun_io::Poll::register_for_epoll / apply_kqueue
-  │     └─> Pollable::init(tag, poll) encodes through bun_runtime_types::PollableToken
-  ├─> kernel boundary
-  │     └─> epoll_event.data.u64 / kevent.udata carries the packed token
-  └─> consumer: bun_io::IoRequestLoop::tick_epoll / Poll::on_update_kqueue
-        ├─> Pollable::from(raw) decodes through the same PollableToken
-        ├─> Pollable::tag() recovers the closed PollableKind
-        └─> Pollable::poll() recovers the embedded Poll pointer for the existing runtime dispatch
+Safety invariants
+  ├─> typed construction
+  │     └─> producer code names a marker type, not a raw integer tag
+  ├─> centralized recovery
+  │     └─> pointer recovery happens in the owner dispatch site for that family
+  ├─> complete discriminants
+  │     └─> every runtime dispatch arm has a sibling marker in the type crate
+  ├─> effect ownership
+  │     └─> `_types` crates do not own VM, package-manager, process, or kernel effects
+  ├─> kernel ABI boundaries
+  │     └─> scalar tokens remain scalar until immediately decoded at the IO layer
+  └─> crate direction
+        └─> lower crates depend on sibling type crates; higher crates depend on both
 ```
 
-## What This Proves
+## Migration Shape
 
 ```
-Risk matrix from the reports
-  ├─> circular ownership
-  │     └─> resolved by moving shared shape into `_types`, not by inverting all behavior
-  ├─> unsafe type coupling
-  │     └─> replaced with closed enums and typed owner tokens at Bun-owned boundaries
-  ├─> JSC / VM effects
-  │     └─> kept above the type layer as host calls or action application
-  ├─> C++ / WebKit opaque tasks
-  │     └─> represented as typed opaque owners, executed only by the runtime owner
-  ├─> non-pointer task payloads
-  │     └─> represented directly as `u8` / `usize` variants
-  ├─> kernel tokens
-  │     └─> raw `u64` remains at the OS boundary, decoded immediately after
-  ├─> readiness gates
-  │     └─> pure reducers live in type crates and return actions
-  └─> process exit state
-        └─> status/ref/JSC behavior is returned as effects rather than hidden in `_types`
+Production migration
+  ├─> move each shared owner/state family into the natural sibling type crate
+  ├─> replace raw tag constants with associated marker types at generic producer boundaries
+  ├─> keep direct constructors small: Owner::typed::<Variant>(ptr)
+  ├─> keep effect application in the owning crate
+  ├─> add reducer tests in the type crate for value-only state machines
+  └─> add production-path tests around the owner crate where effects are applied
 ```
-
-## Implementation Cuts
-
-```
-Remaining wiring
-  ├─> replace current call sites with constructors for the closed enum variants
-  ├─> move any missing sibling-owned state into the matching `bun_*_types` crate
-  ├─> implement the runtime host/action appliers in bun_runtime / bun_install / bun_shell
-  ├─> delete the erased link-interface registrations arm by arm
-  └─> keep PollableToken as the explicit raw boundary for epoll/kqueue tokens
-```
-
-The important part is the invariant: every family uses the same boundary. The
-types crates define complete closed shapes and pure reducers; the owning crates
-apply effects. That avoids dependency cycles without replacing erased pointers
-with a different form of hidden cross-crate behavior.

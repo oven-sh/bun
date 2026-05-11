@@ -975,7 +975,7 @@ pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<
 // `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
 // the stack (small JSON fits the pipe buffer → write completes → close).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
+    type PollOwner = bun_io_types::file_poll::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
         // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).

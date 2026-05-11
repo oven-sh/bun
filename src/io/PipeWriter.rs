@@ -13,7 +13,9 @@ use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollRef, Owner, PollTag, FilePollFlag, FilePollKind};
+use bun_io_types::file_poll;
+
+use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
 
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
@@ -272,11 +274,12 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// Marker type for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixBufferedWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust threads it explicitly.
-    const POLL_OWNER_TAG: PollTag;
+    /// tag from `@TypeOf` (TaggedPointerUnion); Rust derives it from this
+    /// associated marker type.
+    type PollOwner: file_poll::Variant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -367,7 +370,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
         FilePollRef::init(// SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::event_loop(self.parent()) }, fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()))
+            unsafe { Parent::event_loop(self.parent()) }, fd, Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()))
     }
 
     pub fn get_poll(&self) -> Option<FilePollRef> {
@@ -505,7 +508,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        self.handle.set_owner(Owner::typed::<Parent::PollOwner>(owner.cast()));
     }
 
     pub fn write(&mut self) {
@@ -570,11 +573,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// Marker type for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixStreamingWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust threads it explicitly.
-    const POLL_OWNER_TAG: PollTag;
+    /// tag from `@TypeOf` (TaggedPointerUnion); Rust derives it from this
+    /// associated marker type.
+    type PollOwner: file_poll::Variant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -727,7 +731,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        self.handle.set_owner(Owner::typed::<Parent::PollOwner>(owner.cast()));
     }
 
     fn _on_writable(&mut self) {
@@ -1042,7 +1046,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                let p = FilePollRef::init(loop_, fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()));
+                let p = FilePollRef::init(loop_, fd, Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()));
                 self.handle = PollOrFd::Poll(p);
                 p
             }

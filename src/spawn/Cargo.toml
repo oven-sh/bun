@@ -18,6 +18,7 @@ bun_core.workspace = true
 bun_crash_handler.workspace = true
 bun_event_loop.workspace = true
 bun_io.workspace = true
+bun_io_types.workspace = true
 bun_output.workspace = true
 bun_ptr.workspace = true
 bun_spawn_sys.workspace = true

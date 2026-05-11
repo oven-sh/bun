@@ -993,6 +993,7 @@ dependencies = [
  "bun_install_types",
  "bun_interchange",
  "bun_io",
+ "bun_io_types",
  "bun_js_parser",
  "bun_js_printer",
  "bun_libarchive",
@@ -1121,10 +1122,10 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
+ "bun_io_types",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
- "bun_runtime_types",
  "bun_spawn_sys",
  "bun_string",
  "bun_sys",
@@ -1139,6 +1140,10 @@ dependencies = [
  "scopeguard",
  "strum",
 ]
+
+[[package]]
+name = "bun_io_types"
+version = "0.0.0"
 
 [[package]]
 name = "bun_js"
@@ -1872,6 +1877,7 @@ dependencies = [
  "bun_install_types",
  "bun_interchange",
  "bun_io",
+ "bun_io_types",
  "bun_js",
  "bun_js_parser",
  "bun_js_parser_jsc",
@@ -1934,14 +1940,6 @@ dependencies = [
  "sha3",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_runtime_types"
-version = "0.0.0"
-dependencies = [
- "bun_install_types",
- "bun_spawn_types",
 ]
 
 [[package]]
@@ -2171,6 +2169,7 @@ dependencies = [
  "bun_dispatch",
  "bun_event_loop",
  "bun_io",
+ "bun_io_types",
  "bun_opaque",
  "bun_output",
  "bun_ptr",

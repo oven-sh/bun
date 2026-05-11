@@ -1,5 +1,5 @@
 [package]
-name = "bun_runtime_types"
+name = "bun_io_types"
 version.workspace = true
 edition.workspace = true
 
@@ -7,5 +7,3 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
-bun_install_types.workspace = true
-bun_spawn_types.workspace = true

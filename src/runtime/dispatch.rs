@@ -630,11 +630,11 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     macro_rules! owner_as {
         ($ty:ty) => {{
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *owner.ptr.cast::<$ty>() }
+            unsafe { &mut *owner.ptr().cast::<$ty>() }
         }};
     }
 
-    match owner.tag() {
+    match owner.kind() {
         poll_tag::BUFFERED_READER => {
             let reader = owner_as!(bun_io::BufferedReader);
             bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
@@ -688,7 +688,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr as *mut GetAddrInfoRequest;
+                let loader = owner.ptr() as *mut GetAddrInfoRequest;
                 get_addr_info_request::BackendLibInfo::on_machport_change(loader);
             }
             #[cfg(not(target_os = "macos"))]
@@ -699,7 +699,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let req = owner.ptr as *mut crate::dns_jsc::internal::Request;
+                let req = owner.ptr() as *mut crate::dns_jsc::internal::Request;
                 crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
             }
             #[cfg(not(target_os = "macos"))]

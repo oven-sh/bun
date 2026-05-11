@@ -274,11 +274,7 @@ pub mod lib_info {
             // TODO: WHAT?????????
             sys::Fd::from_native(i32::MAX - 1),
             Default::default(),
-            // TODO(port): FilePoll generic owner type GetAddrInfoRequest
-            Async::Owner::new(
-                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
-                request.cast(),
-            ),
+            Async::Owner::typed::<bun_io_types::file_poll::GetAddrInfoRequest>(request.cast()),
         );
         // SAFETY: FilePoll::init returns a live pool slot; exclusive on this thread.
         let poll = unsafe { &mut *poll_ptr };
@@ -2585,8 +2581,7 @@ pub mod internal {
             // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
             sys::Fd::from_native(machport as i32),
             Default::default(),
-            // TODO(port): FilePoll generic owner type InternalDNSRequest
-            Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
+            Async::Owner::typed::<bun_io_types::file_poll::Request>(req.cast::<()>()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
         let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
@@ -4251,7 +4246,9 @@ impl Resolver {
                 return;
             }
 
-            let owner = Async::Owner::new(Async::posix_event_loop::poll_tag::DNS_RESOLVER, std::ptr::from_mut::<Self>(self).cast::<()>());
+            let owner = Async::Owner::typed::<bun_io_types::file_poll::DnsResolver>(
+                std::ptr::from_mut::<Self>(self).cast::<()>(),
+            );
             // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
             // Hoisted above `poll_entry` so the `&self` borrow ends before `self.polls`
             // is borrowed mutably.

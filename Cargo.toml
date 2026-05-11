@@ -16,6 +16,7 @@ members = [
   "src/install/windows-shim",
   "src/interchange",
   "src/io",
+  "src/io_types",
   "src/js",
   "src/libarchive",
   "src/md",
@@ -102,7 +103,6 @@ members = [
   "src/options_types",
   "src/output",
   "src/runtime",
-  "src/runtime_types",
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
@@ -263,6 +263,7 @@ bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
 bun_install_jsc = { path = "src/install_jsc" }
 bun_install_types = { path = "src/install_types" }
+bun_io_types = { path = "src/io_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
@@ -320,7 +321,6 @@ bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_runtime = { path = "src/runtime", default-features = false }
-bun_runtime_types = { path = "src/runtime_types" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }

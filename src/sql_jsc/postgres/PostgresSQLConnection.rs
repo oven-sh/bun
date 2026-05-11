@@ -1479,11 +1479,12 @@ impl PostgresSQLConnection {
         // bracket for the duration of this loop, so re-entry never frees `*self`.
         while let Some(request_ptr) = self.current() {
             // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
-            let request = unsafe { &mut *request_ptr };
-            match request.status {
+            // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+            let request = unsafe { &*request_ptr };
+            match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
-                    let Some(stmt) = request.statement else {
+                    let Some(stmt) = request.statement.get() else {
                         // `continue` in Zig with `orelse continue` — but we still need to deref+discard.
                         // PORT NOTE: Zig `orelse continue` skips the deref/discard at the bottom too;
                         // matching that behavior here.
@@ -1725,14 +1726,15 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn finish_request(&self, item: &mut PostgresSQLQuery) {
-        match item.status {
+    fn finish_request(&self, item: &PostgresSQLQuery) {
+        match item.status.get() {
             QueryStatus::Running
             | QueryStatus::Binding
             | QueryStatus::PartialResponse => {
-                if item.flags.simple {
+                let flags = item.flags.get();
+                if flags.simple {
                     self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() - 1);
-                } else if item.flags.pipelined {
+                } else if flags.pipelined {
                     self.pipelined_requests.set(self.pipelined_requests.get() - 1);
                 }
             }
@@ -1768,10 +1770,11 @@ impl PostgresSQLConnection {
                 while $self.requests.get().readable_length() > 0 {
                     let result_ptr = $self.requests.get().peek_item(0);
                     // SAFETY: result is a valid *mut PostgresSQLQuery owned by the queue.
-                    let result = unsafe { &mut *result_ptr };
+                    // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                    let result = unsafe { &*result_ptr };
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
-                    match result.status {
+                    match result.status.get() {
                         QueryStatus::Success => {
                             unsafe { PostgresSQLQuery::deref(result_ptr) };
                             $self.requests.with_mut(|q| q.discard(1));
@@ -1797,10 +1800,11 @@ impl PostgresSQLConnection {
 
             let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
             // SAFETY: req is a valid *mut PostgresSQLQuery owned by the queue.
-            let req = unsafe { &mut *req_ptr };
-            match req.status {
+            // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+            let req = unsafe { &*req_ptr };
+            match req.status.get() {
                 QueryStatus::Pending => {
-                    if req.flags.simple {
+                    if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0 || !self.flags.get().contains(ConnectionFlags::IS_READY_FOR_QUERY) {
                             debug!(
                                 "cannot execute simple query, pipelined_requests: {}, is_ready_for_query: {}",
@@ -1823,18 +1827,18 @@ impl PostgresSQLConnection {
                                 self.requests.with_mut(|q| q.discard(1));
                             } else {
                                 // deinit later
-                                req.status = QueryStatus::Fail;
+                                req.status.set(QueryStatus::Fail);
                             }
                             debug!("executeQuery failed: {}", err);
                             continue;
                         }
                         self.nonpipelinable_requests.set(self.nonpipelinable_requests.get() + 1);
                         self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
-                        req.status = QueryStatus::Running;
+                        req.status.set(QueryStatus::Running);
                         defer_cleanup!(self);
                         return;
                     } else {
-                        if let Some(statement_ptr) = req.statement {
+                        if let Some(statement_ptr) = req.statement.get() {
                             // SAFETY: statement is a valid *mut PostgresSQLStatement.
                             let statement = unsafe { &mut *statement_ptr };
                             match statement.status {
@@ -1856,27 +1860,27 @@ impl PostgresSQLConnection {
                                         self.requests.with_mut(|q| q.discard(1));
                                     } else {
                                         // deinit later
-                                        req.status = QueryStatus::Fail;
+                                        req.status.set(QueryStatus::Fail);
                                         offset += 1;
                                     }
                                     continue;
                                 }
                                 StatementStatus::Prepared => {
-                                    let Some(this_value) = req.this_value.try_get() else {
+                                    let Some(this_value) = req.this_value.get().try_get() else {
                                         debug_assert!(false, "query value was freed earlier than expected");
                                         if offset == 0 {
                                             unsafe { PostgresSQLQuery::deref(req_ptr) };
                                             self.requests.with_mut(|q| q.discard(1));
                                         } else {
                                             // deinit later
-                                            req.status = QueryStatus::Fail;
+                                            req.status.set(QueryStatus::Fail);
                                             offset += 1;
                                         }
                                         continue;
                                     };
                                     let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                     let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
-                                    req.flags.binary = !statement.fields.is_empty();
+                                    req.update_flags(|f| f.binary = !statement.fields.is_empty());
 
                                     if self.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                                         // For unnamed prepared statements, always include Parse
@@ -1905,7 +1909,7 @@ impl PostgresSQLConnection {
                                                 self.requests.with_mut(|q| q.discard(1));
                                             } else {
                                                 // deinit later
-                                                req.status = QueryStatus::Fail;
+                                                req.status.set(QueryStatus::Fail);
                                                 offset += 1;
                                             }
                                             debug!("parse, bind and execute failed: {}", <&'static str>::from(err));
@@ -1931,7 +1935,7 @@ impl PostgresSQLConnection {
                                                 self.requests.with_mut(|q| q.discard(1));
                                             } else {
                                                 // deinit later
-                                                req.status = QueryStatus::Fail;
+                                                req.status.set(QueryStatus::Fail);
                                                 offset += 1;
                                             }
                                             debug!("bind and execute failed: {}", err);
@@ -1940,8 +1944,8 @@ impl PostgresSQLConnection {
                                     }
 
                                     self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
-                                    req.status = QueryStatus::Binding;
-                                    req.flags.pipelined = true;
+                                    req.status.set(QueryStatus::Binding);
+                                    req.update_flags(|f| f.pipelined = true);
                                     self.pipelined_requests.set(self.pipelined_requests.get() + 1);
 
                                     if self.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) || !self.can_pipeline() {
@@ -1965,14 +1969,14 @@ impl PostgresSQLConnection {
                                     let has_params = !statement.signature.fields.is_empty();
                                     // If it does not have params, we can write and execute immediately in one go
                                     if !has_params {
-                                        let Some(this_value) = req.this_value.try_get() else {
+                                        let Some(this_value) = req.this_value.get().try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             if offset == 0 {
                                                 unsafe { PostgresSQLQuery::deref(req_ptr) };
                                                 self.requests.with_mut(|q| q.discard(1));
                                             } else {
                                                 // deinit later
-                                                req.status = QueryStatus::Fail;
+                                                req.status.set(QueryStatus::Fail);
                                                 offset += 1;
                                             }
                                             continue;
@@ -2000,7 +2004,7 @@ impl PostgresSQLConnection {
                                                 self.requests.with_mut(|q| q.discard(1));
                                             } else {
                                                 // deinit later
-                                                req.status = QueryStatus::Fail;
+                                                req.status.set(QueryStatus::Fail);
                                             }
                                             debug!("prepareAndQueryWithSignature failed: {}", <&'static str>::from(err));
                                             continue;
@@ -2009,7 +2013,7 @@ impl PostgresSQLConnection {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status = QueryStatus::Binding;
+                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
@@ -2022,7 +2026,7 @@ impl PostgresSQLConnection {
                                         // server connections. Uses signature field types for encoding
                                         // (text format for unknowns); actual types will be cached from
                                         // ParameterDescription for subsequent executions.
-                                        let Some(this_value) = req.this_value.try_get() else {
+                                        let Some(this_value) = req.this_value.get().try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             debug_assert!(offset == 0);
                                             unsafe { PostgresSQLQuery::deref(req_ptr) };
@@ -2059,9 +2063,9 @@ impl PostgresSQLConnection {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status = QueryStatus::Binding;
+                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
-                                        req.flags.pipelined = true;
+                                        req.update_flags(|f| f.pipelined = true);
                                         self.pipelined_requests.set(self.pipelined_requests.get() + 1);
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
@@ -2147,7 +2151,7 @@ impl PostgresSQLConnection {
                 QueryStatus::Success => {
                     if offset > 0 {
                         // deinit later
-                        req.status = QueryStatus::Fail;
+                        req.status.set(QueryStatus::Fail);
                         offset += 1;
                         continue;
                     }
@@ -2201,9 +2205,10 @@ impl PostgresSQLConnection {
             MessageType::DataRow => {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
-                let request = unsafe { &mut *request_ptr };
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
 
-                let statement_ptr = request.statement.ok_or(AnyPostgresError::ExpectedStatement)?;
+                let statement_ptr = request.statement.get().ok_or(AnyPostgresError::ExpectedStatement)?;
                 // SAFETY: statement is valid for the duration of the request.
                 let statement = unsafe { &mut *statement_ptr };
                 let mut structure: JSValue = JSValue::UNDEFINED;
@@ -2212,8 +2217,9 @@ impl PostgresSQLConnection {
                 // pointer so `&statement.fields` below does not conflict, and re-derive
                 // `Option<&_>` for `to_js` at the call site.
                 let mut cached_structure_ptr: *const PostgresCachedStructure = core::ptr::null();
+                let request_flags = request.flags.get();
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
-                match request.flags.result_mode {
+                match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
                         let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
                         let cs = statement.structure(owner, self.global());
@@ -2228,8 +2234,8 @@ impl PostgresSQLConnection {
                 let mut putter = DataCell::Putter {
                     list: &mut [],
                     fields: &statement.fields,
-                    binary: request.flags.binary,
-                    bigint: request.flags.bigint,
+                    binary: request_flags.binary,
+                    bigint: request_flags.bigint,
                     global_object: self.global(),
                     count: 0,
                     // TODO(port): other Putter default fields
@@ -2254,7 +2260,7 @@ impl PostgresSQLConnection {
                 // PORT NOTE: DataRow::decode takes the context by-value (Copy) and calls the
                 // callback with it; pass a raw `*mut Putter` so the closure can mutate it.
                 let putter_ptr: *mut DataCell::Putter<'_> = &raw mut putter;
-                let decode_result = if request.flags.result_mode == SQLQueryResultMode::Raw {
+                let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
                     protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
                         // SAFETY: putter outlives this call.
                         unsafe { &mut *p }.put_raw(i, b)
@@ -2282,7 +2288,7 @@ impl PostgresSQLConnection {
                 };
                 decode_result?;
 
-                let Some(this_value) = request.this_value.try_get() else {
+                let Some(this_value) = request.this_value.get().try_get() else {
                     debug_assert!(false, "query value was freed earlier than expected");
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
@@ -2293,7 +2299,7 @@ impl PostgresSQLConnection {
                     pending_value,
                     structure,
                     statement.fields_flags,
-                    request.flags.result_mode,
+                    request_flags.result_mode,
                     // SAFETY: points into `statement.cached_structure`; statement
                     // outlives this call (held via `request.statement` ref).
                     unsafe { cached_structure_ptr.as_ref() },
@@ -2328,8 +2334,9 @@ impl PostgresSQLConnection {
 
                 if let Some(request_ptr) = self.current() {
                     // SAFETY: valid queue item.
-                    let request = unsafe { &mut *request_ptr };
-                    if request.status == QueryStatus::PartialResponse {
+                    // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                    let request = unsafe { &*request_ptr };
+                    if request.status.get() == QueryStatus::PartialResponse {
                         self.finish_request(request);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(b"", self.global(), self.js_value.get().try_get().unwrap_or(JSValue::ZERO), true);
@@ -2343,7 +2350,8 @@ impl PostgresSQLConnection {
             MessageType::CommandComplete => {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
 
                 let mut cmd: protocol::CommandComplete = Default::default();
                 cmd.decode_internal(reader.reborrow()).map_err(pg_err)?;
@@ -2357,9 +2365,10 @@ impl PostgresSQLConnection {
                 reader.eat_message(&protocol::BIND_COMPLETE)?;
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
-                if request.status == QueryStatus::Binding {
-                    request.status = QueryStatus::Running;
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
+                if request.status.get() == QueryStatus::Binding {
+                    request.status.set(QueryStatus::Running);
                 }
             }
             MessageType::ParseComplete => {
@@ -2367,7 +2376,7 @@ impl PostgresSQLConnection {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                if let Some(statement_ptr) = request.statement {
+                if let Some(statement_ptr) = request.statement.get() {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let statement = unsafe { &mut *statement_ptr };
                     // if we have params wait for parameter description
@@ -2389,7 +2398,7 @@ impl PostgresSQLConnection {
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                let statement_ptr = match request.statement {
+                let statement_ptr = match request.statement.get() {
                     Some(s) => s,
                     None => {
                         drop(description.parameters);
@@ -2416,7 +2425,7 @@ impl PostgresSQLConnection {
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &*request_ptr };
-                let statement_ptr = match request.statement {
+                let statement_ptr = match request.statement.get() {
                     Some(s) => s,
                     None => return Err(AnyPostgresError::ExpectedStatement),
                 };
@@ -2661,9 +2670,10 @@ impl PostgresSQLConnection {
                 reader.eat_message(&protocol::NO_DATA)?;
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
-                if request.status == QueryStatus::Binding {
-                    request.status = QueryStatus::Running;
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
+                if request.status.get() == QueryStatus::Binding {
+                    request.status.set(QueryStatus::Running);
                 }
             }
             MessageType::BackendKeyData => {
@@ -2687,12 +2697,13 @@ impl PostgresSQLConnection {
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
                 // Convert to JS while we still own `err` — Zig's `request.onError` only ever
                 // calls `err.toJS`, so materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
-                if let Some(stmt_ptr) = request.statement {
+                if let Some(stmt_ptr) = request.statement.get() {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let stmt = unsafe { &mut *stmt_ptr };
                     if stmt.status == StatementStatus::Parsing {
@@ -2722,7 +2733,8 @@ impl PostgresSQLConnection {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
                 request.on_result(b"CLOSECOMPLETE", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }
@@ -2738,7 +2750,8 @@ impl PostgresSQLConnection {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &mut *request_ptr };
+                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+                let request = unsafe { &*request_ptr };
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }

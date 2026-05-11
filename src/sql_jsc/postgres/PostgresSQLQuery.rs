@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::mem;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError, VirtualMachineSqlExt as _};
+use bun_jsc::JsCell;
 use bun_string::String as BunString;
 use bun_wyhash::hash;
 
@@ -29,22 +30,30 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub use js::to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
+//
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim still emits `this: &mut PostgresSQLQuery` until Phase 1 lands —
+// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// `UnsafeCell` (which both `Cell` and `JsCell` wrap) suppresses LLVM `noalias`
+// on `&T`, structurally eliminating the PROVEN_CACHED miscompiles that the
+// previous `from_mut(self)` raw-pointer dances papered over.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
-    pub statement: Option<*mut PostgresSQLStatement>,
+    pub statement: Cell<Option<*mut PostgresSQLStatement>>,
     pub query: BunString,
     pub cursor_name: BunString,
 
-    pub this_value: JsRef,
+    pub this_value: JsCell<JsRef>,
 
-    pub status: Status,
+    pub status: Cell<Status>,
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
     // `#[derive(CellRefCounted)]` provides `ref_()`/`deref()` and the `AnyRefCounted`
     // bridge so `ScopedRef<PostgresSQLQuery>` brackets re-entrant callback paths.
     ref_count: Cell<u32>,
 
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 // Zig `deinit`: `if (this.statement) |s| s.deref()` then deref query/cursor_name,
@@ -67,13 +76,13 @@ impl Drop for PostgresSQLQuery {
 impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
-            statement: None,
+            statement: Cell::new(None),
             query: BunString::empty(),
             cursor_name: BunString::empty(),
-            this_value: JsRef::empty(),
-            status: Status::Pending,
+            this_value: JsCell::new(JsRef::empty()),
+            status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
-            flags: Flags::default(),
+            flags: Cell::new(Flags::default()),
         }
     }
 }
@@ -131,8 +140,30 @@ impl Status {
 impl PostgresSQLQuery {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
+    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+
+    /// Read-modify-write the `Cell<Flags>` through `&self`.
+    #[inline]
+    pub fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+        let mut v = self.flags.get();
+        f(&mut v);
+        self.flags.set(v);
+    }
+
+    /// `self`'s address as `*mut Self` for `ScopedRef` and the connection's
+    /// request FIFO. The bodies that consume it deref as `&*const` (shared) —
+    /// every mutated field is `Cell`/`JsCell`-backed — so no write provenance
+    /// is required; the `*mut` spelling is purely to match existing C-shaped
+    /// signatures.
+    #[inline]
+    pub fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
-        let this_value = self.this_value.try_get()?;
+        let this_value = self.this_value.get().try_get()?;
         let target = js::target_get_cached(this_value)?;
         if clean_target {
             js::target_set_cached(this_value, global_object, JSValue::ZERO);
@@ -146,29 +177,29 @@ impl PostgresSQLQuery {
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
-        this.this_value.finalize();
+        this.this_value.with_mut(|r| r.finalize());
         // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
         unsafe { Self::deref(this) };
     }
 
     pub fn on_write_fail(
-        &mut self,
+        &self,
         err: AnyPostgresError,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
-        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
-        // route *every* field access through `this_ptr` and never touch `self` again, so
-        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
-        let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        unsafe { (*this_ptr).status = Status::Fail };
-        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
-        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
-        // borrow across the `get_target` call below, which itself reads `this_value`.
-        let _downgrade = scopeguard::guard(this_ptr, |p| unsafe { (*p).this_value.downgrade() });
-        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
+        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
+        // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
+        // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
+        // `*self` mid-body.
+        // SAFETY: `self` is a live `heap::alloc` payload (held by the
+        // connection's request FIFO); `ScopedRef` only ref/deref's the
+        // intrusive `Cell<u32>`.
+        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        self.status.set(Status::Fail);
+        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
+        let Some(target_value) = self.get_target(global_object, true) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
@@ -182,19 +213,14 @@ impl PostgresSQLQuery {
         ]);
     }
 
-    pub fn on_js_error(&mut self, err: JSValue, global_object: &JSGlobalObject) {
-        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
-        // route *every* field access through `this_ptr` and never touch `self` again, so
-        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
-        let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        unsafe { (*this_ptr).status = Status::Fail };
-        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
-        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
-        // borrow across the `get_target` call below, which itself reads `this_value`.
-        let _downgrade = scopeguard::guard(this_ptr, |p| unsafe { (*p).this_value.downgrade() });
-        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
+    pub fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // SAFETY: see `on_write_fail`.
+        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        self.status.set(Status::Fail);
+        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
+        let Some(target_value) = self.get_target(global_object, true) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
@@ -206,7 +232,7 @@ impl PostgresSQLQuery {
         ]);
     }
 
-    pub fn on_error(&mut self, err: super::postgres_sql_statement::Error, global_object: &JSGlobalObject) {
+    pub fn on_error(&self, err: super::postgres_sql_statement::Error, global_object: &JSGlobalObject) {
         let Ok(e) = err.to_js(global_object) else { return };
         self.on_js_error(e, global_object);
     }
@@ -228,33 +254,26 @@ impl PostgresSQLQuery {
         Some(pending_value)
     }
 
-    pub fn on_result(&mut self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
-        // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
-        // route *every* field access through `this_ptr` and never touch `self` again, so
-        // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
-        let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        unsafe {
-            (*this_ptr).status = if is_last { Status::Success } else { Status::PartialResponse };
-        }
+    pub fn on_result(&self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
+        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // SAFETY: see `on_write_fail`.
+        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        self.status.set(if is_last { Status::Success } else { Status::PartialResponse });
         let tag = CommandTag::init(command_tag_str);
         let js_tag: JSValue = match tag.to_js_tag(global_object) {
             Ok(v) => v,
-            Err(e) => return unsafe { (*this_ptr).on_js_error(global_object.take_exception(e), global_object) },
+            Err(e) => return self.on_js_error(global_object.take_exception(e), global_object),
         };
         js_tag.ensure_still_alive();
 
-        let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
-        // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
-        // borrow across the `get_target` call below, which itself reads `this_value`.
-        let _last = scopeguard::guard(this_ptr, |p| {
+        let Some(this_value) = self.this_value.get().try_get() else { return };
+        let _last = scopeguard::guard((), |_| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
-                unsafe { (*p).this_value.downgrade() };
+                self.this_value.with_mut(|r| r.downgrade());
             }
         });
-        let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, is_last) }) else { return };
+        let Some(target_value) = self.get_target(global_object, is_last) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
@@ -340,9 +359,8 @@ impl PostgresSQLQuery {
         // three non-default fields in place.
         unsafe {
             (*ptr).query = query.to_bun_string(global_this)?;
-            (*ptr).this_value = JsRef::init_weak(this_value);
-            (*ptr).flags.bigint = bigint;
-            (*ptr).flags.simple = simple;
+            (*ptr).this_value.set(JsRef::init_weak(this_value));
+            (*ptr).flags.set(Flags { bigint, simple, ..Default::default() });
         }
 
         js::binding_set_cached(this_value, global_this, values);
@@ -354,21 +372,21 @@ impl PostgresSQLQuery {
         Ok(this_value)
     }
 
-    pub fn push(&mut self, global_this: &JSGlobalObject, value: JSValue) {
+    pub fn push(&self, global_this: &JSGlobalObject, value: JSValue) {
         // TODO(port): Zig source references `this.pending_value` which is not a field on this
         // struct — likely dead/broken code in the original. Preserved as a no-op.
         let _ = (global_this, value);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn do_done(this: &mut Self, global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_done(this: &Self, global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_object;
-        this.flags.is_done = true;
+        this.update_flags(|f| f.is_done = true);
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn set_pending_value_from_js(_this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_pending_value_from_js(_this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let result = callframe.argument(0);
         let this_value = callframe.this();
         js::pending_value_set_cached(this_value, global_object, result);
@@ -376,7 +394,7 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn set_mode_from_js(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_mode_from_js(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let js_mode = callframe.argument(0);
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
             return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
@@ -392,25 +410,25 @@ impl PostgresSQLQuery {
                 return Err(global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode));
             }
         };
-        this.flags.result_mode = result_mode;
+        this.update_flags(|f| f.result_mode = result_mode);
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     //
     // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `heap::alloc`
-    // pointer) rather than `&mut Self`: `connection.requests.write_item(this_ptr)` below
-    // stashes this pointer in a long-lived FIFO, and a `&mut`-derived `*mut` would carry
+    // pointer) rather than `&Self`: `connection.requests.write_item(this_ptr)` below
+    // stashes this pointer in a long-lived FIFO, and a `&self`-derived `*mut` would carry
     // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
     // call returns (Stacked Borrows). Passing the raw payload pointer through preserves
     // the allocation's root provenance for the queued entry.
     pub fn do_run(this_ptr: *mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `this_ptr` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it, and the mutator thread has
-        // exclusive access. We reborrow as `&mut` for ergonomic field access only —
-        // the pointer pushed into `connection.requests` is `this_ptr` itself, never a
-        // coercion of this reborrow.
-        let this = unsafe { &mut *this_ptr };
+        // exclusive access. R-2: deref as shared (`&*`) — every mutated field is
+        // `Cell`/`JsCell`-backed. The pointer pushed into `connection.requests` is
+        // `this_ptr` itself, never a coercion of this reborrow.
+        let this = unsafe { &*this_ptr };
         let arguments = callframe.arguments();
         let Some(connection_ptr) = postgres_sql_connection::js::from_js(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a PostgresSQLConnection")));
@@ -441,7 +459,7 @@ impl PostgresSQLQuery {
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();
-        if this.flags.simple {
+        if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
             // PostgresSQLStatement is intrusively refcounted; allocate a fresh box and
@@ -455,13 +473,13 @@ impl PostgresSQLQuery {
                 bun_core::heap::into_raw(Box::new(s))
             };
             // Query is simple and it's the only owner of the statement
-            this.statement = Some(stmt);
+            this.statement.set(Some(stmt));
 
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
                     // fail to run do cleanup
-                    this.statement = None;
+                    this.statement.set(None);
                     // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
                     // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
                     unsafe { PostgresSQLStatement::deref(stmt) };
@@ -483,13 +501,13 @@ impl PostgresSQLQuery {
                     connection.flags.set(f);
                 }
                 connection.nonpipelinable_requests.set(connection.nonpipelinable_requests.get() + 1);
-                this.status = Status::Running;
+                this.status.set(Status::Running);
             } else {
-                this.status = Status::Pending;
+                this.status.set(Status::Pending);
             }
             if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
                 // fail to run do cleanup
-                this.statement = None;
+                this.statement.set(None);
                 // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
                 // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
                 unsafe { PostgresSQLStatement::deref(stmt) };
@@ -499,9 +517,9 @@ impl PostgresSQLQuery {
                 return Err(global_object.throw_out_of_memory());
             }
 
-            this.this_value.upgrade(global_object);
+            this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
-            if this.status == Status::Running {
+            if this.status.get() == Status::Running {
                 connection.flush_data_and_reset_timeout();
             } else {
                 connection.reset_connection_timeout();
@@ -553,7 +571,7 @@ impl PostgresSQLQuery {
                 if entry.found_existing {
                     // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
                     let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
-                    this.statement = Some(stmt);
+                    this.statement.set(Some(stmt));
                     // SAFETY: `stmt` is the live map entry.
                     unsafe { (*stmt).ref_() };
                     drop(signature);
@@ -561,7 +579,7 @@ impl PostgresSQLQuery {
                     // SAFETY: `stmt` is live (just ref'd).
                     match unsafe { (*stmt).status } {
                         StatementStatus::Failed => {
-                            this.statement = None;
+                            this.statement.set(None);
                             // SAFETY: `stmt` is live; `error_response` is `Some` when status == Failed.
                             let error_response = unsafe { (*stmt).error_response.as_ref() }
                                 .unwrap()
@@ -575,7 +593,7 @@ impl PostgresSQLQuery {
                         StatementStatus::Prepared => {
                             if !connection.has_query_running() || connection.can_pipeline() {
                                 // SAFETY: `stmt` is live.
-                                this.flags.binary = unsafe { !(*stmt).fields.is_empty() };
+                                this.update_flags(|f| f.binary = unsafe { !(*stmt).fields.is_empty() });
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
@@ -588,7 +606,7 @@ impl PostgresSQLQuery {
                                     writer,
                                 ) {
                                     // fail to run do cleanup
-                                    this.statement = None;
+                                    this.statement.set(None);
                                     // SAFETY: drop the ref we took above.
                                     unsafe { PostgresSQLStatement::deref(stmt) };
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
@@ -608,8 +626,8 @@ impl PostgresSQLQuery {
                                     f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                                     connection.flags.set(f);
                                 }
-                                this.status = Status::Binding;
-                                this.flags.pipelined = true;
+                                this.status.set(Status::Binding);
+                                this.update_flags(|f| f.pipelined = true);
                                 connection.pipelined_requests.set(connection.pipelined_requests.get() + 1);
 
                                 did_write = true;
@@ -660,7 +678,7 @@ impl PostgresSQLQuery {
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                         connection.flags.set(f);
                     }
-                    this.status = Status::Binding;
+                    this.status.set(Status::Binding);
                     did_write = true;
                 } else if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                     // Named prepared statements: send Parse+Describe+Sync now and wait
@@ -731,7 +749,7 @@ impl PostgresSQLQuery {
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
                         bun_core::heap::into_raw(Box::new(s))
                     };
-                    this.statement = Some(stmt);
+                    this.statement.set(Some(stmt));
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
                     // not been mutated since `get_or_put`. This arm is reached only when
@@ -745,7 +763,7 @@ impl PostgresSQLQuery {
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
                         bun_core::heap::into_raw(Box::new(s))
                     };
-                    this.statement = Some(stmt);
+                    this.statement.set(Some(stmt));
                 }
             }
         }
@@ -753,7 +771,7 @@ impl PostgresSQLQuery {
         if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
             return Err(global_object.throw_out_of_memory());
         }
-        this.this_value.upgrade(global_object);
+        this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);
         if did_write {
@@ -768,7 +786,7 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn do_cancel(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_cancel(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let _ = callframe;
         let _ = global_object;
         let _ = this;

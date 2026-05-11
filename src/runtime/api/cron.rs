@@ -37,13 +37,12 @@ use bun_spawn_types::process_exit::{
     ProcessExitContext, ProcessExitReadinessAction, ProcessHandle,
 };
 use bun_runtime_types::cron::{
-    CronRegisterState as RegisterState, CronRemoveState as RemoveState,
-    ProcessState as CronProcessState,
+    CronRegisterJobState, CronRegisterState as RegisterState, CronRemoveJobState,
+    CronRemoveState as RemoveState, ProcessState as CronProcessState,
 };
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_sys::FdDirExt as _;
-use bun_str::{self as strings, ZStr};
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
@@ -168,17 +167,9 @@ trait CronJobBase: Sized {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        let _ = s.process_state_mut().record_reader_done();
-        let state = s.process_state_mut();
-        if state.err_msg.is_none() {
-            let mut msg = Vec::new();
-            let _ = write!(
-                &mut msg,
-                "Failed to read process output: {}",
-                <&'static str>::from(err.get_errno())
-            );
-            state.err_msg = Some(msg);
-        }
+        let _ = s
+            .process_state_mut()
+            .record_reader_error(<&'static str>::from(err.get_errno()));
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -212,20 +203,11 @@ pub struct CronRegisterJob {
     global: GlobalRef,
     poll: KeepAlive,
 
-    bun_exe: &'static ZStr,
-    abs_path: ZString,
-    /// normalized numeric form for crontab/launchd
-    schedule: ZString,
-    title: ZString,
-    parsed_cron: CronExpression,
-
-    state: RegisterState,
-    process_state: CronProcessState,
+    state: CronRegisterJobState,
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -256,17 +238,13 @@ impl BufferedReaderParent for CronRegisterJob {
 }
 
 impl CronJobBase for CronRegisterJob {
-    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.process_state }
+    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.state.process }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRegisterJob::maybe_finished(this) } }
 }
 
 impl CronRegisterJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
-        if self.process_state.err_msg.is_none() {
-            let mut msg = Vec::new();
-            let _ = msg.write_fmt(args);
-            self.process_state.err_msg = Some(msg);
-        }
+        self.state.set_error(args);
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
@@ -274,7 +252,7 @@ impl CronRegisterJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s.process_state.is_ready() {
+        if !s.state.process.is_ready() {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -284,15 +262,15 @@ impl CronRegisterJob {
                 (*proc).deref();
             }
         }
-        if s.process_state.err_msg.is_some() {
+        if s.state.process.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.process_state.take_exit_status() else { return };
+        let Some(status) = s.state.process.take_exit_status() else { return };
         match status {
             Status::Exited(exited) => {
                 if exited.code != 0
-                    && !(s.state == RegisterState::ReadingCrontab && exited.code == 1)
-                    && s.state != RegisterState::BootingOut
+                    && !(s.state.phase == RegisterState::ReadingCrontab && exited.code == 1)
+                    && s.state.phase != RegisterState::BootingOut
                 {
                     // Materialize the trimmed stderr into an owned buffer:
                     // `final_buffer()` borrows `s` mutably, and `set_err`
@@ -313,7 +291,7 @@ impl CronRegisterJob {
                     // a clear message instead of the raw schtasks output.
                     #[cfg(windows)]
                     {
-                        if s.state == RegisterState::InstallingCrontab
+                        if s.state.phase == RegisterState::InstallingCrontab
                             && bun_str::strings::index_of(
                                 stderr_output,
                                 b"No mapping between account names",
@@ -338,7 +316,7 @@ impl CronRegisterJob {
                 }
             }
             Status::Signaled(sig) => {
-                if s.state != RegisterState::BootingOut {
+                if s.state.phase != RegisterState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
                     return unsafe { Self::finish(this) };
                 }
@@ -361,7 +339,7 @@ impl CronRegisterJob {
         let s = unsafe { &mut *this };
         #[cfg(target_os = "macos")]
         {
-            match s.state {
+            match s.state.phase {
                 RegisterState::WritingPlist => unsafe { Self::spawn_bootout(this) },
                 RegisterState::BootingOut => unsafe { Self::spawn_bootstrap(this) },
                 RegisterState::Bootstrapping => unsafe { Self::finish(this) },
@@ -373,7 +351,7 @@ impl CronRegisterJob {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            match s.state {
+            match s.state.phase {
                 RegisterState::ReadingCrontab => unsafe { Self::process_crontab_and_install(this) },
                 RegisterState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
@@ -389,7 +367,7 @@ impl CronRegisterJob {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
-        this_ref.state = if this_ref.process_state.err_msg.is_some() {
+        this_ref.state.phase = if this_ref.state.process.err_msg.is_some() {
             RegisterState::Failed
         } else {
             RegisterState::Done
@@ -397,7 +375,7 @@ impl CronRegisterJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
-        if let Some(msg) = &this_ref.process_state.err_msg {
+        if let Some(msg) = &this_ref.state.process.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 &this_ref.global,
                 Ok(this_ref
@@ -432,7 +410,7 @@ impl CronRegisterJob {
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RegisterState::ReadingCrontab;
+        s.state.phase = RegisterState::ReadingCrontab;
         s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
@@ -451,7 +429,7 @@ impl CronRegisterJob {
         let existing_content = s.stdout_reader.final_buffer().as_slice();
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
+        if filter_crontab(existing_content, s.state.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory building crontab"));
             return unsafe { Self::finish(this) };
         }
@@ -461,10 +439,10 @@ impl CronRegisterJob {
         if write!(
             &mut new_entry,
             "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
-            title = bstr::BStr::new(s.title.as_bytes()),
-            sched = bstr::BStr::new(s.schedule.as_bytes()),
-            exe = bstr::BStr::new(s.bun_exe.as_bytes()),
-            path = bstr::BStr::new(s.abs_path.as_bytes()),
+            title = bstr::BStr::new(s.state.title.as_bytes()),
+            sched = bstr::BStr::new(s.state.schedule.as_bytes()),
+            exe = bstr::BStr::new(s.state.bun_exe.as_bytes()),
+            path = bstr::BStr::new(s.state.abs_path.as_bytes()),
         )
         .is_err()
         {
@@ -481,11 +459,11 @@ impl CronRegisterJob {
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        s.tmp_path = Some(tmp_path);
+        s.state.tmp_path = Some(tmp_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            s.tmp_path.as_ref().unwrap(),
+            s.state.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -502,7 +480,7 @@ impl CronRegisterJob {
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
-        s.state = RegisterState::InstallingCrontab;
+        s.state.phase = RegisterState::InstallingCrontab;
         // PORT NOTE: explicit deinit of old reader before reassign — Drop handles it.
         s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         let Some(crontab_path) = find_crontab() else {
@@ -519,9 +497,9 @@ impl CronRegisterJob {
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_bootout`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RegisterState::WritingPlist;
+        s.state.phase = RegisterState::WritingPlist;
 
-        let calendar_xml = match cron_to_calendar_interval(s.schedule.as_bytes()) {
+        let calendar_xml = match cron_to_calendar_interval(s.state.schedule.as_bytes()) {
             Ok(x) => x,
             Err(_) => {
                 s.set_err(format_args!("Invalid cron expression"));
@@ -544,7 +522,7 @@ impl CronRegisterJob {
         let plist_path = match alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
-            bstr::BStr::new(s.title.as_bytes())
+            bstr::BStr::new(s.state.title.as_bytes())
         )) {
             Ok(p) => p,
             Err(_) => {
@@ -552,7 +530,7 @@ impl CronRegisterJob {
                 return unsafe { Self::finish(this) };
             }
         };
-        s.tmp_path = Some(plist_path);
+        s.state.tmp_path = Some(plist_path);
 
         // XML-escape all dynamic values
         macro_rules! try_escape {
@@ -566,10 +544,10 @@ impl CronRegisterJob {
                 }
             };
         }
-        let xml_title = try_escape!(s.title.as_bytes());
-        let xml_bun = try_escape!(s.bun_exe.as_bytes());
-        let xml_path = try_escape!(s.abs_path.as_bytes());
-        let xml_sched = try_escape!(s.schedule.as_bytes());
+        let xml_title = try_escape!(s.state.title.as_bytes());
+        let xml_bun = try_escape!(s.state.bun_exe.as_bytes());
+        let xml_path = try_escape!(s.state.abs_path.as_bytes());
+        let xml_sched = try_escape!(s.state.schedule.as_bytes());
 
         let mut plist = Vec::new();
         if write!(
@@ -610,7 +588,7 @@ impl CronRegisterJob {
 
         let file = match File::openat(
             Fd::cwd(),
-            s.tmp_path.as_ref().unwrap(),
+            s.state.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             0o644,
         ) {
@@ -634,11 +612,11 @@ impl CronRegisterJob {
     unsafe fn spawn_bootout(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RegisterState::BootingOut;
+        s.state.phase = RegisterState::BootingOut;
         let uid_str = match alloc_print_z(format_args!(
             "gui/{}/bun.cron.{}",
             get_uid(),
-            bstr::BStr::new(s.title.as_bytes())
+            bstr::BStr::new(s.state.title.as_bytes())
         )) {
             Ok(v) => v,
             Err(_) => {
@@ -660,8 +638,8 @@ impl CronRegisterJob {
     unsafe fn spawn_bootstrap(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RegisterState::Bootstrapping;
-        let Some(plist_path) = s.tmp_path.take() else {
+        s.state.phase = RegisterState::Bootstrapping;
+        let Some(plist_path) = s.state.tmp_path.take() else {
             s.set_err(format_args!("No plist path"));
             return unsafe { Self::finish(this) };
         };
@@ -786,17 +764,16 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
-            bun_exe,
-            abs_path,
-            schedule: ZString::from_bytes(normalized_schedule),
-            title: ZString::from_bytes(title_slice.slice()),
-            parsed_cron: parsed,
-            state: RegisterState::ReadingCrontab,
-            process_state: CronProcessState::new(),
+            state: CronRegisterJobState::new(
+                bun_exe,
+                abs_path,
+                ZString::from_bytes(normalized_schedule),
+                ZString::from_bytes(title_slice.slice()),
+                parsed,
+            ),
             process: None,
             stdout_reader: OutputReader::init::<CronRegisterJob>(),
             stderr_reader: OutputReader::init::<CronRegisterJob>(),
-            tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
             event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
         }));
@@ -827,11 +804,11 @@ impl CronRegisterJob {
     unsafe fn start_windows(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RegisterState::InstallingCrontab;
+        s.state.phase = RegisterState::InstallingCrontab;
 
         let task_name = match alloc_print_z(format_args!(
             "bun-cron-{}",
-            bstr::BStr::new(s.title.as_bytes())
+            bstr::BStr::new(s.state.title.as_bytes())
         )) {
             Ok(v) => v,
             Err(_) => {
@@ -841,11 +818,11 @@ impl CronRegisterJob {
         };
 
         let xml = match cron_to_task_xml(
-            &s.parsed_cron,
-            s.bun_exe.as_bytes(),
-            s.title.as_bytes(),
-            s.schedule.as_bytes(),
-            s.abs_path.as_bytes(),
+            &s.state.parsed_cron,
+            s.state.bun_exe.as_bytes(),
+            s.state.title.as_bytes(),
+            s.state.schedule.as_bytes(),
+            s.state.abs_path.as_bytes(),
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -868,11 +845,11 @@ impl CronRegisterJob {
             }
         };
         let xml_path_ptr = xml_path.as_ptr();
-        s.tmp_path = Some(xml_path);
+        s.state.tmp_path = Some(xml_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            s.tmp_path.as_ref().unwrap(),
+            s.state.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -915,7 +892,7 @@ impl Drop for CronRegisterJob {
                 (*proc).deref();
             }
         }
-        if let Some(p) = self.tmp_path.take() {
+        if let Some(p) = self.state.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
         // process_state, abs_path, schedule, title freed via field Drop.
@@ -934,15 +911,12 @@ pub struct CronRemoveJob {
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
     poll: KeepAlive,
-    title: ZString,
 
-    state: RemoveState,
-    process_state: CronProcessState,
+    state: CronRemoveJobState,
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -973,17 +947,13 @@ impl BufferedReaderParent for CronRemoveJob {
 }
 
 impl CronJobBase for CronRemoveJob {
-    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.process_state }
+    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.state.process }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRemoveJob::maybe_finished(this) } }
 }
 
 impl CronRemoveJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
-        if self.process_state.err_msg.is_none() {
-            let mut msg = Vec::new();
-            let _ = msg.write_fmt(args);
-            self.process_state.err_msg = Some(msg);
-        }
+        self.state.set_error(args);
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
@@ -991,7 +961,7 @@ impl CronRemoveJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s.process_state.is_ready() {
+        if !s.state.process.is_ready() {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -1001,18 +971,18 @@ impl CronRemoveJob {
                 (*proc).deref();
             }
         }
-        if s.process_state.err_msg.is_some() {
+        if s.state.process.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.process_state.take_exit_status() else { return };
+        let Some(status) = s.state.process.take_exit_status() else { return };
         match status {
             Status::Exited(exited) => {
-                let is_acceptable_nonzero = (s.state == RemoveState::ReadingCrontab
+                let is_acceptable_nonzero = (s.state.phase == RemoveState::ReadingCrontab
                     && exited.code == 1)
-                    || s.state == RemoveState::BootingOut
+                    || s.state.phase == RemoveState::BootingOut
                     // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
                     // removal of a non-existent job should resolve without error.
-                    || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
+                    || (cfg!(windows) && s.state.phase == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     // Owned copy: `final_buffer()` is `&mut self` and would
                     // alias `s.set_err` below. Copy the trimmed bytes out.
@@ -1035,7 +1005,7 @@ impl CronRemoveJob {
                 }
             }
             Status::Signaled(sig) => {
-                if s.state != RemoveState::BootingOut {
+                if s.state.phase != RemoveState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
                     return unsafe { Self::finish(this) };
                 }
@@ -1058,7 +1028,7 @@ impl CronRemoveJob {
         let s = unsafe { &mut *this };
         #[cfg(target_os = "macos")]
         {
-            match s.state {
+            match s.state.phase {
                 RemoveState::BootingOut => {
                     let Some(home) = env_var::HOME.get() else {
                         s.set_err(format_args!("HOME not set"));
@@ -1067,7 +1037,7 @@ impl CronRemoveJob {
                     if let Ok(plist_path) = alloc_print_z(format_args!(
                         "{}/Library/LaunchAgents/bun.cron.{}.plist",
                         bstr::BStr::new(home),
-                        bstr::BStr::new(s.title.as_bytes())
+                        bstr::BStr::new(s.state.title.as_bytes())
                     )) {
                         let _ = sys::unlink(&plist_path);
                     } else {
@@ -1084,7 +1054,7 @@ impl CronRemoveJob {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            match s.state {
+            match s.state.phase {
                 RemoveState::ReadingCrontab => unsafe { Self::remove_crontab_entry(this) },
                 RemoveState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
@@ -1100,7 +1070,7 @@ impl CronRemoveJob {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
-        this_ref.state = if this_ref.process_state.err_msg.is_some() {
+        this_ref.state.phase = if this_ref.state.process.err_msg.is_some() {
             RemoveState::Failed
         } else {
             RemoveState::Done
@@ -1108,7 +1078,7 @@ impl CronRemoveJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
-        if let Some(msg) = &this_ref.process_state.err_msg {
+        if let Some(msg) = &this_ref.state.process.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 &this_ref.global,
                 Ok(this_ref
@@ -1141,7 +1111,7 @@ impl CronRemoveJob {
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RemoveState::ReadingCrontab;
+        s.state.phase = RemoveState::ReadingCrontab;
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
@@ -1160,7 +1130,7 @@ impl CronRemoveJob {
         let existing_content = s.stdout_reader.final_buffer().as_slice();
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
+        if filter_crontab(existing_content, s.state.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory"));
             return unsafe { Self::finish(this) };
         }
@@ -1173,11 +1143,11 @@ impl CronRemoveJob {
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        s.tmp_path = Some(tmp_path);
+        s.state.tmp_path = Some(tmp_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            s.tmp_path.as_ref().unwrap(),
+            s.state.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
@@ -1194,7 +1164,7 @@ impl CronRemoveJob {
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
-        s.state = RemoveState::InstallingCrontab;
+        s.state.phase = RemoveState::InstallingCrontab;
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
@@ -1208,11 +1178,11 @@ impl CronRemoveJob {
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RemoveState::BootingOut;
+        s.state.phase = RemoveState::BootingOut;
         let uid_str = match alloc_print_z(format_args!(
             "gui/{}/bun.cron.{}",
             get_uid(),
-            bstr::BStr::new(s.title.as_bytes())
+            bstr::BStr::new(s.state.title.as_bytes())
         )) {
             Ok(v) => v,
             Err(_) => {
@@ -1254,13 +1224,10 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
-            title: ZString::from_bytes(title_slice.slice()),
-            state: RemoveState::ReadingCrontab,
-            process_state: CronProcessState::new(),
+            state: CronRemoveJobState::new(ZString::from_bytes(title_slice.slice())),
             process: None,
             stdout_reader: OutputReader::init::<CronRemoveJob>(),
             stderr_reader: OutputReader::init::<CronRemoveJob>(),
-            tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
             event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
         }));
@@ -1287,10 +1254,10 @@ impl CronRemoveJob {
     unsafe fn start_windows(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        s.state = RemoveState::InstallingCrontab;
+        s.state.phase = RemoveState::InstallingCrontab;
         let task_name = match alloc_print_z(format_args!(
             "bun-cron-{}",
-            bstr::BStr::new(s.title.as_bytes())
+            bstr::BStr::new(s.state.title.as_bytes())
         )) {
             Ok(v) => v,
             Err(_) => {
@@ -1320,7 +1287,7 @@ impl Drop for CronRemoveJob {
                 (*proc).deref();
             }
         }
-        if let Some(p) = self.tmp_path.take() {
+        if let Some(p) = self.state.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
     }

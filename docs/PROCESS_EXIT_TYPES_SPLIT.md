@@ -314,6 +314,8 @@ Process-exit production shape
   │     └─> shell::NodeId
   │           └─> sidecar-owned command identity for the shell arena
   ├─> bun_runtime_types::cron
+  │     ├─> CronRegisterJobState / CronRemoveJobState
+  │     │     └─> sidecar-owned OS-cron data: phase, title/path/schedule/tmp path, parsed expression, process reducer
   │     ├─> CronRegisterState
   │     ├─> CronRemoveState
   │     │     └─> sidecar-owned cron state-machine discriminants; JSC promise effects stay in bun_runtime
@@ -467,10 +469,11 @@ Typed reducer paths that feed existing owner/effect contexts
   │     └─> MaybeFinished drains PackageManager.active_lifecycle_scripts in bun_install
   └─> runtime/api/cron.rs
         ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
-        ├─> initializes bun_runtime_types::cron::ProcessState once spawned Process exists
-        ├─> CronRegisterJob and CronRemoveJob store the sidecar ProcessState directly
-        ├─> spawn_cmd_generic records lower ProcessHandle and output-reader handles in ProcessState
-        ├─> reader callbacks call ProcessState::record_reader_done()
+        ├─> CronRegisterJob stores bun_runtime_types::cron::CronRegisterJobState
+        ├─> CronRemoveJob stores bun_runtime_types::cron::CronRemoveJobState
+        ├─> initializes the embedded ProcessState once spawned Process exists
+        ├─> spawn_cmd_generic records lower ProcessHandle and output-reader handles in that ProcessState
+        ├─> reader callbacks call ProcessState::record_reader_done()/record_reader_error()
         ├─> process-exit callback validates through ProcessState::process_handle, then calls ProcessState::on_process_exit(ProcessExitContext)
         └─> Ready lets bun_runtime consume status and continue cron-specific state transitions
 ```
@@ -479,8 +482,9 @@ Typed reducer paths that feed existing owner/effect contexts
 Remaining owner movement
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
-  │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
-  │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar ProcessState records the lower process/reader handles
+  │     │     - still own promise/global/KeepAlive, process ref, and stdout/stderr reader resources
+  │     │     - the non-JSC OS-cron data now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, process reducer, and error buffer
+  │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar job state records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
   │     │     - JSPromiseStrong is drop-owning JSC state; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
@@ -537,6 +541,7 @@ Required deeper type movement
   │     └─> no lower crate stores LifecycleScriptSubprocess*, reconstructs it from a state field, or looks it up by ProcessIdentity
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
+  │     ├─> CronRegisterJobState / CronRemoveJobState now own the non-JSC OS-cron job data in bun_runtime_types::cron
   │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
   │     ├─> CronExpression / CronError now live in bun_runtime_types::cron_parser; only JSC date arithmetic remains in bun_runtime
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path

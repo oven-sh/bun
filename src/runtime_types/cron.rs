@@ -1,3 +1,7 @@
+use std::io::Write as _;
+
+use crate::cron_parser::CronExpression;
+use bun_core::{ZBox as ZString, ZStr};
 use bun_io_types::reader::BufferedReaderHandle;
 use bun_spawn_types::process_exit::{
     ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessHandle,
@@ -25,6 +29,68 @@ pub enum CronRemoveState {
     BootingOut,
     Done,
     Failed,
+}
+
+pub struct CronRegisterJobState {
+    pub bun_exe: &'static ZStr,
+    pub abs_path: ZString,
+    pub schedule: ZString,
+    pub title: ZString,
+    pub parsed_cron: CronExpression,
+    pub phase: CronRegisterState,
+    pub process: ProcessState,
+    pub tmp_path: Option<ZString>,
+}
+
+impl CronRegisterJobState {
+    #[inline]
+    pub fn new(
+        bun_exe: &'static ZStr,
+        abs_path: ZString,
+        schedule: ZString,
+        title: ZString,
+        parsed_cron: CronExpression,
+    ) -> Self {
+        Self {
+            bun_exe,
+            abs_path,
+            schedule,
+            title,
+            parsed_cron,
+            phase: CronRegisterState::ReadingCrontab,
+            process: ProcessState::new(),
+            tmp_path: None,
+        }
+    }
+
+    #[inline]
+    pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
+        self.process.set_error(args);
+    }
+}
+
+pub struct CronRemoveJobState {
+    pub title: ZString,
+    pub phase: CronRemoveState,
+    pub process: ProcessState,
+    pub tmp_path: Option<ZString>,
+}
+
+impl CronRemoveJobState {
+    #[inline]
+    pub fn new(title: ZString) -> Self {
+        Self {
+            title,
+            phase: CronRemoveState::ReadingCrontab,
+            process: ProcessState::new(),
+            tmp_path: None,
+        }
+    }
+
+    #[inline]
+    pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
+        self.process.set_error(args);
+    }
 }
 
 #[derive(Debug)]
@@ -100,6 +166,22 @@ impl ProcessState {
     }
 
     #[inline]
+    pub fn record_reader_error(&mut self, name: &'static str) -> ProcessExitReadinessAction {
+        let action = self.record_reader_done();
+        self.set_error(format_args!("Failed to read process output: {}", name));
+        action
+    }
+
+    #[inline]
+    pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
+        if self.err_msg.is_none() {
+            let mut msg = Vec::new();
+            let _ = msg.write_fmt(args);
+            self.err_msg = Some(msg);
+        }
+    }
+
+    #[inline]
     pub fn on_process_exit(&mut self, ctx: &ProcessExitContext<'_>) -> ProcessExitReadinessAction {
         if self.exit_state.is_none() {
             self.initialize_exit_state(ctx.process_identity());
@@ -150,6 +232,37 @@ mod tests {
             CronRemoveState::ReadingCrontab,
             CronRemoveState::InstallingCrontab
         );
+    }
+
+    #[test]
+    fn cron_job_state_owns_data_shape_and_process_reducer() {
+        let expr = CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: 1 << 1,
+            months: 1 << 1,
+            weekdays: 1,
+            days_is_wildcard: false,
+            weekdays_is_wildcard: false,
+        };
+        let mut register = CronRegisterJobState::new(
+            ZStr::from_static(b"bun\0"),
+            ZString::from_bytes(b"/tmp/job.js"),
+            ZString::from_bytes(b"* * * * *"),
+            ZString::from_bytes(b"title"),
+            expr,
+        );
+        register.process.pending_output_fds = 1;
+        let action = register.process.record_reader_error("EIO");
+        assert_eq!(action, ProcessExitReadinessAction::Pending);
+        assert_eq!(
+            register.process.err_msg.as_deref(),
+            Some("Failed to read process output: EIO".as_bytes())
+        );
+
+        let remove = CronRemoveJobState::new(ZString::from_bytes(b"title"));
+        assert_eq!(remove.phase, CronRemoveState::ReadingCrontab);
+        assert_eq!(remove.title.as_bytes(), b"title");
     }
 
     #[test]

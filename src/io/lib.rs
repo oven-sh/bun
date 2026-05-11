@@ -918,6 +918,10 @@ pub struct CloseAction<'a> {
 
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
+use bun_runtime_types::{
+    OwnerToken as TypedOwnerToken, PollableKind, PollableToken, ReadFilePollable, WriteFilePollable,
+};
+
 // TODO(port): repr must match `bun.TaggedPointer.Tag` (15-bit tag in TaggedPtr).
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -929,47 +933,56 @@ pub enum PollableTag {
 
 /// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
 /// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
-/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
-/// packed addr:49 + tag:15 layout locally.
+/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so the producer and
+/// consumer both go through the shared `_types` PollableToken.
 /// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
 #[derive(Clone, Copy)]
 struct Pollable {
-    value: u64,
+    token: PollableToken,
 }
-
-const POLLABLE_ADDR_BITS: u64 = 49;
-const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
 impl Pollable {
     pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
-        let addr = p as usize as u64;
-        debug_assert!(addr & !POLLABLE_ADDR_MASK == 0);
-        Pollable { value: (addr & POLLABLE_ADDR_MASK) | ((t as u64) << POLLABLE_ADDR_BITS) }
+        let token = match t {
+            PollableTag::Empty => PollableToken::from_raw(0),
+            PollableTag::ReadFile => {
+                PollableToken::encode::<ReadFilePollable>(Self::owner_token(p))
+            }
+            PollableTag::WriteFile => {
+                PollableToken::encode::<WriteFilePollable>(Self::owner_token(p))
+            }
+        };
+        Pollable { token }
     }
 
     pub(crate) fn from(int: u64) -> Pollable {
-        Pollable { value: int }
+        Pollable {
+            token: PollableToken::from_raw(int),
+        }
+    }
+
+    fn owner_token<T>(p: *mut Poll) -> TypedOwnerToken<T> {
+        TypedOwnerToken::from_usize(p as usize).expect("Pollable owner pointer must be non-null")
     }
 
     pub(crate) fn poll(self) -> *mut Poll {
-        (self.value & POLLABLE_ADDR_MASK) as usize as *mut Poll
+        self.token.owner_addr() as *mut Poll
     }
 
     pub(crate) fn tag(self) -> PollableTag {
-        // Tag was written by `init` from a valid `PollableTag` discriminant.
-        match (self.value >> POLLABLE_ADDR_BITS) as u16 {
-            0 => PollableTag::Empty,
-            1 => PollableTag::ReadFile,
-            2 => PollableTag::WriteFile,
+        match self.token.kind_checked() {
+            Some(PollableKind::Empty) => PollableTag::Empty,
+            Some(PollableKind::ReadFile) => PollableTag::ReadFile,
+            Some(PollableKind::WriteFile) => PollableTag::WriteFile,
             // Only `init` writes the tag bits, so any other value is memory
             // corruption / a logic bug — match Zig's safety-checked
             // `@enumFromInt` and trap rather than fabricate a discriminant.
-            n => unreachable!("invalid PollableTag {n}"),
+            None => unreachable!("invalid PollableTag"),
         }
     }
 
     pub(crate) fn ptr(self) -> u64 {
-        self.value
+        self.token.as_u64()
     }
 }
 

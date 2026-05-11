@@ -186,6 +186,21 @@ IO dispatch risks covered
         └─> lets each owning crate handle chunks, EOF, errors, and overflow
 ```
 
+The PoC now wires the Pollable side through production code rather than only the
+type-level model:
+
+```
+Real Pollable producer/consumer path
+  ├─> producer: bun_io::Poll::register_for_epoll / apply_kqueue
+  │     └─> Pollable::init(tag, poll) encodes through bun_runtime_types::PollableToken
+  ├─> kernel boundary
+  │     └─> epoll_event.data.u64 / kevent.udata carries the packed token
+  └─> consumer: bun_io::IoRequestLoop::tick_epoll / Poll::on_update_kqueue
+        ├─> Pollable::from(raw) decodes through the same PollableToken
+        ├─> Pollable::tag() recovers the closed PollableKind
+        └─> Pollable::poll() recovers the embedded Poll pointer for the existing runtime dispatch
+```
+
 ## What This Proves
 
 ```

@@ -480,8 +480,8 @@ impl PollableVariant for WriteFilePollable {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PollableToken(u64);
 
-const POLLABLE_ADDR_BITS: u32 = 48;
-const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
+pub const POLLABLE_ADDR_BITS: u32 = 49;
+pub const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
 impl PollableToken {
     #[inline]
@@ -502,13 +502,23 @@ impl PollableToken {
     }
 
     #[inline]
-    pub fn kind(self) -> PollableKind {
+    pub const fn owner_addr(self) -> usize {
+        (self.0 & POLLABLE_ADDR_MASK) as usize
+    }
+
+    #[inline]
+    pub fn kind_checked(self) -> Option<PollableKind> {
         match (self.0 >> POLLABLE_ADDR_BITS) as u16 {
-            0 => PollableKind::Empty,
-            1 => PollableKind::ReadFile,
-            2 => PollableKind::WriteFile,
-            _ => PollableKind::Empty,
+            0 => Some(PollableKind::Empty),
+            1 => Some(PollableKind::ReadFile),
+            2 => Some(PollableKind::WriteFile),
+            _ => None,
         }
+    }
+
+    #[inline]
+    pub fn kind(self) -> PollableKind {
+        self.kind_checked().unwrap_or(PollableKind::Empty)
     }
 
     #[inline]

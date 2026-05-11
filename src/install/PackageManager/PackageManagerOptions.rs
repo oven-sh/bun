@@ -934,7 +934,8 @@ bitflags::bitflags! {
         /// Isolated linker only: materialize package entries once into a shared
         /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
         /// it, instead of clonefiling every package into every project on every
-        /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
+        /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
+        /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
         // _: u6 padding
     }
@@ -945,7 +946,6 @@ impl Default for Enable {
         Enable::MANIFEST_CACHE
             | Enable::MANIFEST_CACHE_CONTROL
             | Enable::CACHE
-            | Enable::GLOBAL_VIRTUAL_STORE
     }
 }
 

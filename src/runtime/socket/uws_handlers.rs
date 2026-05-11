@@ -690,6 +690,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     const HAS_ON_DATA: bool = true;
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
     const HAS_ON_LONG_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
     const HAS_ON_CONNECT_ERROR: bool = true;
@@ -713,6 +714,10 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(owner) = *ext else { return };
         swallow(HttpH::<SSL>::on_close(owner.as_ptr(), wrap::<SSL>(s), code, reason));
+    }
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_timeout(owner.as_ptr(), wrap::<SSL>(s)));
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };

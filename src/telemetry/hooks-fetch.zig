@@ -7,7 +7,7 @@ const ZigString = JSC.ZigString;
 const telemetry = @import("telemetry.zig");
 const AttributeMap = telemetry.AttributeMap;
 const AttributeKey = telemetry.AttributeKey;
-const http = @import("../http.zig");
+const http = @import("../http/http.zig");
 const Method = http.Method;
 const simple_url_parser = @import("simple_url_parser.zig");
 

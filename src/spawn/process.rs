@@ -114,6 +114,32 @@ pub(crate) fn call_exit_handler(
     h.on_process_exit(process, status, rusage);
 }
 
+#[derive(Debug)]
+pub struct ProcessWatchResult {
+    pub has_exited: bool,
+    pub delivery: Option<ProcessExitDelivery>,
+}
+
+impl ProcessWatchResult {
+    #[inline]
+    pub const fn new(has_exited: bool, delivery: Option<ProcessExitDelivery>) -> Self {
+        Self {
+            has_exited,
+            delivery,
+        }
+    }
+
+    #[inline]
+    pub const fn has_exited(&self) -> bool {
+        self.has_exited
+    }
+
+    #[inline]
+    pub fn into_delivery(self) -> Option<ProcessExitDelivery> {
+        self.delivery
+    }
+}
+
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
 // via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
 // keep the embedded count; the derive emits `ThreadSafeRefCounted` +
@@ -381,23 +407,23 @@ impl Process {
         self.on_exit(status, &rusage_result)
     }
 
-    pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
+    pub fn watch_or_reap(&mut self) -> bun_sys::Result<ProcessWatchResult> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
-            let _ = self.on_exit(self.status.clone(), &zeroed);
-            return Ok(true);
+            let delivery = self.on_exit(self.status.clone(), &zeroed);
+            return Ok(ProcessWatchResult::new(true, delivery));
         }
 
         match self.watch() {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    let _ = self.wait(true);
-                    return Ok(self.has_exited());
+                    let delivery = self.wait(true);
+                    return Ok(ProcessWatchResult::new(self.has_exited(), delivery));
                 }
                 Err(err)
             }
-            Ok(()) => Ok(self.has_exited()),
+            Ok(()) => Ok(ProcessWatchResult::new(self.has_exited(), None)),
         }
     }
 

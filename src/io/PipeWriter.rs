@@ -1471,34 +1471,51 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
-        let written = self.pending_payload_size;
-        self.pending_payload_size = 0;
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
+        // promise resolution and may call back into this writer through a fresh
+        // `&mut Self` derived from the parent's intrusive `writer` field
+        // (`writer.with_mut(|w| w.end())`), writing `self.is_done`. With
+        // `noalias`, LLVM may cache the pre-call `is_done`/`parent` and reuse
+        // them after the call. ASM-verified PROVEN_CACHED for the POSIX
+        // `_on_write` analogue (6b7f7cce697a); the Windows path was missed and
+        // surfaces as the #53265 `FileSink__finalize` Strong=0x1 crash plus
+        // `filesink.test.ts` hang (stale `is_done` → never closes / never
+        // resubmits). Launder so post-`on_write` reads see fresh state.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
+        let written = unsafe { (*this).pending_payload_size };
+        unsafe { (*this).pending_payload_size = 0 };
         if let Some(err) = status.to_error(sys::Tag::write) {
-            self.close();
+            unsafe { (*this).close() };
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(self.parent(), err) };
+            unsafe { Parent::on_error((*this).parent(), err) };
             return;
         }
-        let pending = self.get_buffer_internal();
+        let pending = unsafe { (*this).get_buffer_internal() };
         let has_pending_data = (pending.len() - written) != 0;
+        let is_done_before = unsafe { (*this).is_done };
         // SAFETY: parent BACKREF valid.
         unsafe {
             Parent::on_write(
-                self.parent(),
+                (*this).parent(),
                 written,
-                if self.is_done && !has_pending_data { WriteStatus::Drained } else { WriteStatus::Pending },
+                if is_done_before && !has_pending_data { WriteStatus::Drained } else { WriteStatus::Pending },
             )
         };
+        // Re-escape so the trailing `is_done`/`parent`/`close()` cannot reuse
+        // values spilled from before `on_write`.
+        core::hint::black_box(this);
         // is_done can be changed inside on_write
-        if self.is_done && !has_pending_data {
+        if unsafe { (*this).is_done } && !has_pending_data {
             // already done and end was called
-            self.close();
+            unsafe { (*this).close() };
             return;
         }
 
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_writable(self.parent()) };
+            unsafe { Parent::on_writable((*this).parent()) };
         }
     }
 
@@ -1915,63 +1932,87 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
+        // promise resolution and may call back into this writer through a fresh
+        // `&mut Self` derived from the parent's intrusive `writer` field
+        // (`writer.with_mut(|w| w.end())` or `.write(..)`), writing
+        // `self.is_done` / `self.outgoing` / `self.parent`. With `noalias`,
+        // LLVM may cache pre-call field loads and reuse them after the call.
+        // ASM-verified PROVEN_CACHED for the POSIX `_on_write` analogue
+        // (6b7f7cce697a); the Windows path was missed and surfaces as the
+        // #53265 `test-fs-promises-writefile.js` `FileSink__finalize`
+        // Strong=0x1 crash and `filesink.test.ts` timeout (stale `is_done` /
+        // `outgoing` → `process_send` never resubmits or resubmits forever).
+        // Launder so all post-`on_write` field accesses see fresh state.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+
         // Deref the parent at the end to balance the ref taken in
         // process_send before submitting the async write request.
         // Zig's `defer this.parent.deref()` reads `this.parent` LAZILY at scope
         // exit; capturing `self.parent` by value here would snapshot the old
         // pointer and over-deref it if a re-entrant callback set_parent()s.
-        // Capture `*mut Self` and read `.parent` at guard execution instead.
+        // Capture the laundered `*mut Self` and read `.parent` at guard
+        // execution instead — the `black_box` above also ensures the guard's
+        // read is not folded with any pre-call load.
         // SAFETY: ref taken in process_send keeps parent (and self-as-field) alive until this deref.
-        let _g = scopeguard::guard(core::ptr::from_mut(self), |s| unsafe {
+        let _g = scopeguard::guard(this, |s| unsafe {
             Parent::deref((*s).parent)
         });
 
         if let Some(err) = status.to_error(sys::Tag::write) {
             log!("onWrite() = {}", bstr::BStr::new(err.name()));
-            self.last_write_result = WriteResult::Err(err.clone());
+            // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
+            unsafe { (*this).last_write_result = WriteResult::Err(err.clone()) };
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(self.parent(), err) };
-            self.close_without_reporting();
+            unsafe { Parent::on_error((*this).parent(), err) };
+            core::hint::black_box(this);
+            unsafe { (*this).close_without_reporting() };
             return;
         }
 
         // success means that we send all the data inside current_payload
-        let written = self.current_payload.size();
-        self.current_payload.reset();
+        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
+        let written = unsafe { (*this).current_payload.size() };
+        unsafe { (*this).current_payload.reset() };
 
         // if we dont have more outgoing data we report done in onWrite
-        let done = self.outgoing.is_empty();
-        let was_done = self.is_done;
+        let done = unsafe { (*this).outgoing.is_empty() };
+        let was_done = unsafe { (*this).is_done };
 
-        log!("onWrite({}) ({} left)", written, self.outgoing.size());
+        log!("onWrite({}) ({} left)", written, unsafe { (*this).outgoing.size() });
 
         if was_done && done {
             // we already call .end lets close the connection
-            self.last_write_result = WriteResult::Done(written);
+            unsafe { (*this).last_write_result = WriteResult::Done(written) };
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_write(self.parent(), written, WriteStatus::EndOfFile) };
+            unsafe { Parent::on_write((*this).parent(), written, WriteStatus::EndOfFile) };
             return;
         }
         // .end was not called yet
-        self.last_write_result = WriteResult::Wrote(written);
+        unsafe { (*this).last_write_result = WriteResult::Wrote(written) };
 
         // report data written
         // SAFETY: parent BACKREF valid.
         unsafe {
             Parent::on_write(
-                self.parent(),
+                (*this).parent(),
                 written,
                 if done { WriteStatus::Drained } else { WriteStatus::Pending },
             )
         };
+        // Re-escape so `process_send`/`on_writable` and the deferred guard
+        // cannot reuse `is_done`/`outgoing`/`parent` spilled from before
+        // `on_write`.
+        core::hint::black_box(this);
 
         // process pending outgoing data if any
-        self.process_send();
+        unsafe { (*this).process_send() };
 
         // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_writable(self.parent()) };
+            unsafe { Parent::on_writable((*this).parent()) };
         }
     }
 

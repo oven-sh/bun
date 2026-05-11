@@ -1,3 +1,5 @@
+use core::num::NonZeroUsize;
+
 /// Inert state for `bun_io::KeepAlive`.
 ///
 /// The type crate owns only the status shape. Platform loop ref/unref effects
@@ -28,6 +30,38 @@ impl KeepAliveState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KeepAliveHandle(NonZeroUsize);
+
+impl KeepAliveHandle {
+    /// Build a non-null lower KeepAlive handle from a raw address value.
+    ///
+    /// The handle is only pointer identity at this layer. Ref/unref effects
+    /// stay with `bun_io`, which owns `KeepAlive`.
+    #[inline]
+    pub const fn from_usize(handle: usize) -> Option<Self> {
+        match NonZeroUsize::new(handle) {
+            Some(handle) => Some(Self(handle)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub fn from_ptr<T>(ptr: *mut T) -> Option<Self> {
+        Self::from_usize(ptr.cast::<()>() as usize)
+    }
+
+    #[inline]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+
+    #[inline]
+    pub fn as_ptr<T>(self) -> *mut T {
+        self.0.get() as *mut T
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38,5 +72,17 @@ mod tests {
         assert!(KeepAliveState::default().is_inactive());
         assert!(KeepAliveState::Active.is_active());
         assert!(KeepAliveState::Done.is_done());
+    }
+
+    #[test]
+    fn keep_alive_handle_rejects_null_and_preserves_pointer() {
+        assert!(KeepAliveHandle::from_usize(0).is_none());
+
+        let mut raw = 0u8;
+        let ptr = core::ptr::from_mut(&mut raw);
+        let handle = KeepAliveHandle::from_ptr(ptr).unwrap();
+
+        assert_eq!(handle.as_ptr::<u8>(), ptr);
+        assert_eq!(handle.get(), ptr.cast::<()>() as usize);
     }
 }

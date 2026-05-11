@@ -280,10 +280,13 @@ runtime match. Runtime inspection of cron stdout/stderr final buffers now goes
 through the sidecar-owned `BufferedReaderHandle`s, with the handle-to-reader
 recovery centralized in `bun_io`. The cron owners no longer carry a second
 `Process*`; when cleanup runs, `bun_runtime` consumes the sidecar-owned
-`ProcessHandle` and performs the same detach/deref effect. `bun_runtime` still
-performs the other effects: cast the inert global pointer back at the effect
-site, take the promise handle into a `JSPromiseStrong` effect wrapper for
-resolve/reject, spawn the next OS command, unlink temp paths, and free the job.
+`ProcessHandle` and performs the same detach/deref effect. Finish-time
+event-loop unref now consumes the sidecar-recorded `KeepAliveHandle` and
+recovers the live `KeepAlive` only inside `bun_io::with_keep_alive_handle()`.
+`bun_runtime` still performs the other effects: cast the inert global pointer
+back at the effect site, take the promise handle into a `JSPromiseStrong` effect
+wrapper for resolve/reject, spawn the next OS command, unlink temp paths, and
+free the job.
 Their exact job/effect owner still needs to move before
 `ProcessExitKind::{CronRegister,CronRemove}` can disappear.
 
@@ -595,7 +598,8 @@ Required deeper type movement
   │     ├─> cron stdout/stderr final-buffer access now goes through ProcessState's BufferedReaderHandle values and bun_io::with_buffered_reader_handle()
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert JSPromiseStrongHandle promise-root slot through bun_jsc_types
-  │     ├─> bun_io_types now owns KeepAliveState, but the cron owner still owns the KeepAlive effect wrapper and event-loop ref/unref calls
+  │     ├─> bun_io_types now owns KeepAliveState and KeepAliveHandle; cron records the existing inline KeepAlive after allocation, and finish unrefs through bun_io::with_keep_alive_handle()
+  │     │     - the KeepAlive wrapper/ref effect still stays in bun_runtime/bun_io; the type crate stores only pointer identity
   │     ├─> CronRegisterJobState / CronRemoveJobState now own ready-status policy and return CronProcessCompletion
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     ├─> JSPromiseStrongHandle and JsRefState have moved below bun_jsc, but promise resolution/rejection, strong-slot creation/destruction, and wrapper effects still stay in the bun_runtime/bun_jsc effect layer

@@ -18,6 +18,7 @@ use std::cell::Cell;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
+use bun_io_types::keep_alive::KeepAliveHandle;
 use bun_io_types::reader::BufferedReaderHandle;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
@@ -336,7 +337,9 @@ impl CronRegisterJob {
         } else {
             RegisterState::Done
         };
-        this_ref.poll.unref(vm_ctx());
+        if let Some(keep_alive) = this_ref.state.take_keep_alive() {
+            bun_io::with_keep_alive_handle(keep_alive, |poll| poll.unref(vm_ctx()));
+        }
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         let global = this_ref.state.global.cast::<JSGlobalObject>();
@@ -754,6 +757,10 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         // `start_*` (which may free `job`).
         {
             let job_ref = unsafe { &mut *job };
+            job_ref.state.record_keep_alive(
+                KeepAliveHandle::from_ptr(&mut job_ref.poll)
+                    .expect("cron register keepalive pointer is non-null"),
+            );
             job_ref.poll.ref_(vm_ctx());
         }
 
@@ -1023,7 +1030,9 @@ impl CronRemoveJob {
         } else {
             RemoveState::Done
         };
-        this_ref.poll.unref(vm_ctx());
+        if let Some(keep_alive) = this_ref.state.take_keep_alive() {
+            bun_io::with_keep_alive_handle(keep_alive, |poll| poll.unref(vm_ctx()));
+        }
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         let global = this_ref.state.global.cast::<JSGlobalObject>();
@@ -1194,6 +1203,10 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         // `start_*` (which may free `job`).
         {
             let job_ref = unsafe { &mut *job };
+            job_ref.state.record_keep_alive(
+                KeepAliveHandle::from_ptr(&mut job_ref.poll)
+                    .expect("cron remove keepalive pointer is non-null"),
+            );
             job_ref.poll.ref_(vm_ctx());
         }
         // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on

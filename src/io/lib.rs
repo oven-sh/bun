@@ -76,6 +76,17 @@ pub use posix_event_loop::{FilePoll, KeepAlive, Loop};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, KeepAlive, Loop};
 
+#[inline]
+pub fn with_keep_alive_handle<R>(
+    handle: bun_io_types::keep_alive::KeepAliveHandle,
+    f: impl FnOnce(&mut KeepAlive) -> R,
+) -> R {
+    // SAFETY: handles are recorded from live KeepAlive fields by the crate
+    // that owns the poll. Keep the raw-address recovery in bun_io so higher
+    // tiers pass typed handles instead of casting.
+    unsafe { f(&mut *handle.as_ptr::<KeepAlive>()) }
+}
+
 pub use posix_event_loop::{AllocatorType, Owner, PollTag};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);

@@ -2,6 +2,7 @@ use std::io::Write as _;
 
 use crate::cron_parser::CronExpression;
 use bun_core::{ZBox as ZString, ZStr};
+use bun_io_types::keep_alive::KeepAliveHandle;
 use bun_io_types::reader::BufferedReaderHandle;
 use bun_jsc_types::{GlobalRef, JSPromiseStrongHandle};
 use bun_spawn_types::process_exit::{
@@ -40,6 +41,7 @@ pub enum CronProcessCompletion {
 }
 
 pub struct CronRegisterJobState {
+    pub keep_alive: Option<KeepAliveHandle>,
     pub global: GlobalRef,
     pub promise: JSPromiseStrongHandle,
     pub bun_exe: &'static ZStr,
@@ -64,6 +66,7 @@ impl CronRegisterJobState {
         parsed_cron: CronExpression,
     ) -> Self {
         Self {
+            keep_alive: None,
             global,
             promise,
             bun_exe,
@@ -80,6 +83,16 @@ impl CronRegisterJobState {
     #[inline]
     pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
         self.process.set_error(args);
+    }
+
+    #[inline]
+    pub fn record_keep_alive(&mut self, keep_alive: KeepAliveHandle) {
+        self.keep_alive = Some(keep_alive);
+    }
+
+    #[inline]
+    pub fn take_keep_alive(&mut self) -> Option<KeepAliveHandle> {
+        self.keep_alive.take()
     }
 
     #[inline]
@@ -145,6 +158,7 @@ impl CronRegisterJobState {
 }
 
 pub struct CronRemoveJobState {
+    pub keep_alive: Option<KeepAliveHandle>,
     pub global: GlobalRef,
     pub promise: JSPromiseStrongHandle,
     pub title: ZString,
@@ -157,6 +171,7 @@ impl CronRemoveJobState {
     #[inline]
     pub fn new(global: GlobalRef, promise: JSPromiseStrongHandle, title: ZString) -> Self {
         Self {
+            keep_alive: None,
             global,
             promise,
             title,
@@ -169,6 +184,16 @@ impl CronRemoveJobState {
     #[inline]
     pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
         self.process.set_error(args);
+    }
+
+    #[inline]
+    pub fn record_keep_alive(&mut self, keep_alive: KeepAliveHandle) {
+        self.keep_alive = Some(keep_alive);
+    }
+
+    #[inline]
+    pub fn take_keep_alive(&mut self) -> Option<KeepAliveHandle> {
+        self.keep_alive.take()
     }
 
     #[inline]

@@ -144,6 +144,19 @@ pub struct Handlers {
 }
 
 impl WindowsNamedPipe {
+    /// Safe raw-pointer accessor for the `Some` payload of `self.wrapper`,
+    /// used by the WRAPPER_BUSY re-entrancy pattern (see `on_read`).
+    ///
+    /// Deriving the `*mut` is itself entirely safe — only the later
+    /// `(*w).<method>()` deref requires `unsafe`. Consolidating here removes
+    /// the per-site `as_mut().unwrap_unchecked()` dance (×8) into a single
+    /// safe projection; callers either match on the `Option` or `.unwrap()`
+    /// after an explicit `is_some()`/just-assigned.
+    #[inline]
+    fn wrapper_ptr(&mut self) -> Option<*mut WrapperType> {
+        self.wrapper.as_mut().map(core::ptr::from_mut)
+    }
+
     /// Dereference the non-owning [`pipe`](Self::pipe) alias.
     ///
     /// The heap `uv::Pipe` is owned by `self.writer.source` once [`start`]
@@ -256,10 +269,7 @@ impl WindowsNamedPipe {
         // `data` points into `this.incoming`); Rust needs the explicit detach.
         let mut data = core::mem::take(&mut self.incoming);
 
-        if self.wrapper.is_some() {
-            let w: *mut WrapperType =
-                // SAFETY: `is_some()` checked just above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+        if let Some(w) = self.wrapper_ptr() {
             // `receive_data → handle_traffic` may synchronously invoke
             // `trigger_close_callback` → `ssl_on_close` → `on_close` →
             // `release_resources()`. Guard so that path defers
@@ -442,14 +452,11 @@ impl WindowsNamedPipe {
         }
 
         if !msg_more {
-            if self.wrapper.is_some() {
+            if let Some(w) = self.wrapper_ptr() {
                 // Re-entrancy guard: `shutdown → trigger_close_callback` can fire
                 // `ssl_on_close → release_resources()` synchronously; see `on_read`
                 // for the WRAPPER_BUSY rationale (defers `self.wrapper = None` so
                 // the SSLWrapper isn't dropped out from under its own `&mut self`).
-                let w: *mut WrapperType =
-                    // SAFETY: `is_some()` checked just above; single JS thread.
-                    unsafe { self.wrapper.as_mut().unwrap_unchecked() };
                 // Re-entrancy: see `on_read` — only the OUTERMOST scope may
                 // clear the flag / run the deferred-drop epilogue.
                 let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -520,7 +527,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub fn flush(&mut self) {
-        if self.wrapper.is_some() {
+        if let Some(w) = self.wrapper_ptr() {
             // Re-entrancy guard: `SSLWrapper::flush → handle_traffic` can fire
             // `trigger_close_callback → ssl_on_close → release_resources()`
             // synchronously, and on the success path invokes `(handlers.write)`
@@ -530,9 +537,6 @@ impl WindowsNamedPipe {
             // and (b) `release_resources` defers `self.wrapper = None` instead
             // of dropping the SSLWrapper mid-call. See `on_read` for the full
             // rationale.
-            let w: *mut WrapperType =
-                // SAFETY: `is_some()` checked just above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
             let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -562,9 +566,8 @@ impl WindowsNamedPipe {
             // `release_resources()` defers `self.wrapper = None`, and call
             // through a raw pointer so no outer `&mut self.wrapper` Unique tag
             // is live across the re-entrant `&mut *this` retag.
-            let w: *mut WrapperType =
-                // SAFETY: `is_some()` checked above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // `reset_timeout` cannot clear `wrapper`, so still `Some`.
+            let w: *mut WrapperType = self.wrapper_ptr().unwrap();
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
             let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -677,14 +680,11 @@ impl WindowsNamedPipe {
         self.flags.set_disconnected(false);
         if self.start(true) {
             if self.is_tls() {
-                if self.wrapper.is_some() {
+                if let Some(w) = self.wrapper_ptr() {
                     // trigger onOpen and start the handshake
                     // Re-entrancy guard: `SSLWrapper::start → handle_traffic`
                     // can fire `trigger_close_callback` (handshake fatal error)
                     // synchronously; see `on_read` for the WRAPPER_BUSY pattern.
-                    let w: *mut WrapperType =
-                        // SAFETY: `is_some()` checked just above; single JS thread.
-                        unsafe { self.wrapper.as_mut().unwrap_unchecked() };
                     // Re-entrancy: see `on_read` — only the OUTERMOST scope
                     // may clear the flag / run the deferred-drop epilogue.
                     let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -774,14 +774,11 @@ impl WindowsNamedPipe {
         self.flags.set_disconnected(false);
         if self.start(false) {
             if self.is_tls() {
-                if self.wrapper.is_some() {
+                if let Some(w) = self.wrapper_ptr() {
                     // trigger onOpen and start the handshake
                     // Re-entrancy guard: `SSLWrapper::start → handle_traffic`
                     // can fire `trigger_close_callback` synchronously; see
                     // `on_read` for the WRAPPER_BUSY pattern.
-                    let w: *mut WrapperType =
-                        // SAFETY: `is_some()` checked just above; single JS thread.
-                        unsafe { self.wrapper.as_mut().unwrap_unchecked() };
                     // Re-entrancy: see `on_read` — only the OUTERMOST scope
                     // may clear the flag / run the deferred-drop epilogue.
                     let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -1009,10 +1006,8 @@ impl WindowsNamedPipe {
 
             // Re-entrancy guard: `SSLWrapper::start → handle_traffic` can fire
             // `trigger_close_callback` synchronously; see `on_read` for the
-            // WRAPPER_BUSY pattern.
-            let w: *mut WrapperType =
-                // SAFETY: just assigned `Some(..)` above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // WRAPPER_BUSY pattern. (`wrapper` was just assigned `Some` above.)
+            let w: *mut WrapperType = self.wrapper_ptr().unwrap();
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
             let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
@@ -1101,7 +1096,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
-        if self.wrapper.is_some() {
+        if let Some(w) = self.wrapper_ptr() {
             // Re-entrancy guard: `SSLWrapper::write_data` calls
             // `trigger_close_callback` on SSL_ERROR_SSL/SYSCALL and
             // `handle_traffic` on success — both can synchronously reach
@@ -1109,9 +1104,6 @@ impl WindowsNamedPipe {
             // wrapper) and `ssl_write → &mut *this` (Stacked-Borrows pop if an
             // outer `&mut self.wrapper` is live). Use the raw-ptr +
             // WRAPPER_BUSY pattern from `on_read`.
-            let w: *mut WrapperType =
-                // SAFETY: `is_some()` checked just above; single JS thread.
-                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue. (JS `socket.write()`
             // from inside `onData`/`onOpen`/`onHandshake` re-enters here while

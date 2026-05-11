@@ -235,13 +235,22 @@ impl UpdateInteractiveCommand {
 
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
-        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`; the new buffer
-        // is owned for the process lifetime via the singleton cache (Zig leaked
-        // via `manager.allocator.dupe`), so leak the Box to obtain `&'static`.
-        // PERF(port): Zig leaked into the singleton allocator; matching that
-        // here is intentional — `WorkspacePackageJSONCache` is process-lifetime.
-        package_json.source.contents =
-            Cow::Owned(new_package_json_source.into_vec());
+        //
+        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`. The cached
+        // `root` AST's `EString.data` slices (every JSON key/value string)
+        // borrow the *old* contents buffer — `deep_clone` copies the slice,
+        // not the bytes. Zig overwrote `source.contents` as a raw slice and
+        // leaked the old buffer; assigning a new `Cow::Owned` here would drop
+        // it and leave every cached string dangling, which
+        // `process_workspace_name` then dereferences via `root.get("name")`
+        // during `installWithManager`. Leak the old buffer to match Zig.
+        // PERF(port): `WorkspacePackageJSONCache` is process-lifetime; both
+        // buffers live for the process anyway.
+        let old = core::mem::replace(
+            &mut package_json.source.contents,
+            Cow::Owned(new_package_json_source.into_vec()),
+        );
+        core::mem::forget(old);
         Ok(())
     }
 
@@ -364,13 +373,20 @@ impl UpdateInteractiveCommand {
                     preserve_version_prefix(original_version, &update.target_version)?;
 
                 // Update the version using hash map put
-                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)`
-                // duplicates the string into a non-Store allocation; the Rust
-                // `E::EString.data: &'static [u8]` requires a process-lifetime
-                // slice, so route through the CLI arena (matches
-                // PackageJSONEditor.rs `leak_str`).
+                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)` —
+                // the `.clone(manager.allocator)` re-allocates the `E.String`
+                // *node* outside the resettable Store. `Expr::init` would put
+                // it in the Store, which `install_with_manager` resets via
+                // `initialize_store()` before re-reading this cached `root`.
+                // Allocate into the entry's own `json_arena` instead so the
+                // node lives as long as the cached AST. The string *bytes* go
+                // through the CLI arena (matches PackageJSONEditor `leak_str`).
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
-                let new_expr = Expr::init(E::EString::init(interned), version_query.expr.loc);
+                let new_expr = Expr::allocate(
+                    &package_json.json_arena,
+                    E::EString::init(interned),
+                    version_query.expr.loc,
+                );
                 dep_obj
                     .put(&bump, &update.name, new_expr)
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;

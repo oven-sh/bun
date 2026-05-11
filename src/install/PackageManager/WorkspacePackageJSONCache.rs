@@ -35,7 +35,12 @@ pub struct MapEntry {
     /// `E.String.data` slices live forever; `deepClone` does *not* dupe them.
     /// In Rust the parser takes a `&Arena`, so the arena must outlive the
     /// cached AST — hold it here so it drops with the entry.
-    json_arena: bun_alloc::Arena,
+    ///
+    /// Public so editors that splice new `Expr` nodes into `root`
+    /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
+    /// can allocate those nodes here instead of in the resettable `Store` —
+    /// the cached `root` outlives `initialize_store()` resets.
+    pub json_arena: bun_alloc::Arena,
 }
 
 impl Default for MapEntry {

@@ -3,6 +3,8 @@
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
 use core::ffi::c_char;
+#[cfg(target_os = "linux")]
+use core::ffi::CStr;
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_void};
 #[cfg(unix)]

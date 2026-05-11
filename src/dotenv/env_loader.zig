@@ -917,6 +917,10 @@ pub const Loader = struct {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         };
+        // On the success path, `read.buf` is intentionally kept alive — it
+        // backs the `logger.Source` stored on the Loader. On OOM from the
+        // Parser below, free it.
+        errdefer this.allocator.free(read.buf);
 
         const source = &logger.Source.initPathString(base, read.buf[0..read.amount_read]);
 
@@ -967,6 +971,10 @@ pub const Loader = struct {
             try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
             return;
         };
+        // On the success path, `read.buf` is intentionally kept alive — it
+        // backs the `logger.Source` stored in `custom_files_loaded`. On OOM
+        // from the Parser or the map insert below, free it.
+        errdefer this.allocator.free(read.buf);
 
         const source = &logger.Source.initPathString(file_path, read.buf[0..read.amount_read]);
 

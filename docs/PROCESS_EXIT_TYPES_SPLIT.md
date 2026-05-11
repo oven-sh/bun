@@ -159,23 +159,24 @@ Pollable production path
 ## Process Exit
 
 Process exit uses the same boundary for install-domain readiness gates and
-runtime cron readiness: value-only state lives below, effect application stays
-above.
+runtime process completion: value-only state lives below, effect application
+stays above.
 
-This branch proves two production shapes. WebView process exits use the runtime
-sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
+This branch proves three production shapes. WebView process exits use the
+runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
 an `InstallProcessExitTarget::SecurityScan(NonNull<SecurityScanExit>)` and only
 marks typed install state; `bun_install` consumes any local IO action before it
-reports the scanner done. In both cases the heap owners stay in their owning
-crates, and `bun_spawn` does not call them through the erased `ProcessExit`
-table.
+reports the scanner done. The Windows sync-spawn path is a local spawn-internal
+case: `SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
+`ProcessExitTarget::SyncWindows` arm inside `bun_spawn`.
 
-The Windows sync-spawn path is the other intentionally local case:
-`SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
-`ProcessExitTarget::SyncWindows` arm inside `bun_spawn` instead of occupying a
-global `ProcessExit` macro variant.
+Lifecycle scripts and cron register/remove already use typed readiness reducers
+for process/output ordering, but their `ProcessExit` owner re-entry remains a
+separate type-movement problem: when process exit is the last event, the current
+callback synchronously resumes the owning lifecycle/cron state and may free or
+restart that owner. A reducer pointer alone cannot preserve that behavior.
 
 ```
 Process-exit production shape
@@ -193,7 +194,7 @@ Process-exit production shape
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects
-        └─> bun_runtime applies cron register/remove effects
+        └─> bun_runtime applies webview/cron/runtime effects
 ```
 
 The type-level transition receives values, mutates only its own state, and
@@ -254,12 +255,6 @@ pub enum SecurityScanExitAction {
 
 ```
 Process-exit production wiring
-  ├─> install/lifecycle_script_runner.rs
-  │     ├─> counts output readers before process identity exists
-  │     ├─> initializes LifecycleScriptExit once spawned Process exists
-  │     ├─> reader callbacks call record_reader_done()
-  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
-  │     └─> MaybeFinished applies handle_exit() in bun_install
   ├─> install/PackageManager/security_scanner.rs
   │     ├─> initializes SecurityScanExit with ipc_reader + json_writer count
   │     ├─> installs ProcessExitTarget::Install(SecurityScan(exit_state))
@@ -267,6 +262,23 @@ Process-exit production wiring
   │     ├─> IPC reader done/error calls record_ipc_done()
   │     ├─> bun_spawn process exit calls SecurityScanExit::on_process_exit()
   │     └─> is_done() drains/deinits a pending IPC reader close in bun_install before completion
+  ├─> runtime/webview/ChromeProcess.rs and HostProcess.rs
+  │     ├─> install ProcessExitTarget::Runtime(ChromeProcess | HostProcess)
+  │     ├─> bun_spawn emits RuntimeProcessExitAction with ProcessIdentity + Status
+  │     └─> bun_runtime::dispatch asks the runtime singleton owner to apply the effect
+  └─> spawn/process.rs sync Windows path
+        ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
+        └─> never enters the cross-crate ProcessExit table
+```
+
+```
+Reducer prework that still needs owner type movement
+  ├─> install/lifecycle_script_runner.rs
+  │     ├─> counts output readers before process identity exists
+  │     ├─> initializes LifecycleScriptExit once spawned Process exists
+  │     ├─> reader callbacks call record_reader_done()
+  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
+  │     └─> MaybeFinished applies handle_exit() in bun_install
   └─> runtime/api/cron.rs
         ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
         ├─> initializes ProcessExitReadiness once spawned Process exists

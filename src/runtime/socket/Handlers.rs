@@ -107,12 +107,25 @@ impl Handlers {
         self.active_connections += 1;
     }
 
-    pub fn enter(&mut self) -> Scope<'_> {
-        self.mark_active();
+    /// Bumps `active_connections`, enters the JS event-loop scope, and returns
+    /// a `Scope` whose `exit()` undoes both.
+    ///
+    /// Takes `*mut Self` (not `&mut self`) because the matching
+    /// [`Scope::exit`] → [`Handlers::mark_inactive`] may **free this
+    /// allocation** (client mode, last ref). Storing a `&'a mut Handlers` in
+    /// `Scope` would leave a dangling reference after that free; a raw pointer
+    /// may dangle so long as it is not dereferenced.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Handlers`. JS-thread only.
+    pub unsafe fn enter(this: *mut Self) -> Scope {
+        // SAFETY: caller contract — `this` is live; reborrow scoped to this
+        // statement (no protector spans the later free in `exit`).
+        unsafe { (*this).mark_active() };
         // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
         // single JS thread, no aliasing `&mut EventLoop` outlives this call.
-        self.vm.event_loop_ref().enter();
-        Scope { handlers: self }
+        unsafe { (*this).vm }.event_loop_ref().enter();
+        Scope { handlers: this }
     }
 
     // corker: Corker = .{},
@@ -147,17 +160,36 @@ impl Handlers {
     /// caller can null any `*Handlers` it still holds (the socket's `handlers`
     /// field). Without that, a subsequent `connectInner` reusing the same native
     /// socket as `prev` would `deinit`/`destroy` the freed pointer.
-    pub fn mark_inactive(&mut self) -> bool {
+    ///
+    /// Takes `*mut Self` (not `&mut self`) because under Stacked Borrows a
+    /// `&mut self` argument carries a *protector* for the duration of the
+    /// call: deallocating the allocation it points into while that protector
+    /// is live is UB. A raw `*mut` carries no protector, and the short-lived
+    /// reborrows below all end before the `heap::take`.
+    ///
+    /// # Safety
+    /// - `this` must point to a live `Handlers`.
+    /// - Server mode: `this` must address the embedded `Listener.handlers`
+    ///   field with whole-`Listener` provenance (for `from_field_ptr!`).
+    /// - Client mode: `this` must be the `heap::alloc` allocation root.
+    /// - After this returns `true`, `this` is dangling — caller must not
+    ///   dereference it and must null any stored copy.
+    pub unsafe fn mark_inactive(this: *mut Self) -> bool {
         bun_output::scoped_log!(Listener, "markInactive");
-        self.active_connections -= 1;
-        if self.active_connections == 0 {
-            if self.mode == SocketMode::Server {
-                // SAFETY: self points to the `handlers` field of a Listener (server mode invariant).
-                // R-2: `Listener.handlers` is `JsCell<Handlers>` (`#[repr(transparent)]`), so the
-                // field offset equals the inner `Handlers` address; `from_field_ptr!` arithmetic
-                // is unchanged. Deref as shared (`&*`) — celled fields below take `&self`.
+        // SAFETY: caller contract — `this` is live on entry. Each `(*this)`
+        // is a single-statement reborrow; none span the free below.
+        unsafe { (*this).active_connections -= 1 };
+        if unsafe { (*this).active_connections } == 0 {
+            if unsafe { (*this).mode } == SocketMode::Server {
+                // SAFETY: server-mode caller contract — `this` addresses the
+                // `handlers` field of a `Listener` with whole-`Listener`
+                // provenance. R-2: `Listener.handlers` is `JsCell<Handlers>`
+                // (`#[repr(transparent)]`), so the field offset equals the
+                // inner `Handlers` address; `from_field_ptr!` arithmetic is
+                // unchanged. Deref as shared (`&*`) — celled fields below
+                // take `&self`.
                 let listen_socket: &SocketListener = unsafe {
-                    &*bun_core::from_field_ptr!(SocketListener, handlers, std::ptr::from_mut::<Handlers>(self))
+                    &*bun_core::from_field_ptr!(SocketListener, handlers, this)
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener.get(), ListenerType::None) {
@@ -173,9 +205,10 @@ impl Handlers {
                 // (and thus can't `drop(Box)`) don't leak the allocation or
                 // its `protect()`ed JSValues. Caller must still null its
                 // field when this returns true.
-                // SAFETY: client-mode `self` is always the `heap::alloc`
-                // allocation; no other live `&`/`&mut` outlives this call.
-                unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Handlers>(self))) };
+                // SAFETY: client-mode caller contract — `this` is the
+                // `heap::alloc` allocation root; no live `&`/`&mut` borrow
+                // of it remains (all reborrows above have ended).
+                drop(unsafe { bun_core::heap::take(this) });
                 return true;
             }
         }
@@ -336,18 +369,30 @@ impl Drop for Handlers {
     }
 }
 
-pub struct Scope<'a> {
-    pub handlers: &'a mut Handlers,
+/// Holds a raw `*mut Handlers` (not `&mut`) because [`Scope::exit`] may free
+/// the backing allocation (client mode, last ref). A `&mut` field would dangle
+/// after that — UB even if never dereferenced. A raw pointer may dangle.
+pub struct Scope {
+    pub handlers: *mut Handlers,
 }
 
-impl<'a> Scope<'a> {
+impl Scope {
     /// Returns true if `handlers` was destroyed (client mode, last ref).
     /// Callers that also hold the pointer in a socket field must null it.
-    pub fn exit(&mut self) -> bool {
-        // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
-        // single JS thread, no aliasing `&mut EventLoop` outlives this call.
-        self.handlers.vm.event_loop_ref().exit();
-        self.handlers.mark_inactive()
+    ///
+    /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one `exit`),
+    /// and after a `true` return `self.handlers` is dangling, so no further
+    /// method may touch it.
+    pub fn exit(self) -> bool {
+        // SAFETY: `handlers` is live until `mark_inactive` below (caller
+        // contract of `Handlers::enter`). `event_loop()` returns a non-null
+        // self-pointer into the VM; single JS thread, no aliasing
+        // `&mut EventLoop` outlives this call.
+        unsafe { (*self.handlers).vm }.event_loop_ref().exit();
+        // SAFETY: `handlers` satisfies `mark_inactive`'s contract by
+        // construction in `Handlers::enter` (caller passed the
+        // server-embedded / client-heap-root pointer).
+        unsafe { Handlers::mark_inactive(self.handlers) }
     }
 }
 

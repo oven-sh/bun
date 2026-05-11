@@ -775,7 +775,18 @@ export const linkerFlags: Flag[] = [
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
+      //
+      // TEMPORARILY /OPT:NOICF instead of /OPT:SAFEICF: re-enabling
+      // `panic = "abort"` (Cargo.toml) exposes a Windows-only `Strong<Impl>*
+      // corrupted (0x1)` in the fs/promises writeFile async-iterable path
+      // (#53265+). Under abort's no-landing-pad codegen SAFEICF folds enough
+      // Rust+C++ bodies that PDB symbolication maps the crash to
+      // lol_html/ucnv_MBCS/JSBigInt — useless for finding the owning struct.
+      // `bun-profile.exe` and `bun.exe` share this link (strip-only diff), so
+      // NOICF can't be confined to the profile binary alone; once the
+      // corruption is root-caused via `llvm-symbolizer --relative-address`
+      // against the NOICF PDB, revert this to `/OPT:SAFEICF`.
+      "/OPT:NOICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",

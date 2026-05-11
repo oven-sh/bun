@@ -2522,7 +2522,6 @@ dependencies = [
  "enumset",
  "libc",
  "parking_lot",
- "phf 0.11.3",
  "scopeguard",
  "strum",
 ]

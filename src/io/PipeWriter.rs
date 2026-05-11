@@ -397,17 +397,32 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
-        let was_done = self.is_done == true;
-        let parent = self.parent;
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `Parent::on_write` (e.g. `IOWriter::on_write`) re-enters via a fresh
+        // `&mut Self` from the parent's intrusive `writer` field and may write
+        // `self.handle` / `self.is_done`. ASM-verified PROVEN_CACHED in the
+        // `IOWriter` monomorphization: `self.handle.{tag,poll,fd}` were loaded
+        // once, spilled to `[rbp-48/-120/-44]`, and reused by the trailing
+        // `self.close()` without reload. Launder so post-call accesses see
+        // fresh state.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
+        let was_done = unsafe { (*this).is_done } == true;
+        let parent = unsafe { (*this).parent };
 
         if status == WriteStatus::EndOfFile && !was_done {
-            self.close_without_reporting();
+            unsafe { (*this).close_without_reporting() };
         }
 
         // SAFETY: parent BACKREF valid.
         unsafe { Parent::on_write(parent, written, status) };
+        // Re-escape so the trailing `close()` cannot reuse the spilled
+        // `self.handle` from before `on_write`.
+        core::hint::black_box(this);
         if status == WriteStatus::EndOfFile && !was_done {
-            self.close();
+            // SAFETY: `this` is live; `close()` reads `is_done`/`handle` which
+            // may have been written re-entrantly above.
+            unsafe { (*this).close() };
         }
     }
 

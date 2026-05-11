@@ -130,16 +130,15 @@ edition = "2024"
 # `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
 # the whole Rust crate graph into one LLVM module, matching Zig's shape.
 #
-# `panic = "unwind"` — the `std::panic` hook in `bun_crash_handler` aborts,
-# so `catch_unwind` is unreachable for Rust panics regardless. We *want*
-# `panic = "abort"` (smaller `.pdata`/`.xdata`, no landing pads), but switching
-# to it exposed a latent Windows-only `Strong<Impl>* corrupted (0x1)` in the
-# fs/promises writeFile async-iterable path (#53265+): the corruption is not
-# an over-deref (the `raw_ref_count` underflow assert does not fire), and
-# `/OPT:SAFEICF` folds enough Rust+C++ bodies under abort's simpler codegen
-# that PDB symbolication can't identify the owning struct. Revert to `unwind`
-# until that's root-caused with a no-ICF profile build; the size win can land
-# afterward.
+# `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
+# so `catch_unwind` is unreachable for Rust panics regardless, and no landing
+# pads means smaller `.pdata`/`.xdata`. Re-enabled to root-cause a latent
+# Windows-only `Strong<Impl>* corrupted (0x1)` in the fs/promises writeFile
+# async-iterable path (#53265+) that this codegen exposes: the corruption is
+# not an over-deref (the `raw_ref_count` underflow assert does not fire). The
+# Windows release link is temporarily `/OPT:NOICF` (flags.ts:778) so the PDB
+# symbolicates to the real owning struct instead of an ICF-folded body; once
+# root-caused, restore `/OPT:SAFEICF` there.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
@@ -150,10 +149,10 @@ lto = "fat"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
-panic = "unwind"
+panic = "abort"
 
 [profile.dev]
-panic = "unwind"
+panic = "abort"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.

@@ -355,15 +355,13 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
     //          visible instead of stopping at the std boundary.
     //
-    // The workspace is `panic = "unwind"` (see Cargo.toml — `abort` is the
-    // intended end-state but is reverted while a Windows-only `Strong<Impl>*
-    // corrupted (0x1)` it exposed is being root-caused). `proc_macro` is
+    // The workspace is `panic = "abort"` (see Cargo.toml). `proc_macro` is
     // needed because `cargo build --target` still resolves proc-macro crates
     // for the host through the same `-Zbuild-std` flag set. Requires the
     // `rust-src` component, which `rust-toolchain.toml` requests and CI
     // images preinstall (Dockerfile / bootstrap.sh `rustup component add
     // rust-src`).
-    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_unwind");
+    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_abort");
   }
 
   // ─── rustflags ───

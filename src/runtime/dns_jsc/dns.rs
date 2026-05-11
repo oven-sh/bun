@@ -4161,11 +4161,17 @@ impl Resolver {
     /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
     #[cfg(not(windows))]
     pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
-        // Drop to a raw pointer immediately: `Channel::process` (== `ares_process_fd`)
-        // synchronously fires c-ares completion callbacks which re-enter this
-        // Resolver via fresh `&mut` (e.g. `request_completed`, `drain_pending_*`).
-        // Holding `&mut self` across that call would alias `&mut Resolver` (UB).
-        let this: *mut Self = self;
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`. `Channel::process`
+        // (== `ares_process_fd`) synchronously fires c-ares completion callbacks which
+        // re-enter this Resolver via a fresh `&mut` (e.g. `request_completed`,
+        // `drain_pending_*`, `ref_`/`deref`). A plain `let this: *mut Self = self`
+        // does NOT escape the noalias scope (LLVM tracks provenance), so it was
+        // ASM-verified PROVEN_CACHED: `ref_count` at `[self+12608]` was loaded into
+        // callee-saved `r15d`, the `ref_scope` inc stored `r15d+1`, and after
+        // `ares_process_fd` the scopeguard's dec was folded to `mov [self+12608], r15d`
+        // — the STALE pre-inc value, clobbering any re-entrant ref change. `black_box`
+        // launders `this` so LLVM cannot prove `*this` is unwritten across the call.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // VirtualMachine outlives the Resolver (BACKREF). Copy the BackRef out so
         // the borrow isn't tied to `&self`'s lifetime.
         // SAFETY: `this` is live for the duration of this callback.
@@ -4187,6 +4193,10 @@ impl Resolver {
         unsafe {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
         }
+        // Re-escape after the FFI call so the `_deref` scopeguard's drop (which
+        // reads/writes `(*this).ref_count`) cannot be store-forwarded from the
+        // pre-call `ref_scope` inc.
+        core::hint::black_box(this);
     }
 
     pub fn on_dns_socket_state(&mut self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {

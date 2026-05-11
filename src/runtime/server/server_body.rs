@@ -2726,8 +2726,13 @@ where
             }
         }
 
+        // Resolve once, reuse for both `has_request_body()` and the forward to
+        // `Ctx::create`. Zig (server.zig:2438) parses inline at both sites and
+        // forwards the unresolved `method` arg, so `create` parsed again.
+        let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
+
         let request_body_length: Option<usize> = 'request_body_length: {
-            if http::Method::which(ReqLike::method(req)).unwrap_or(http::Method::OPTIONS).has_request_body() {
+            if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
                         // Parse ASCII decimal directly off the byte slice — header bytes are not

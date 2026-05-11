@@ -585,8 +585,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // we avoid needing to worry as much about what memory to free.
         // (RFC 9114 §4.2 transfer-encoding check is H3-only — skipped here.)
 
+        // Resolve once, reuse for both `has_request_body()` here and the
+        // forward to `RequestContext::create` below. Zig parses inline at both
+        // sites; with `Method::which` now a length-gated match (316a83f) the
+        // second call is cheap, but the resolved value is also what `create`
+        // wants — passing `None` made it parse a second time.
+        let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
+
         let request_body_length: Option<usize> = 'len: {
-            if bun_http_types::Method::Method::which(req.method())
+            if method
                 .unwrap_or(bun_http_types::Method::Method::OPTIONS)
                 .has_request_body()
             {

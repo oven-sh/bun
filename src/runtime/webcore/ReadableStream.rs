@@ -445,9 +445,8 @@ impl ReadableStream {
         // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
         // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
         let source = unsafe { &mut *source };
-        // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
-        let ctx_ptr: *mut FileReader = &raw mut source.context;
-        source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
+        let target = source.context.reader_target();
+        source.context.reader().from(buffered_reader, target);
 
         source.to_readable_stream(global_this)
     }

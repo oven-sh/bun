@@ -8,8 +8,11 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+use core::mem::offset_of;
 
 use bun_sys::{self as sys, Fd};
+use bun_io_types::reader::BufferedReaderHandle;
+use bun_runtime_types::reader::RuntimeBufferedReaderTarget;
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
@@ -72,8 +75,8 @@ struct State {
 pub struct IOReader {
     /// Split out of `State` so `state()`'s `&mut State` never overlaps the
     /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
-    /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
-    /// root at SharedReadWrite; callbacks touch only `state` fields.
+    /// callbacks from `bun_io`. Both cells root at SharedReadWrite; callbacks
+    /// touch only `state` fields.
     reader: UnsafeCell<ReaderImpl>,
     state: UnsafeCell<State>,
 }
@@ -106,7 +109,7 @@ impl IOReader {
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
         //
-        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
+        // MUST NOT be invoked from within a typed BufferedReader delivery
         // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
         // the read loop already holds a live `&mut ReaderImpl` on its stack
         // while the callback runs (PipeReader.rs aliasing contract), so
@@ -128,7 +131,10 @@ impl IOReader {
     }
 
     pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
-        let mut reader = ReaderImpl::init::<IOReader>();
+        let mut reader = ReaderImpl::init_target(bun_io::BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::ShellIoReader,
+            event_loop: evtloop.as_event_loop_ctx(),
+        });
         #[cfg(not(windows))]
         {
             reader.flags.remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
@@ -154,17 +160,7 @@ impl IOReader {
                 interp: core::ptr::null_mut(),
             }),
         });
-        // PORT NOTE: set the parent backref after Arc allocation so the
-        // address is stable.
-        //
-        // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
-        // `IOReader` is `UnsafeCell`, so all mutation flows through interior
-        // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
-        // `set_parent`'s `*mut` signature for the vtable backref; the
-        // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
-        // call `&self` methods — no `&mut IOReader` is materialized from it.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
-        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
@@ -368,46 +364,36 @@ impl IOReader {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BufferedReaderParent — wires the bun_io BufferedReader vtable
+// Typed BufferedReader dispatch
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_io::buffered_reader_parent_link!(ShellIoReader for IOReader);
-impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellIoReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. These dereference `this` only to call
-    // `&self` inherent methods (autoref → `&*this`); no `&mut IOReader` is
-    // materialized, satisfying the init() *const→*mut invariant. Aliasing with
-    // the caller's live `&mut ReaderImpl` is handled by the state/reader
-    // UnsafeCell split — callbacks touch only `state`, never `reader()`.
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
-        unsafe { (*this).on_read_chunk_cb(chunk, has_more) }
+impl IOReader {
+    fn from_reader_handle(reader: BufferedReaderHandle) -> &'static Self {
+        let reader = reader.as_ptr::<ReaderImpl>();
+        let this = reader
+            .cast::<u8>()
+            .wrapping_sub(offset_of!(Self, reader))
+            .cast::<Self>();
+        // SAFETY: IOReader initializes its embedded ReaderImpl with the
+        // ShellIoReader runtime target. UnsafeCell is repr-transparent, so the
+        // lower ReaderImpl pointer is the address of the reader field.
+        unsafe { &*this }
     }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done_cb() };
+
+    pub fn dispatch_read_chunk(
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        has_more: bun_io::ReadState,
+    ) -> bool {
+        Self::from_reader_handle(reader).on_read_chunk_cb(chunk, has_more)
     }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        unsafe { (*this).on_reader_error(err) };
+
+    pub fn dispatch_reader_done(reader: BufferedReaderHandle) {
+        Self::from_reader_handle(reader).on_reader_done_cb();
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Spec: IOReader.zig `loop()`. On Windows, `io_evtloop().loop_()`
-        // returns the uws `WindowsLoop*` wrapper, which owns the libuv loop
-        // via its `uv_loop` field — we must project that field, not type-pun
-        // the wrapper pointer (the wrapper's first bytes are InternalLoopData,
-        // not a uv_loop_t). On POSIX the uws Loop *is* the async loop.
-        #[cfg(windows)]
-        {
-            unsafe { (*(*this).io_evtloop().loop_()).uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            unsafe { (*this).io_evtloop() }.loop_().cast()
-        }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        unsafe { (*this).io_evtloop() }
+
+    pub fn dispatch_reader_error(reader: BufferedReaderHandle, err: sys::Error) {
+        Self::from_reader_handle(reader).on_reader_error(err);
     }
 }
 

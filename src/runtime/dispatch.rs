@@ -379,6 +379,45 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
             crate::server::FileResponseStream::dispatch_reader_error(reader, error);
             true
         }
+        RuntimeBufferedReaderDelivery::ShellIoReaderChunk {
+            reader,
+            chunk,
+            has_more,
+        } => crate::shell::io_reader::IOReader::dispatch_read_chunk(reader, chunk, has_more),
+        RuntimeBufferedReaderDelivery::ShellIoReaderDone { reader } => {
+            crate::shell::io_reader::IOReader::dispatch_reader_done(reader);
+            true
+        }
+        RuntimeBufferedReaderDelivery::ShellIoReaderError { reader, error } => {
+            crate::shell::io_reader::IOReader::dispatch_reader_error(reader, error);
+            true
+        }
+        RuntimeBufferedReaderDelivery::FileReaderChunk {
+            reader,
+            chunk,
+            has_more,
+        } => crate::webcore::FileReader::dispatch_read_chunk(reader, chunk, has_more),
+        RuntimeBufferedReaderDelivery::FileReaderDone { reader } => {
+            crate::webcore::FileReader::dispatch_reader_done(reader);
+            true
+        }
+        RuntimeBufferedReaderDelivery::FileReaderError { reader, error } => {
+            crate::webcore::FileReader::dispatch_reader_error(reader, error);
+            true
+        }
+        RuntimeBufferedReaderDelivery::TerminalChunk {
+            reader,
+            chunk,
+            has_more,
+        } => crate::api::bun_terminal_body::Terminal::dispatch_read_chunk(reader, chunk, has_more),
+        RuntimeBufferedReaderDelivery::TerminalDone { reader } => {
+            crate::api::bun_terminal_body::Terminal::dispatch_reader_done(reader);
+            true
+        }
+        RuntimeBufferedReaderDelivery::TerminalError { reader, error } => {
+            crate::api::bun_terminal_body::Terminal::dispatch_reader_error(reader, error);
+            true
+        }
         RuntimeBufferedReaderDelivery::CronRegisterOutputDone { state } => {
             crate::api::cron::on_register_reader_done(state);
             true

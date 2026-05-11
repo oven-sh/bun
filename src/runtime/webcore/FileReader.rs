@@ -3,7 +3,9 @@ use core::mem;
 
 use bun_io as aio;
 use bun_collections::{ByteVecExt, VecExt};
-use bun_io::{BufferedReader, FileType, ReadState};
+use bun_io::{BufferedReader, BufferedReaderTarget, FileType, ReadState};
+use bun_io_types::reader::BufferedReaderHandle;
+use bun_runtime_types::reader::RuntimeBufferedReaderTarget;
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
@@ -21,13 +23,12 @@ bun_core::declare_scope!(FileReader, visible);
 // readable; Phase B should replace with a proper raw-slice wrapper (BACKREF lifetime).
 
 pub struct FileReader {
-    /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
-    /// `parent`) and the reader's own `&mut self` both derive from a
-    /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
-    /// (PipeReader.rs). The vtable callbacks fire while a `&mut BufferedReader`
-    /// is live on the caller's stack and re-enter `self.reader` (close/buffer/
-    /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
-    /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
+    /// Wrapped in `UnsafeCell` so typed reader deliveries and the reader's own
+    /// `&mut self` both derive from a SharedReadWrite root. The callbacks fire
+    /// while a `&mut BufferedReader` is live on the caller's stack and re-enter
+    /// `self.reader` (close/buffer/is_done); without `UnsafeCell` materializing
+    /// `&mut FileReader` there is Stacked-Borrows UB. Matches sibling
+    /// `IOReader` (shell) port.
     pub reader: UnsafeCell<IOReader>,
     pub done: bool,
     pub pending: streams::Pending,
@@ -50,7 +51,7 @@ pub struct FileReader {
 impl Default for FileReader {
     fn default() -> Self {
         Self {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
+            reader: UnsafeCell::new(IOReader::init_detached()),
             done: false,
             pending: streams::Pending::default(),
             pending_value: Strong::empty(),
@@ -252,54 +253,6 @@ impl Lazy {
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(FileReader for FileReader);
-impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. `reader` is `UnsafeCell`-wrapped so
-    // materializing `&mut FileReader` here does not assert Unique over the
-    // reader bytes (SharedReadWrite root); the inherent impls re-derive any
-    // reader access through `reader()` (UnsafeCell::get).
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
-        FileReader::on_read_chunk(unsafe { &mut *this }, chunk, state)
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        FileReader::on_reader_done(unsafe { &mut *this })
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        FileReader::on_reader_error(unsafe { &mut *this }, err)
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
-        // be borrowed mutably by the caller). Spec FileReader.zig:161-165.
-        // SAFETY: `this` is non-null/live per trait contract; `event_loop` is
-        // `Copy` and disjoint from the reader field.
-        let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
-        #[cfg(windows)]
-        {
-            // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
-            // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-            // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`);
-            // the trait-side alias (PipeReader.rs) already resolves to the
-            // libuv loop on Windows, so this is a nominal-only erasure.
-            ev.uv_loop().cast()
-        }
-        #[cfg(not(windows))]
-        {
-            ev.r#loop()
-        }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; the
-        // SAFETY: see on_read_chunk.
-        unsafe { (*this).event_loop.as_event_loop_ctx() }
-    }
-}
-
 impl FileReader {
     /// SharedReadWrite accessor for the embedded `BufferedReader`. See the
     /// `UnsafeCell` note on the field declaration — this is the single point
@@ -329,13 +282,52 @@ impl FileReader {
         }
     }
 
+    pub(crate) fn reader_target(&self) -> BufferedReaderTarget {
+        BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::FileReader,
+            event_loop: self.event_loop.as_event_loop_ctx(),
+        }
+    }
+
+    pub fn set_reader_target(&self) {
+        self.reader().set_target(self.reader_target());
+    }
+
+    fn from_reader_handle(reader: BufferedReaderHandle) -> &'static mut Self {
+        let reader = reader.as_ptr::<IOReader>();
+        let this = reader
+            .cast::<u8>()
+            .wrapping_sub(mem::offset_of!(Self, reader))
+            .cast::<Self>();
+        // SAFETY: FileReader initializes its embedded UnsafeCell<IOReader> with
+        // the FileReader runtime target. UnsafeCell is repr-transparent, so the
+        // lower IOReader pointer is the address of the reader field.
+        unsafe { &mut *this }
+    }
+
+    pub fn dispatch_read_chunk(
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        state: ReadState,
+    ) -> bool {
+        Self::from_reader_handle(reader).on_read_chunk(chunk, state)
+    }
+
+    pub fn dispatch_reader_done(reader: BufferedReaderHandle) {
+        Self::from_reader_handle(reader).on_reader_done();
+    }
+
+    pub fn dispatch_reader_error(reader: BufferedReaderHandle, err: sys::Error) {
+        Self::from_reader_handle(reader).on_reader_error(err);
+    }
+
     // TODO(port): in-place init — `self` is the `context` field of an already-allocated
     // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
     // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
     // a quirk; preserved as-is.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
+            reader: UnsafeCell::new(IOReader::init_detached()),
             done: false,
             fd,
             ..Default::default()
@@ -350,8 +342,7 @@ impl FileReader {
     }
 
     pub fn on_start(&mut self) -> streams::Start {
-        let parent_ptr = std::ptr::from_mut::<Self>(self).cast();
-        self.reader().set_parent(parent_ptr);
+        self.set_reader_target();
         let was_lazy = !matches!(self.lazy, Lazy::None);
         let mut pollable = false;
         let mut file_type = FileType::File;

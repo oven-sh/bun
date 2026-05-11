@@ -104,7 +104,7 @@ impl MaxBuf {
 
     /// Returns `true` if this read pushed the budget negative *and* the
     /// subprocess still owns it (i.e. the caller should fire
-    /// `BufferedReaderParentLink::on_max_buffer_overflow`).
+    /// the typed reader target's max-buffer delivery).
     ///
     /// # Safety
     /// `this` must point to a live `MaxBuf` allocated by `create_for_subprocess`.

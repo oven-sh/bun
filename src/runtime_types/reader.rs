@@ -31,7 +31,10 @@ pub enum RuntimeBufferedReaderTarget {
         interpreter: Option<InterpreterHandle>,
         pipe: RuntimePipeKind,
     },
+    ShellIoReader,
+    FileReader,
     FileResponseStream,
+    Terminal,
     SubprocessPipeReader {
         state: SubprocessExitStateHandle,
         pipe: RuntimePipeKind,
@@ -72,6 +75,21 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         chunk: &'a [u8],
         has_more: ReadState,
     },
+    ShellIoReaderChunk {
+        reader: BufferedReaderHandle,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    },
+    FileReaderChunk {
+        reader: BufferedReaderHandle,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    },
+    TerminalChunk {
+        reader: BufferedReaderHandle,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    },
     TestParallelWorkerPipeDone {
         index: usize,
         pipe: RuntimePipeKind,
@@ -91,6 +109,27 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         reader: BufferedReaderHandle,
     },
     FileResponseStreamError {
+        reader: BufferedReaderHandle,
+        error: bun_sys::Error,
+    },
+    ShellIoReaderDone {
+        reader: BufferedReaderHandle,
+    },
+    ShellIoReaderError {
+        reader: BufferedReaderHandle,
+        error: bun_sys::Error,
+    },
+    FileReaderDone {
+        reader: BufferedReaderHandle,
+    },
+    FileReaderError {
+        reader: BufferedReaderHandle,
+        error: bun_sys::Error,
+    },
+    TerminalDone {
+        reader: BufferedReaderHandle,
+    },
+    TerminalError {
         reader: BufferedReaderHandle,
         error: bun_sys::Error,
     },
@@ -133,8 +172,28 @@ impl RuntimeBufferedReaderTarget {
             | Self::MultiRunPipeReader { .. }
             | Self::TestParallelWorkerPipe { .. }
             | Self::ShellPipeReader { .. }
-            | Self::FileResponseStream => true,
+            | Self::ShellIoReader
+            | Self::FileReader
+            | Self::FileResponseStream
+            | Self::Terminal => true,
             Self::CronRegisterOutput { .. }
+            | Self::CronRemoveOutput { .. }
+            | Self::SubprocessPipeReader { .. } => false,
+        }
+    }
+
+    #[inline]
+    pub const fn uses_system_reader_error(self) -> bool {
+        match self {
+            Self::ShellPipeReader { .. }
+            | Self::ShellIoReader
+            | Self::FileReader
+            | Self::FileResponseStream
+            | Self::Terminal => true,
+            Self::FilterRunHandle { .. }
+            | Self::MultiRunPipeReader { .. }
+            | Self::TestParallelWorkerPipe { .. }
+            | Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => false,
         }
@@ -182,6 +241,21 @@ impl RuntimeBufferedReaderTarget {
                 chunk,
                 has_more,
             },
+            Self::ShellIoReader => RuntimeBufferedReaderDelivery::ShellIoReaderChunk {
+                reader,
+                chunk,
+                has_more,
+            },
+            Self::FileReader => RuntimeBufferedReaderDelivery::FileReaderChunk {
+                reader,
+                chunk,
+                has_more,
+            },
+            Self::Terminal => RuntimeBufferedReaderDelivery::TerminalChunk {
+                reader,
+                chunk,
+                has_more,
+            },
             Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => {
@@ -220,6 +294,9 @@ impl RuntimeBufferedReaderTarget {
             Self::FileResponseStream => {
                 Some(RuntimeBufferedReaderDelivery::FileResponseStreamDone { reader })
             }
+            Self::ShellIoReader => Some(RuntimeBufferedReaderDelivery::ShellIoReaderDone { reader }),
+            Self::FileReader => Some(RuntimeBufferedReaderDelivery::FileReaderDone { reader }),
+            Self::Terminal => Some(RuntimeBufferedReaderDelivery::TerminalDone { reader }),
             Self::SubprocessPipeReader { state, pipe } => {
                 Some(RuntimeBufferedReaderDelivery::SubprocessPipeReaderDone {
                     state,
@@ -250,7 +327,11 @@ impl RuntimeBufferedReaderTarget {
                     name: error.name,
                 })
             }
-            Self::ShellPipeReader { .. } | Self::FileResponseStream => {
+            Self::ShellPipeReader { .. }
+            | Self::ShellIoReader
+            | Self::FileReader
+            | Self::FileResponseStream
+            | Self::Terminal => {
                 unreachable!("system reader errors use on_system_reader_error")
             }
             Self::SubprocessPipeReader { state, pipe } => {
@@ -284,6 +365,15 @@ impl RuntimeBufferedReaderTarget {
             }),
             Self::FileResponseStream => {
                 Some(RuntimeBufferedReaderDelivery::FileResponseStreamError { reader, error })
+            }
+            Self::ShellIoReader => {
+                Some(RuntimeBufferedReaderDelivery::ShellIoReaderError { reader, error })
+            }
+            Self::FileReader => {
+                Some(RuntimeBufferedReaderDelivery::FileReaderError { reader, error })
+            }
+            Self::Terminal => {
+                Some(RuntimeBufferedReaderDelivery::TerminalError { reader, error })
             }
             _ => None,
         }
@@ -426,6 +516,72 @@ mod tests {
                 assert_eq!(actual_reader, reader);
             }
             _ => panic!("wrong delivery"),
+        }
+    }
+
+    #[test]
+    fn remaining_self_owned_reader_targets_preserve_reader_and_read_state() {
+        let chunk = b"reader";
+        let mut raw_reader = 0u8;
+        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut raw_reader)).unwrap();
+
+        for target in [
+            RuntimeBufferedReaderTarget::ShellIoReader,
+            RuntimeBufferedReaderTarget::FileReader,
+            RuntimeBufferedReaderTarget::Terminal,
+        ] {
+            assert!(target.has_on_read_chunk());
+            assert!(target.uses_system_reader_error());
+
+            match (target, target.on_read_chunk(reader, chunk, ReadState::Progress)) {
+                (
+                    RuntimeBufferedReaderTarget::ShellIoReader,
+                    RuntimeBufferedReaderDelivery::ShellIoReaderChunk {
+                        reader: actual_reader,
+                        chunk: actual,
+                        has_more,
+                    },
+                )
+                | (
+                    RuntimeBufferedReaderTarget::FileReader,
+                    RuntimeBufferedReaderDelivery::FileReaderChunk {
+                        reader: actual_reader,
+                        chunk: actual,
+                        has_more,
+                    },
+                )
+                | (
+                    RuntimeBufferedReaderTarget::Terminal,
+                    RuntimeBufferedReaderDelivery::TerminalChunk {
+                        reader: actual_reader,
+                        chunk: actual,
+                        has_more,
+                    },
+                ) => {
+                    assert_eq!(actual_reader, reader);
+                    assert_eq!(actual, chunk);
+                    assert_eq!(has_more, ReadState::Progress);
+                }
+                _ => panic!("wrong delivery"),
+            }
+
+            match (target, target.on_reader_done(reader)) {
+                (
+                    RuntimeBufferedReaderTarget::ShellIoReader,
+                    Some(RuntimeBufferedReaderDelivery::ShellIoReaderDone { reader: actual_reader }),
+                )
+                | (
+                    RuntimeBufferedReaderTarget::FileReader,
+                    Some(RuntimeBufferedReaderDelivery::FileReaderDone { reader: actual_reader }),
+                )
+                | (
+                    RuntimeBufferedReaderTarget::Terminal,
+                    Some(RuntimeBufferedReaderDelivery::TerminalDone { reader: actual_reader }),
+                ) => {
+                    assert_eq!(actual_reader, reader);
+                }
+                _ => panic!("wrong delivery"),
+            }
         }
     }
 

@@ -191,53 +191,6 @@ pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 
-// `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
-// `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
-// trait impl — see `buffered_reader_parent_link!` below.
-bun_dispatch::link_interface! {
-    pub BufferedReaderParentLink[
-        ShellIoReader,
-        FileReader,
-        Terminal,
-    ] {
-        fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
-        fn on_reader_done();
-        fn on_reader_error(err: bun_sys::Error);
-        fn loop_ptr() -> *mut Loop;
-        fn event_loop() -> EventLoopCtx;
-        // Link-interface parents do not wire `MaxBuf`; typed reader targets
-        // handle the subprocess max-buffer path directly.
-        fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
-    }
-}
-
-/// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
-/// already implements [`pipe_reader::BufferedReaderParent`]. Used once per
-/// variant in the impl crates (`bun_runtime`/`bun_install`).
-#[macro_export]
-macro_rules! buffered_reader_parent_link {
-    ($variant:ident for $T:ty) => {
-        $crate::link_impl_BufferedReaderParentLink! {
-            $variant for $T => |this| {
-                has_on_read_chunk() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::HAS_ON_READ_CHUNK,
-                on_read_chunk(chunk, has_more) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_read_chunk(this, chunk, has_more),
-                on_reader_done() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
-                on_reader_error(err) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_ptr() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
-                event_loop() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                on_max_buffer_overflow(maxbuf) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_max_buffer_overflow(this, maxbuf),
-            }
-        }
-    };
-}
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
 #[cfg(windows)]
 pub use source::Source;
@@ -247,10 +200,7 @@ pub use source::Source;
 #[cfg(not(windows))]
 pub enum Source {}
 
-pub use pipe_reader::{
-    BufferedReader, BufferedReaderParent, BufferedReaderTarget, PosixFlags,
-    with_buffered_reader_handle,
-};
+pub use pipe_reader::{BufferedReader, BufferedReaderTarget, PosixFlags, with_buffered_reader_handle};
 /// Downstream alias (Zig: `bun.io.BufferedReader` is sometimes referenced as
 /// `PipeReader`).
 pub type PipeReader = BufferedReader;

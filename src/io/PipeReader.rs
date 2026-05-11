@@ -14,8 +14,8 @@ use bun_io_types::file_poll;
 use bun_io_types::reader::BufferedReaderHandle;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
-// right one). `BufferedReaderParent::loop_` returns this so callers in T3+
-// can hand it to libuv/uws without a cross-crate cast.
+// right one). Typed reader targets carry the event-loop context needed to
+// hand it to libuv/uws without a cross-crate cast.
 //
 // Public so trait implementors in `bun_runtime` can name the same type in
 // their `loop_` signature without duplicating the cfg-split.
@@ -68,8 +68,6 @@ unsafe extern "Rust" {
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
 pub struct BufferedReaderVTable {
-    pub parent: *mut c_void,
-    pub kind: Option<crate::BufferedReaderParentLinkKind>,
     pub target: Option<BufferedReaderTarget>,
 }
 
@@ -202,11 +200,7 @@ impl BufferedReaderTarget {
                 }
             }
             Self::Runtime { target, event_loop } => {
-                let delivery = if matches!(
-                    target,
-                    RuntimeBufferedReaderTarget::ShellPipeReader { .. }
-                        | RuntimeBufferedReaderTarget::FileResponseStream
-                ) {
+                let delivery = if target.uses_system_reader_error() {
                     target.on_system_reader_error(reader, err)
                 } else {
                     target.on_reader_error(
@@ -251,102 +245,30 @@ impl BufferedReaderTarget {
     }
 }
 
-/// Trait that parent types implement to receive buffered-reader callbacks.
-/// Mirrors the duck-typed `Type.onReaderDone` / `Type.onReaderError` etc. in Zig.
-///
-/// ## Aliasing contract (raw `*mut Self`, not `&mut self`)
-///
-/// In the Zig spec these thunks receive `*anyopaque`, cast to `*Type`, and call
-/// the decl — Zig pointers freely alias. In Rust the parent `Self` *contains*
-/// the `BufferedReader` as a field, and these callbacks are invoked from inside
-/// `BufferedReader` methods that hold a live `&mut BufferedReader`. Taking
-/// `&mut self` here would therefore materialize a `&mut Self` overlapping that
-/// live borrow (Stacked-Borrows UB). Instead each callback receives the raw
-/// `*mut Self` registered via `set_parent`.
-///
-/// SAFETY requirements for implementors:
-/// - `this` is non-null, properly aligned, and points at a live `Self` for the
-///   duration of the call.
-/// - A `&mut` to the embedded reader field may be live on the caller's stack.
-///   Implementors must not assume unique access to that field while servicing
-///   the callback; access other fields via `&mut (*this).field` /
-///   `addr_of_mut!` or reborrow `&mut *this` only when the reader is known to
-///   be done with `self` (e.g. tail-position `on_reader_done`).
-pub trait BufferedReaderParent {
-    /// `link_interface!` variant for this type. Each impl pairs this with a
-    /// `bun_io::buffered_reader_parent_link!(KIND for Self)` at module scope.
-    const KIND: crate::BufferedReaderParentLinkKind;
-    /// Mirrors `@hasDecl(Type, "onReadChunk")`.
-    const HAS_ON_READ_CHUNK: bool = true;
-
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        let _ = (this, chunk, has_more);
-        // Default: should not be called when HAS_ON_READ_CHUNK == false.
-        true
-    }
-    unsafe fn on_reader_done(this: *mut Self);
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
-    unsafe fn loop_(this: *mut Self) -> *mut Loop;
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// Fired when this reader's `MaxBuf` budget goes negative. Link-interface
-    /// parents do not wire `MaxBuf`; typed reader targets handle that path.
-    unsafe fn on_max_buffer_overflow(this: *mut Self, maxbuf: NonNull<MaxBuf>) {
-        let _ = (this, maxbuf);
-    }
-}
-
 impl BufferedReaderVTable {
-    pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
-        BufferedReaderVTable {
-            parent: core::ptr::null_mut(),
-            kind: Some(T::KIND),
-            target: None,
-        }
-    }
-
     pub fn detached() -> BufferedReaderVTable {
-        BufferedReaderVTable {
-            parent: core::ptr::null_mut(),
-            kind: None,
-            target: None,
-        }
+        BufferedReaderVTable { target: None }
     }
 
     pub fn target(target: BufferedReaderTarget) -> BufferedReaderVTable {
-        BufferedReaderVTable {
-            parent: core::ptr::null_mut(),
-            kind: None,
-            target: Some(target),
-        }
+        BufferedReaderVTable { target: Some(target) }
     }
 
     #[inline]
-    fn link(&self) -> crate::BufferedReaderParentLink {
-        let kind = self.kind.expect("BufferedReader has no parent link");
-        // SAFETY: `parent` is a `*mut T` matching `kind` per `set_parent`'s
-        // contract; raw-ptr passthrough, no `&mut T` materialized.
-        unsafe { crate::BufferedReaderParentLink::new(kind, self.parent) }
+    fn typed_target(&self) -> BufferedReaderTarget {
+        self.target.expect("BufferedReader has no typed target")
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        if let Some(target) = self.target {
-            return target.event_loop();
-        }
-        self.link().event_loop()
+        self.typed_target().event_loop()
     }
 
     pub fn loop_(&self) -> *mut Loop {
-        if let Some(target) = self.target {
-            return target.loop_ptr();
-        }
-        self.link().loop_ptr()
+        self.typed_target().loop_ptr()
     }
 
     pub fn is_streaming_enabled(&self) -> bool {
-        if let Some(target) = self.target {
-            return target.has_on_read_chunk();
-        }
-        self.link().has_on_read_chunk()
+        self.target.map(|target| target.has_on_read_chunk()).unwrap_or(false)
     }
 
     /// When the reader has read a chunk of data
@@ -359,31 +281,21 @@ impl BufferedReaderVTable {
         chunk: &[u8],
         has_more: ReadState,
     ) -> bool {
-        if let Some(target) = self.target {
-            return target.on_read_chunk(reader, chunk, has_more);
-        }
-        self.link().on_read_chunk(chunk, has_more)
+        self.typed_target().on_read_chunk(reader, chunk, has_more)
     }
 
     pub fn on_reader_done(&self, reader: BufferedReaderHandle) {
-        if let Some(target) = self.target {
-            return target.on_reader_done(reader);
-        }
-        self.link().on_reader_done()
+        self.typed_target().on_reader_done(reader);
     }
 
     pub fn on_reader_error(&self, reader: BufferedReaderHandle, err: sys::Error) {
-        if let Some(target) = self.target {
-            return target.on_reader_error(reader, err);
-        }
-        self.link().on_reader_error(err)
+        self.typed_target().on_reader_error(reader, err);
     }
 
     pub fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
         if let Some(target) = self.target {
-            return target.on_max_buffer_overflow(maxbuf);
+            target.on_max_buffer_overflow(maxbuf);
         }
-        self.link().on_max_buffer_overflow(maxbuf)
     }
 }
 
@@ -427,18 +339,6 @@ impl PosixFlags {
 }
 
 impl PosixBufferedReader {
-    pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
-        PosixBufferedReader {
-            handle: PollOrFd::Closed,
-            _buffer: Vec::new(),
-            _offset: 0,
-            vtable: BufferedReaderVTable::init::<T>(),
-            flags: PosixFlags::new(),
-            count: 0,
-            maxbuf: None,
-        }
-    }
-
     pub fn init_detached() -> PosixBufferedReader {
         PosixBufferedReader {
             handle: PollOrFd::Closed,
@@ -475,15 +375,13 @@ impl PosixBufferedReader {
         mem::size_of::<Self>() + self._buffer.capacity()
     }
 
-    pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
-        let kind = self.vtable.kind;
-        let target = self.vtable.target;
+    pub fn from(&mut self, other: &mut PosixBufferedReader, target: BufferedReaderTarget) {
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             flags: other.flags,
-            vtable: BufferedReaderVTable { kind, parent, target },
+            vtable: BufferedReaderVTable::target(target),
             count: 0,
             maxbuf: None,
         };
@@ -500,17 +398,7 @@ impl PosixBufferedReader {
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
     }
 
-    pub fn set_parent(&mut self, parent: *mut c_void) {
-        self.vtable.parent = parent;
-        self.vtable.target = None;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
-    }
-
     pub fn set_target(&mut self, target: BufferedReaderTarget) {
-        self.vtable.parent = core::ptr::null_mut();
-        self.vtable.kind = None;
         self.vtable.target = Some(target);
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
@@ -1358,7 +1246,6 @@ pub struct WindowsBufferedReader {
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    pub parent: *mut c_void,
     pub vtable: BufferedReaderVTable,
 }
 
@@ -1393,18 +1280,6 @@ impl WindowsBufferedReader {
         mem::size_of::<Self>() + self._buffer.capacity()
     }
 
-    pub fn init<T: BufferedReaderParent>() -> WindowsBufferedReader {
-        WindowsBufferedReader {
-            source: None,
-            _offset: 0,
-            _buffer: Vec::new(),
-            flags: WindowsFlags::new(),
-            maxbuf: None,
-            parent: core::ptr::null_mut(),
-            vtable: BufferedReaderVTable::init::<T>(),
-        }
-    }
-
     pub fn init_detached() -> WindowsBufferedReader {
         WindowsBufferedReader {
             source: None,
@@ -1412,7 +1287,6 @@ impl WindowsBufferedReader {
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
-            parent: core::ptr::null_mut(),
             vtable: BufferedReaderVTable::detached(),
         }
     }
@@ -1432,7 +1306,7 @@ impl WindowsBufferedReader {
         )
     }
 
-    pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {
+    pub fn from(&mut self, other: &mut WindowsBufferedReader, target: BufferedReaderTarget) {
         debug_assert!(other.source.is_some() && self.source.is_none());
         // PORT NOTE: keep self.vtable; move other's state in.
         self.flags = other.flags;
@@ -1450,7 +1324,7 @@ impl WindowsBufferedReader {
         // avoid leaking a MaxBuf ref when the destination already held one.
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
-        self.set_parent(parent);
+        self.set_target(target);
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1464,25 +1338,7 @@ impl WindowsBufferedReader {
         // No-op on windows.
     }
 
-    pub fn set_parent(&mut self, parent: *mut c_void) {
-        self.parent = parent;
-        self.vtable.parent = parent;
-        self.vtable.target = None;
-        if !self.flags.contains(WindowsFlags::IS_DONE) {
-            // `Source::set_data` only writes the libuv `.data` field (raw ptr
-            // store); take a raw self-pointer first to dodge the
-            // immutable-then-mutable-borrow conflict.
-            let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(source) = self.source.as_mut() {
-                source.set_data(self_ptr);
-            }
-        }
-    }
-
     pub fn set_target(&mut self, target: BufferedReaderTarget) {
-        self.parent = core::ptr::null_mut();
-        self.vtable.parent = core::ptr::null_mut();
-        self.vtable.kind = None;
         self.vtable.target = Some(target);
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();

@@ -1397,8 +1397,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     pub fn loop_(&mut self) -> *mut AsyncLoop {
         // POSIX: `bun_io::Loop` is `PosixLoop` — identity cast. Windows: the
         // uws wrapper (`WindowsLoop`) stores the real `*mut uv_loop_t` in its
-        // `uv_loop` field; project it so `BufferedReaderParent` consumers
-        // (which feed `uv_fs_*` / `Source::open`) get a libuv loop directly.
+        // `uv_loop` field; project it so reader setup paths that feed
+        // `uv_fs_*` / `Source::open` get a libuv loop directly.
         #[cfg(not(windows))]
         { self.manager.event_loop.loop_().cast() }
         #[cfg(windows)]

@@ -10,12 +10,15 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::ffi::{c_int, c_ulong, c_void};
+use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_io::Loop as AsyncLoop;
 use bun_core::SignalCode;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::{BufferedReader, BufferedReaderTarget, ReadState, StreamingWriter, WriteStatus};
+use bun_io::pipe_reader::PosixFlags;
+use bun_io_types::reader::BufferedReaderHandle;
+use bun_runtime_types::reader::RuntimeBufferedReaderTarget;
 use crate::node::StringOrBuffer;
 use crate::webcore::blob::ZigStringBlobExt;
 use bun_jsc::{
@@ -383,6 +386,10 @@ impl Terminal {
 
         // `bun.new(Terminal, .{...})` → heap::alloc; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
+        // SAFETY: bun_vm() returns the live VM raw pointer for this global.
+        let event_loop_handle = EventLoopHandle::init(
+            global_object.bun_vm().as_mut().event_loop().cast(),
+        );
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: pty_result.master,
@@ -404,22 +411,18 @@ impl Terminal {
                 options.rows
             },
             term_name,
-            // SAFETY: bun_vm() returns the live VM raw pointer for this global.
-            event_loop_handle: EventLoopHandle::init(
-                global_object.bun_vm().as_mut().event_loop().cast(),
-            ),
+            event_loop_handle,
             global_this: bun_ptr::BackRef::new(global_object),
             writer: IOWriter::default(),
-            reader: IOReader::init::<Terminal>(),
+            reader: IOReader::init_target(BufferedReaderTarget::Runtime {
+                target: RuntimeBufferedReaderTarget::Terminal,
+                event_loop: event_loop_handle.as_event_loop_ctx(),
+            }),
             this_value: JsRef::empty(),
             flags: Flags::empty(),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here.
         let terminal = unsafe { &mut *terminal };
-
-        // Set reader parent
-        let parent_ptr = std::ptr::from_mut::<Terminal>(terminal).cast::<c_void>();
-        terminal.reader.set_parent(parent_ptr);
 
         // Set writer parent
         terminal.writer.parent = terminal;
@@ -1794,6 +1797,34 @@ impl Terminal {
         }
     }
 
+    fn from_reader_handle(reader: BufferedReaderHandle) -> &'static mut Self {
+        let reader = reader.as_ptr::<IOReader>();
+        let this = reader
+            .cast::<u8>()
+            .wrapping_sub(offset_of!(Self, reader))
+            .cast::<Self>();
+        // SAFETY: Terminal initializes its embedded reader with the Terminal
+        // runtime target, so matching deliveries carry a handle to that field in
+        // the owning intrusive allocation.
+        unsafe { &mut *this }
+    }
+
+    pub fn dispatch_read_chunk(
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        has_more: ReadState,
+    ) -> bool {
+        Self::from_reader_handle(reader).on_read_chunk(chunk, has_more)
+    }
+
+    pub fn dispatch_reader_done(reader: BufferedReaderHandle) {
+        Self::from_reader_handle(reader).on_reader_done();
+    }
+
+    pub fn dispatch_reader_error(reader: BufferedReaderHandle, err: sys::Error) {
+        Self::from_reader_handle(reader).on_reader_error(err);
+    }
+
     /// Finalize - called by GC when object is collected
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Terminal, "finalize");
@@ -1842,42 +1873,6 @@ impl bun_ptr::RefCounted for Terminal {
         // SAFETY: ref_count == 0 so this is the last live reference; `this`
         // was heap-allocated in init_terminal.
         unsafe { deinit_and_destroy(this) };
-    }
-}
-
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
-bun_io::buffered_reader_parent_link!(Terminal for Terminal);
-impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::Terminal;
-    const HAS_ON_READ_CHUNK: bool = true;
-
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: `this` is the BACKREF set via `reader.set_parent`; the
-        // BufferedReader vtable thunk never materializes `&mut Terminal`, so
-        // this is the unique access path for the callback's duration.
-        unsafe { &mut *this }.on_read_chunk(chunk, has_more)
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: see on_read_chunk; tail-position (reader done with self).
-        unsafe { &mut *this }.on_reader_done()
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_read_chunk; tail-position.
-        unsafe { &mut *this }.on_reader_error(err)
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // SAFETY: see on_read_chunk; shared-only read of event_loop_handle.
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
-        // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
-        unsafe { (*this).loop_().cast() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass the
-        // SAFETY: see on_read_chunk.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 

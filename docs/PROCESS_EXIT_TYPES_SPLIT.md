@@ -74,7 +74,9 @@ Natural sibling crates
   │     │     - preserves the epoll/kqueue u64 packing boundary
   │     └─> file_poll
   │           ├─> Kind
-  │           ├─> Owner { kind, addr }
+  │           ├─> Owner enum
+  │           │     - closed variants such as Process(OwnerToken<Process>)
+  │           │     - no safe stored `{ kind, addr }` pairing
   │           └─> marker variants such as Process, FileSink, BufferedReader, DnsResolver
   ├─> bun_spawn_types
   │     ├─> Status / Exited / WaitPidResult / Rusage
@@ -110,7 +112,7 @@ FilePoll production path
   │     ├─> direct producers call Owner::typed::<file_poll::Variant>(ptr)
   │     └─> generic writer parents expose type PollOwner: file_poll::Variant
   ├─> storage
-  │     └─> bun_io::FilePoll stores bun_io_types::file_poll::Owner
+  │     └─> bun_io::FilePoll stores bun_io_types::file_poll::Owner as a closed typed enum
   └─> consumer
         └─> bun_runtime::dispatch::__bun_run_file_poll
               ├─> matches owner.kind()
@@ -119,7 +121,8 @@ FilePoll production path
 ```
 
 The important detail is that writer families no longer thread a raw
-`PollTag` constant. A producer declares the owner marker type instead:
+`PollTag` constant, and the stored owner is no longer a safe `kind + addr`
+struct. A producer declares the owner marker type instead:
 
 ```rust
 impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
@@ -141,6 +144,11 @@ FilePollRef::init(
     Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()),
 )
 ```
+
+`Owner::from_raw_parts(kind, ptr)` remains only as an unsafe escape hatch for
+raw ABI edges. Normal producers call `Owner::typed::<Variant>(ptr)`, which
+builds the enum variant and ties the owner token to the marker type in the
+type crate.
 
 Pollable remains scalar because that is the kernel ABI:
 

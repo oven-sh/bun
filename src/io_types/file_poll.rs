@@ -54,16 +54,10 @@ pub enum TerminalPoll {}
 pub enum ParentDeathWatchdog {}
 pub enum LifecycleScriptSubprocessOutputReader {}
 
-pub trait Variant {
+pub trait Variant: Sized {
     const KIND: Kind;
 
-    #[inline]
-    fn owner(token: OwnerToken<Self>) -> Owner
-    where
-        Self: Sized,
-    {
-        Owner::new(Self::KIND, token.get())
-    }
+    fn owner(token: OwnerToken<Self>) -> Owner;
 }
 
 macro_rules! variants {
@@ -71,13 +65,17 @@ macro_rules! variants {
         $(
             impl Variant for $marker {
                 const KIND: Kind = Kind::$kind;
+
+                #[inline]
+                fn owner(token: OwnerToken<Self>) -> Owner {
+                    Owner::$kind(token)
+                }
             }
         )*
     };
 }
 
 variants! {
-    Null => Null,
     FileSink => FileSink,
     StaticPipeWriter => StaticPipeWriter,
     ShellStaticPipeWriter => ShellStaticPipeWriter,
@@ -93,17 +91,36 @@ variants! {
     LifecycleScriptSubprocessOutputReader => LifecycleScriptSubprocessOutputReader,
 }
 
+impl Variant for Null {
+    const KIND: Kind = Kind::Null;
+
+    #[inline]
+    fn owner(_: OwnerToken<Self>) -> Owner {
+        Owner::Null
+    }
+}
+
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Owner {
-    kind: Kind,
-    addr: usize,
+pub enum Owner {
+    Null,
+    FileSink(OwnerToken<FileSink>),
+    StaticPipeWriter(OwnerToken<StaticPipeWriter>),
+    ShellStaticPipeWriter(OwnerToken<ShellStaticPipeWriter>),
+    SecurityScanStaticPipeWriter(OwnerToken<SecurityScanStaticPipeWriter>),
+    BufferedReader(OwnerToken<BufferedReader>),
+    DnsResolver(OwnerToken<DnsResolver>),
+    GetAddrInfoRequest(OwnerToken<GetAddrInfoRequest>),
+    Request(OwnerToken<Request>),
+    Process(OwnerToken<Process>),
+    ShellBufferedWriter(OwnerToken<ShellBufferedWriter>),
+    TerminalPoll(OwnerToken<TerminalPoll>),
+    ParentDeathWatchdog(OwnerToken<ParentDeathWatchdog>),
+    LifecycleScriptSubprocessOutputReader(OwnerToken<LifecycleScriptSubprocessOutputReader>),
 }
 
 impl Owner {
-    pub const NULL: Self = Self {
-        kind: Kind::Null,
-        addr: 0,
-    };
+    pub const NULL: Self = Self::Null;
 
     #[inline]
     pub fn typed<T: Variant>(ptr: *mut ()) -> Self {
@@ -113,22 +130,34 @@ impl Owner {
         T::owner(token)
     }
 
+    /// # Safety
+    /// If `ptr` is non-null, it must point to a live owner of the concrete
+    /// type represented by `kind`.
     #[inline]
-    pub fn from_raw_parts(kind: Kind, ptr: *mut ()) -> Self {
-        Self {
-            kind,
-            addr: ptr as usize,
+    pub unsafe fn from_raw_parts(kind: Kind, ptr: *mut ()) -> Self {
+        match kind {
+            Kind::Null => Self::NULL,
+            Kind::FileSink => Self::typed::<FileSink>(ptr),
+            Kind::StaticPipeWriter => Self::typed::<StaticPipeWriter>(ptr),
+            Kind::ShellStaticPipeWriter => Self::typed::<ShellStaticPipeWriter>(ptr),
+            Kind::SecurityScanStaticPipeWriter => Self::typed::<SecurityScanStaticPipeWriter>(ptr),
+            Kind::BufferedReader => Self::typed::<BufferedReader>(ptr),
+            Kind::DnsResolver => Self::typed::<DnsResolver>(ptr),
+            Kind::GetAddrInfoRequest => Self::typed::<GetAddrInfoRequest>(ptr),
+            Kind::Request => Self::typed::<Request>(ptr),
+            Kind::Process => Self::typed::<Process>(ptr),
+            Kind::ShellBufferedWriter => Self::typed::<ShellBufferedWriter>(ptr),
+            Kind::TerminalPoll => Self::typed::<TerminalPoll>(ptr),
+            Kind::ParentDeathWatchdog => Self::typed::<ParentDeathWatchdog>(ptr),
+            Kind::LifecycleScriptSubprocessOutputReader => {
+                Self::typed::<LifecycleScriptSubprocessOutputReader>(ptr)
+            }
         }
     }
 
     #[inline]
-    const fn new(kind: Kind, addr: usize) -> Self {
-        Self { kind, addr }
-    }
-
-    #[inline]
     pub const fn is_null(&self) -> bool {
-        self.addr == 0
+        matches!(self, Self::Null)
     }
 
     #[inline]
@@ -138,22 +167,54 @@ impl Owner {
 
     #[inline]
     pub const fn kind(&self) -> Kind {
-        self.kind
+        match self {
+            Self::Null => Kind::Null,
+            Self::FileSink(_) => Kind::FileSink,
+            Self::StaticPipeWriter(_) => Kind::StaticPipeWriter,
+            Self::ShellStaticPipeWriter(_) => Kind::ShellStaticPipeWriter,
+            Self::SecurityScanStaticPipeWriter(_) => Kind::SecurityScanStaticPipeWriter,
+            Self::BufferedReader(_) => Kind::BufferedReader,
+            Self::DnsResolver(_) => Kind::DnsResolver,
+            Self::GetAddrInfoRequest(_) => Kind::GetAddrInfoRequest,
+            Self::Request(_) => Kind::Request,
+            Self::Process(_) => Kind::Process,
+            Self::ShellBufferedWriter(_) => Kind::ShellBufferedWriter,
+            Self::TerminalPoll(_) => Kind::TerminalPoll,
+            Self::ParentDeathWatchdog(_) => Kind::ParentDeathWatchdog,
+            Self::LifecycleScriptSubprocessOutputReader(_) => {
+                Kind::LifecycleScriptSubprocessOutputReader
+            }
+        }
     }
 
     #[inline]
     pub const fn addr(&self) -> usize {
-        self.addr
+        match self {
+            Self::Null => 0,
+            Self::FileSink(token) => token.get(),
+            Self::StaticPipeWriter(token) => token.get(),
+            Self::ShellStaticPipeWriter(token) => token.get(),
+            Self::SecurityScanStaticPipeWriter(token) => token.get(),
+            Self::BufferedReader(token) => token.get(),
+            Self::DnsResolver(token) => token.get(),
+            Self::GetAddrInfoRequest(token) => token.get(),
+            Self::Request(token) => token.get(),
+            Self::Process(token) => token.get(),
+            Self::ShellBufferedWriter(token) => token.get(),
+            Self::TerminalPoll(token) => token.get(),
+            Self::ParentDeathWatchdog(token) => token.get(),
+            Self::LifecycleScriptSubprocessOutputReader(token) => token.get(),
+        }
     }
 
     #[inline]
     pub fn ptr(self) -> *mut () {
-        self.addr as *mut ()
+        self.addr() as *mut ()
     }
 
     #[inline]
     pub const fn token<T>(self) -> Option<OwnerToken<T>> {
-        OwnerToken::from_usize(self.addr)
+        OwnerToken::from_usize(self.addr())
     }
 }
 
@@ -168,5 +229,32 @@ mod tests {
 
         assert_eq!(owner.kind(), Kind::SecurityScanStaticPipeWriter);
         assert_eq!(owner.ptr(), ptr);
+    }
+
+    #[test]
+    fn null_pointer_clears_to_null_variant() {
+        let owner = Owner::typed::<SecurityScanStaticPipeWriter>(core::ptr::null_mut());
+
+        assert_eq!(owner.kind(), Kind::Null);
+        assert!(owner.is_null());
+        assert_eq!(owner.ptr(), core::ptr::null_mut());
+    }
+
+    #[test]
+    fn raw_parts_reenter_the_closed_owner_shape() {
+        let ptr = 0x5000usize as *mut ();
+        let owner = unsafe { Owner::from_raw_parts(Kind::Process, ptr) };
+
+        assert_eq!(owner, Owner::typed::<Process>(ptr));
+        assert_eq!(owner.kind(), Kind::Process);
+        assert_eq!(owner.ptr(), ptr);
+    }
+
+    #[test]
+    fn owner_stays_pointer_pair_sized() {
+        assert_eq!(
+            core::mem::size_of::<Owner>(),
+            core::mem::size_of::<usize>() * 2
+        );
     }
 }

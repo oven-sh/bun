@@ -5908,7 +5908,8 @@ impl H2FrameParser {
         }
         this.detach();
         if let Some(this_value) = this.strong_this.try_get() {
-            JSH2FrameParser::Gc::context.clear(this_value, unsafe { &*this.global_this });
+            // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.
+            JSH2FrameParser::Gc::context.clear(this_value, &this.global_this);
             this.strong_this.set_weak(this_value);
         }
         Ok(JSValue::UNDEFINED)

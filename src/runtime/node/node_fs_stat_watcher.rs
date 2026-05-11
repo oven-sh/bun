@@ -15,7 +15,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, WorkPool, WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_ptr::{BackRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_str::strings;
 use bun_sys::{self, PosixStat};
@@ -387,8 +387,9 @@ pub struct StatWatcher {
     interval: i32,
     last_check: Instant,
 
-    // JSC_BORROW per LIFETIMES.tsv.
-    global_this: *mut JSGlobalObject,
+    // JSC_BORROW per LIFETIMES.tsv — global outlives every watcher; `BackRef`
+    // gives safe `&JSGlobalObject` projection (Deref) at every read site.
+    global_this: BackRef<JSGlobalObject>,
 
     this_value: JsRef,
 
@@ -459,10 +460,8 @@ impl StatWatcher {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        // SAFETY: JSC_BORROW per LIFETIMES.tsv — `global_this` is the live
-        // per-thread global stored at construction; the VM (and thus its
-        // global) outlives every `StatWatcher`.
-        unsafe { &*self.global_this }
+        // `BackRef` invariant: global outlives every `StatWatcher` (JSC_BORROW).
+        self.global_this.get()
     }
 
     /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
@@ -791,8 +790,8 @@ impl StatWatcher {
         let alloc_file_path = ZBox::from_bytes(file_path);
         // errdefer free → Drop handles it
 
-        // SAFETY: `args.global_this` is live (caller holds it).
-        let vm = unsafe { (*args.global_this).bun_vm_ptr() };
+        // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
+        let vm = args.global_this.bun_vm_ptr();
         let this = Box::new(StatWatcher {
             next: bun_threading::Link::new(),
             ctx: vm,
@@ -825,11 +824,12 @@ impl StatWatcher {
             this_ref.poll_ref.ref_(this_ref.ctx_el_ctx());
         }
 
-        // SAFETY: `args.global_this` is live; `this_ptr` ownership transfers to the
-        // C++ wrapper (freed via `StatWatcherClass__finalize`).
-        let js_this = unsafe { StatWatcher::to_js_ptr(this_ptr, &*args.global_this) };
-        this_ref.this_value = JsRef::init_strong(js_this, unsafe { &*args.global_this });
-        js::listener_set_cached(js_this, unsafe { &*args.global_this }, args.listener);
+        // SAFETY: `this_ptr` ownership transfers to the C++ wrapper (freed via
+        // `StatWatcherClass__finalize`). `args.global_this` is a `BackRef`
+        // (JSC_BORROW) — safe Deref to `&JSGlobalObject`.
+        let js_this = unsafe { StatWatcher::to_js_ptr(this_ptr, &args.global_this) };
+        this_ref.this_value = JsRef::init_strong(js_this, &args.global_this);
+        js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: `vm` is the live per-thread VM.
         if unsafe { (*vm).test_isolation_enabled } {
             // SAFETY: `vm` is live; JS thread.
@@ -866,8 +866,9 @@ pub struct Arguments {
     pub bigint: bool,
     pub interval: i32,
 
-    // JSC_BORROW per LIFETIMES.tsv.
-    pub global_this: *mut JSGlobalObject,
+    // JSC_BORROW per LIFETIMES.tsv — global outlives the parsed `Arguments`;
+    // `BackRef` gives safe `&JSGlobalObject` projection at every read site.
+    pub global_this: BackRef<JSGlobalObject>,
 }
 
 impl Arguments {
@@ -924,7 +925,7 @@ impl Arguments {
             persistent,
             bigint,
             interval,
-            global_this: global.as_mut_ptr(),
+            global_this: BackRef::new(global),
         })
     }
 

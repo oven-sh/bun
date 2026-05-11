@@ -6418,9 +6418,8 @@ impl NodeFS {
         debug_assert!(flavor == Flavor::Sync);
         // `create_stat_watcher` consumes `args` (the `PathLike` is moved into
         // the new `StatWatcher`); capture what the error path needs first.
-        // SAFETY: `args.global_this` was captured from a live JS call frame and
-        // outlives this synchronous call; it is never null.
-        let global_this = unsafe { &*args.global_this };
+        // `BackRef` is `Copy` — copy out so the borrow detaches from `args`.
+        let global_this = args.global_this;
         let path: Vec<u8> = args.path.slice().to_vec();
         match args.create_stat_watcher() {
             Ok(watcher) => Ok(watcher),
@@ -6437,7 +6436,7 @@ impl NodeFS {
                     hostname: BunString::default(),
                     fd: -1,
                     dest: BunString::default(),
-                }.to_error_instance(global_this));
+                }.to_error_instance(&global_this));
                 Ok(JSValue::UNDEFINED)
             }
         }

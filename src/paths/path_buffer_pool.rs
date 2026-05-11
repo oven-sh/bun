@@ -31,15 +31,40 @@ thread_local! {
 
 pub trait PoolStorage: Sized + Default + 'static {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R;
+    /// Allocate a fresh boxed buffer. Implemented per concrete type so the
+    /// `assume_init` SAFETY obligation is discharged monomorphically (the
+    /// generic site cannot soundly assert "every bit-pattern is valid" for an
+    /// arbitrary `T`).
+    fn new_boxed() -> Box<Self>;
 }
 impl PoolStorage for PathBuffer {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
         U8_POOL.with(f)
     }
+    #[inline]
+    fn new_boxed() -> Box<Self> {
+        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over `[u8; N]`;
+        // `new_zeroed` writes every byte to `0`, which is a valid `u8`, so the
+        // value is fully initialized before `assume_init`. We use `new_zeroed`
+        // rather than `new_uninit` because materializing a `Box<T>` whose bytes
+        // were never written is UB even for integer arrays. This path runs only
+        // on pool cache miss (≤ once per slot per thread); `alloc_zeroed` for a
+        // 64 KB heap block is typically satisfied by fresh OS-zeroed pages, so
+        // there is no hot-path memset cost.
+        unsafe { Box::<Self>::new_zeroed().assume_init() }
+    }
 }
 impl PoolStorage for WPathBuffer {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
         U16_POOL.with(f)
+    }
+    #[inline]
+    fn new_boxed() -> Box<Self> {
+        // SAFETY: `WPathBuffer` is `#[repr(transparent)]` over `[u16; N]`;
+        // `new_zeroed` writes every byte to `0`, which is a valid `u16`, so the
+        // value is fully initialized before `assume_init`. See `PathBuffer`
+        // impl above for rationale re: `new_uninit` UB and perf.
+        unsafe { Box::<Self>::new_zeroed().assume_init() }
     }
 }
 
@@ -47,13 +72,10 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
     /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
     /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(|| {
-            // Zig leaves the buffer `undefined`; `T::default()` zero-fills 64 KB
-            // on Windows. Allocate uninitialized — sound for `[u8;N]`/`[u16;N]`.
-            // SAFETY: `T` is one of `PathBuffer`/`WPathBuffer`, both `#[repr(C)]`
-            // wrappers over an integer array, so every bit-pattern is valid.
-            unsafe { Box::<T>::new_uninit().assume_init() }
-        });
+        // Zig leaves the buffer `undefined`; we zero-allocate on the (rare)
+        // cache-miss path instead — see `PoolStorage::new_boxed` for the
+        // soundness/perf justification.
+        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(T::new_boxed);
         PoolGuard { buf: Some(buf) }
     }
 

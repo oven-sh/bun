@@ -857,8 +857,18 @@ impl HttpThread {
         if batch.len == 0 {
             return;
         }
-        // SAFETY: `init()` ran (every caller goes through `AsyncHttp::start`
-        // → `HTTPThread::init`), so `HTTP_THREAD` is initialized.
+        // Release-mode guard: `HttpThread` has niche-bearing fields, so
+        // dereffing `as_mut_ptr()` below on an uninitialized static is UB.
+        // The "every caller goes through `init`" invariant was unenforced
+        // (e.g. `async_http::preconnect` did not), so check it here. The
+        // `Acquire` load pairs with `init_once`'s `Release` store to publish
+        // the `HTTP_THREAD.write(..)` to this thread.
+        assert!(
+            crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
+            "HTTPThread::schedule() called before HTTPThread::init()"
+        );
+        // SAFETY: `HTTP_THREAD_INIT == true` (checked above) ⇒ `HTTP_THREAD`
+        // is fully written.
         // `get_unchecked` (no owner assert) + raw-ptr field access so we
         // never materialize a `&mut HttpThread` that would alias the HTTP
         // thread's borrow. `queued_tasks.push` takes `&self` (lock-free

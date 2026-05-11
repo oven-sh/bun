@@ -45,11 +45,7 @@ test("process exits after close() + closeAllConnections() + unref() teardown", a
   // If the teardown path is broken, the subprocess never exits and
   // `proc.exited` never resolves — the bun:test runner's default 5s
   // timeout catches that.
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Surface any uncaught exception / ASAN trace before the exit-code
   // assertion so failures point at the real cause.
   expect(stderr).toBe("");

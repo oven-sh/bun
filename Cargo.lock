@@ -1958,8 +1958,13 @@ dependencies = [
 name = "bun_runtime_types"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_io_types",
  "bun_spawn_types",
+ "bun_string",
+ "phf 0.11.3",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,7 +1,8 @@
 //! Cron expression parser and next-occurrence calculator.
 //!
 //! Parses standard 5-field cron expressions (minute hour day month weekday)
-//! into a bitset representation, and computes the next matching UTC time.
+//! into a bitset representation. Runtime/JSC code computes next matching wall
+//! times from this shape.
 //!
 //! Supports:
 //!   - Wildcards: *
@@ -13,9 +14,7 @@
 //!   - Sunday as 7: weekday field accepts 7 as alias for 0
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
-
-use bun_jsc::{JSGlobalObject, JsResult};
-use bun_str::strings;
+use bun_string::strings;
 use phf::phf_map;
 
 #[derive(Clone, Copy)]
@@ -121,60 +120,42 @@ impl CronExpression {
         &buf[..written]
     }
 
-    /// Compute the next UTC time (in ms since epoch) that matches this
-    /// expression, strictly after `from_ms`. Returns None if no match found
-    /// within 8 years.
-    pub fn next(&self, global_object: &JSGlobalObject, from_ms: f64) -> JsResult<Option<f64>> {
-        let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);
-        let start_year = dt.year;
-        dt.minute += 1;
-        dt.second = 0;
+    pub fn matches_datetime_parts(
+        &self,
+        month: i32,
+        day: i32,
+        weekday: i32,
+        hour: i32,
+        minute: i32,
+    ) -> bool {
+        self.contains_month(month)
+            && self.matches_day(day, weekday)
+            && self.contains_hour(hour)
+            && self.contains_minute(minute)
+    }
 
-        while dt.year - start_year <= 8 {
-            // Normalize overflow + recompute weekday via a UTC round-trip.
-            dt = global_object.ms_to_gregorian_date_time_utc(
-                global_object
-                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0)?,
-            );
+    pub fn contains_month(&self, month: i32) -> bool {
+        bit_set(self.months, u32::try_from(month).expect("int cast"))
+    }
 
-            if !bit_set(self.months, u32::try_from(dt.month).expect("int cast")) {
-                dt.month += 1;
-                dt.day = 1;
-                dt.hour = 0;
-                dt.minute = 0;
-                continue;
-            }
-            // POSIX: if both DOM and DOW are restricted (not `*`), either
-            // matching is enough; otherwise the `*` field matches all anyway.
-            let day_ok = bit_set(self.days, u32::try_from(dt.day).expect("int cast"));
-            let weekday_ok = bit_set(self.weekdays, u32::try_from(dt.weekday).expect("int cast"));
-            let day_match = if !self.days_is_wildcard && !self.weekdays_is_wildcard {
-                day_ok || weekday_ok
-            } else {
-                day_ok && weekday_ok
-            };
-            if !day_match {
-                dt.day += 1;
-                dt.hour = 0;
-                dt.minute = 0;
-                continue;
-            }
-            if !bit_set(self.hours, u32::try_from(dt.hour).expect("int cast")) {
-                dt.hour += 1;
-                dt.minute = 0;
-                continue;
-            }
-            if !bit_set(self.minutes, u32::try_from(dt.minute).expect("int cast")) {
-                dt.minute += 1;
-                continue;
-            }
-
-            return Ok(Some(
-                global_object
-                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0)?,
-            ));
+    pub fn matches_day(&self, day: i32, weekday: i32) -> bool {
+        let day_ok = bit_set(self.days, u32::try_from(day).expect("int cast"));
+        let weekday_ok = bit_set(self.weekdays, u32::try_from(weekday).expect("int cast"));
+        // POSIX: if both DOM and DOW are restricted (not `*`), either
+        // matching is enough; otherwise the `*` field matches all anyway.
+        if !self.days_is_wildcard && !self.weekdays_is_wildcard {
+            day_ok || weekday_ok
+        } else {
+            day_ok && weekday_ok
         }
-        Ok(None)
+    }
+
+    pub fn contains_hour(&self, hour: i32) -> bool {
+        bit_set(self.hours, u32::try_from(hour).expect("int cast"))
+    }
+
+    pub fn contains_minute(&self, minute: i32) -> bool {
+        bit_set(self.minutes, u32::try_from(minute).expect("int cast"))
     }
 }
 
@@ -188,7 +169,7 @@ pub const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
 pub const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
 
 fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
-    use bun_str::strings::eql_case_insensitive_asciii_check_length as eql;
+    use bun_string::strings::eql_case_insensitive_asciii_check_length as eql;
     if eql(expr, b"@yearly") || eql(expr, b"@annually") {
         return Some(CronExpression { minutes: 1, hours: 1, days: 1 << 1, months: 1 << 1, weekdays: ALL_WEEKDAYS, days_is_wildcard: false, weekdays_is_wildcard: true });
     }

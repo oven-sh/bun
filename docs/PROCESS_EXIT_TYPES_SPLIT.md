@@ -102,6 +102,11 @@ Natural sibling crates
   │     ├─> InstallerHandle / InstallCtx
   │     │     └─> typed install-task identity needed by lifecycle completion effects
   │     └─> SecurityScanExit
+  ├─> bun_runtime_types
+  │     ├─> cron_parser::CronExpression / CronError
+  │     │     └─> pure cron expression parse/state; JSC date conversion stays in bun_runtime
+  │     └─> cron / subprocess / shell / reader state
+  │           └─> runtime-domain process/task/readiness shape that can be named below bun_runtime
   └─> owning crates
         ├─> bun_io stores IO owner/token values and owns kernel registration
         ├─> bun_spawn owns process wait state and process lifetime
@@ -312,6 +317,8 @@ Process-exit production shape
   │     ├─> CronRegisterState
   │     ├─> CronRemoveState
   │     │     └─> sidecar-owned cron state-machine discriminants; JSC promise effects stay in bun_runtime
+  │     ├─> cron_parser::CronExpression
+  │     │     └─> parsed schedule bitsets; next-occurrence JSC wall-clock conversion stays in bun_runtime
   │     └─> ProcessState
   │           └─> child-process readiness/error state shared below bun_runtime
   └─> owning crates
@@ -531,6 +538,7 @@ Required deeper type movement
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
   │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
+  │     ├─> CronExpression / CronError now live in bun_runtime_types::cron_parser; only JSC date arithmetic remains in bun_runtime
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     ├─> the JSC promise/global side needs its own inert handle split before a complete cron job state can live below bun_runtime

@@ -42,8 +42,7 @@ pub use bun_jsc::BuildMessage;
 pub use bun_jsc::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
-#[path = "api/cron_parser.rs"]
-pub mod cron_parser;
+pub use bun_runtime_types::cron_parser;
 #[path = "api/cron.rs"]
 pub mod cron;
 #[path = "api/JSONCObject.rs"]

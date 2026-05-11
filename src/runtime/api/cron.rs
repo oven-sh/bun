@@ -10,7 +10,7 @@
 
 use std::io::Write as _;
 
-use super::cron_parser::{self, CronExpression};
+use bun_runtime_types::cron_parser::{self, CronExpression};
 
 use core::ffi::c_char;
 use std::cell::Cell;
@@ -73,6 +73,52 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+}
+
+/// Compute the next UTC time, in ms since epoch, that matches this expression
+/// strictly after `from_ms`. Returns None if no match is found within 8 years.
+fn cron_expression_next(
+    expr: &CronExpression,
+    global_object: &JSGlobalObject,
+    from_ms: f64,
+) -> JsResult<Option<f64>> {
+    let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);
+    let start_year = dt.year;
+    dt.minute += 1;
+    dt.second = 0;
+
+    while dt.year - start_year <= 8 {
+        // Normalize overflow + recompute weekday via a UTC round-trip.
+        dt = global_object.ms_to_gregorian_date_time_utc(
+            global_object.gregorian_date_time_to_ms_utc(
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0,
+            )?,
+        );
+
+        if !expr.matches_datetime_parts(dt.month, dt.day, dt.weekday, dt.hour, dt.minute) {
+            if !expr.contains_month(dt.month) {
+                dt.month += 1;
+                dt.day = 1;
+                dt.hour = 0;
+                dt.minute = 0;
+            } else if !expr.matches_day(dt.day, dt.weekday) {
+                dt.day += 1;
+                dt.hour = 0;
+                dt.minute = 0;
+            } else if !expr.contains_hour(dt.hour) {
+                dt.hour += 1;
+                dt.minute = 0;
+            } else {
+                dt.minute += 1;
+            }
+            continue;
+        }
+
+        return Ok(Some(global_object.gregorian_date_time_to_ms_utc(
+            dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
+        )?));
+    }
+    Ok(None)
 }
 
 // ============================================================================
@@ -1482,7 +1528,7 @@ impl CronJob {
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
         let from_ms = now_ms.max(self.last_next_ms);
-        let next_ms = match self.parsed.next(&self.global, from_ms) {
+        let next_ms = match cron_expression_next(&self.parsed, &self.global, from_ms) {
             Ok(Some(v)) => v,
             _ => return None,
         };
@@ -1854,7 +1900,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
-    let Some(next_ms) = parsed.next(global, from_ms)? else {
+    let Some(next_ms) = cron_expression_next(&parsed, global, from_ms)? else {
         return Ok(JSValue::NULL);
     };
     Ok(JSValue::from_date_number(global, next_ms))

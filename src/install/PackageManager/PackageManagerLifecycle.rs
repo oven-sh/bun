@@ -36,7 +36,7 @@ pub struct LifecycleScriptTimeLog {
 
 pub struct LifecycleScriptTimeLogEntry {
     // PORT NOTE: Zig borrowed the lockfile string buffer (`string`). The Rust
-    // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
+    // `LifecycleScriptState.package_name` is owned (`Box<[u8]>`) and freed
     // on `destroy`, so the log entry must own its copy to avoid a dangling
     // borrow. The list is at most a few dozen entries per install.
     pub package_name: Box<[u8]>,
@@ -328,11 +328,10 @@ impl PackageManager {
         self.cached_tick_for_slow_lifecycle_script_logging =
             self.event_loop.iteration_number();
         // SAFETY: `peek()` returned a non-null intrusive heap node owned by
-        // `active_lifecycle_scripts`; only read for its `started_at` /
-        // `package_name` fields below.
+        // `active_lifecycle_scripts`; only read for its lifecycle state below.
         let longest_running = unsafe { &*longest_running };
         let current_time = bun_core::Timespec::now_allow_mocked_time().ns();
-        let time_running = current_time.saturating_sub(longest_running.started_at);
+        let time_running = current_time.saturating_sub(longest_running.state.started_at);
         const NS_PER_S: u64 = 1_000_000_000;
         let interval: u64 = if log_level.is_verbose() {
             NS_PER_S * 5
@@ -343,7 +342,7 @@ impl PackageManager {
             && current_time.saturating_sub(self.last_reported_slow_lifecycle_script_at) > interval
         {
             self.last_reported_slow_lifecycle_script_at = current_time;
-            let package_name: &[u8] = &longest_running.package_name;
+            let package_name: &[u8] = &longest_running.state.package_name;
 
             if !(package_name.len() > 1 && package_name[package_name.len() - 1] == b's') {
                 Output::warn(format_args!(

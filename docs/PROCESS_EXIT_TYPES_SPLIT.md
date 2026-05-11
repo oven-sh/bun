@@ -87,6 +87,8 @@ Natural sibling crates
   │     └─> ProcessExitReadiness
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
+  │     ├─> LifecycleScriptState
+  │     │     └─> lifecycle command list, copied package name, current index, output readiness, and exit reducer
   │     ├─> ScriptsList
   │     │     └─> lifecycle command list data formerly owned in bun_install::lockfile::package::scripts
   │     └─> SecurityScanExit
@@ -207,14 +209,18 @@ ambiguity where the event-loop context could be an arbitrary local closure
 slot, but it still only identifies the manager, not the exact lifecycle
 subprocess.
 
-Lifecycle scripts and cron register/remove already use typed readiness reducers
-for process/output ordering, but their `ProcessExit` owner re-entry remains a
+Lifecycle scripts now also keep their pure command/readiness state in
+`bun_install_types::lifecycle::LifecycleScriptState`: script list, copied
+package name, current script index, output-fd readiness, and the
+`LifecycleScriptExit` reducer. Their `ProcessExit` owner re-entry remains a
 separate type-movement problem: when process exit is the last event, the current
-callback synchronously resumes the owning lifecycle/cron state and may free or
-restart that owner. A reducer pointer alone cannot preserve that behavior. The
-JS shell path has the same owner-movement requirement: a JS event loop can have
-multiple live shell interpreters, so a single loop `current_context` is not an
-identity for the interpreter.
+callback synchronously resumes the owning lifecycle state and may free or
+restart that owner. Cron register/remove have the same shape at the readiness
+level: typed reducers exist, but the exact job/effect owner still needs to move
+before `ProcessExitKind::{CronRegister,CronRemove}` can disappear. The JS shell
+path has the same owner-movement requirement: a JS event loop can have multiple
+live shell interpreters, so a single loop `current_context` is not an identity
+for the interpreter.
 
 ```
 Process-exit production shape
@@ -228,6 +234,8 @@ Process-exit production shape
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     │     └─> returns LifecycleScriptExitAction
+  │     ├─> LifecycleScriptState
+  │     │     └─> owns pure lifecycle command/readiness state while bun_install keeps effects
   │     └─> SecurityScanExit
   │           └─> returns SecurityScanExitAction
   ├─> bun_runtime_types
@@ -433,7 +441,7 @@ Remaining owner movement
 What a real next split must change
   ├─> lifecycle
   │     ├─> current typed reducer: LifecycleScriptExit in bun_install_types
-  │     ├─> current typed command data: ScriptsList in bun_install_types
+  │     ├─> current typed command/readiness state: ScriptsList + LifecycleScriptState in bun_install_types
   │     ├─> missing typed consumer: exact lifecycle owner/effect state, not PackageManager as a broad context
   │     └─> valid shape: move the lifecycle completion state that owns "spawn next / finish / destroy" decisions into an install sidecar type, then let bun_install apply only the package-manager effects
   ├─> cron
@@ -460,10 +468,11 @@ Required deeper type movement
   │     │     - PackageManager/Installer effects
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
   │     ├─> ScriptsList has moved into bun_install_types as the first command-data piece; the old lockfile path re-exports that sidecar type so install callers keep the same surface
+  │     ├─> LifecycleScriptState has moved the current index, copied package name, output readiness count, and LifecycleScriptExit reducer into bun_install_types without changing the old package-name allocation shape
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
   │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
   │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
-  │     ├─> lifecycle still needs the command state/storage split that owns those handles without recovering LifecycleScriptSubprocess
+  │     ├─> lifecycle still needs the process/reader/effect storage split that owns those handles without recovering LifecycleScriptSubprocess
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free

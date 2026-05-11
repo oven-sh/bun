@@ -1,4 +1,7 @@
 use bun_core::ZBox;
+use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
+
+use crate::{LifecycleScriptExit, LifecycleScriptExitAction};
 
 pub const SCRIPT_NAMES: [&str; 6] = [
     "preinstall",
@@ -42,6 +45,110 @@ impl ScriptsList {
     }
 }
 
+pub struct LifecycleScriptState {
+    pub scripts: ScriptsList,
+    pub package_name: Box<[u8]>,
+    pub current_script_index: u8,
+    pub pending_output_fds: i8,
+    pub exit_state: Option<LifecycleScriptExit>,
+    pub foreground: bool,
+    pub optional: bool,
+    pub started_at: u64,
+}
+
+impl LifecycleScriptState {
+    #[inline]
+    pub fn new(scripts: ScriptsList, foreground: bool, optional: bool) -> Self {
+        let package_name = scripts.package_name.clone();
+        Self {
+            scripts,
+            package_name,
+            current_script_index: 0,
+            pending_output_fds: 0,
+            exit_state: None,
+            foreground,
+            optional,
+            started_at: 0,
+        }
+    }
+
+    #[inline]
+    pub fn script_name(&self) -> &'static [u8] {
+        debug_assert!((self.current_script_index as usize) < SCRIPT_NAMES.len());
+        ScriptsList::script_name(self.current_script_index as usize).as_bytes()
+    }
+
+    #[inline]
+    pub fn reset_for_script(&mut self, script_index: u8) {
+        self.current_script_index = script_index;
+        self.pending_output_fds = 0;
+        self.exit_state = None;
+    }
+
+    #[inline]
+    pub fn reset_exit_state(&mut self) {
+        self.exit_state = None;
+        self.pending_output_fds = 0;
+    }
+
+    #[inline]
+    pub fn mark_started_at(&mut self, started_at: u64) {
+        self.pending_output_fds = 0;
+        self.started_at = started_at;
+    }
+
+    #[inline]
+    pub fn record_output_fd(&mut self) {
+        self.pending_output_fds += 1;
+    }
+
+    #[inline]
+    pub fn initialize_exit_state(&mut self, process: ProcessIdentity) {
+        self.exit_state = Some(LifecycleScriptExit::new(
+            process,
+            self.pending_output_fds,
+        ));
+    }
+
+    #[inline]
+    pub fn record_reader_done(&mut self) -> LifecycleScriptExitAction {
+        if let Some(exit_state) = self.exit_state.as_mut() {
+            exit_state.record_reader_done()
+        } else {
+            debug_assert!(self.pending_output_fds > 0);
+            self.pending_output_fds = self.pending_output_fds.saturating_sub(1);
+            LifecycleScriptExitAction::Pending
+        }
+    }
+
+    #[inline]
+    pub fn on_process_exit(&mut self, ctx: &ProcessExitContext<'_>) -> LifecycleScriptExitAction {
+        if self.exit_state.is_none() {
+            self.initialize_exit_state(ctx.process_identity());
+        }
+
+        self.exit_state
+            .as_mut()
+            .expect("exit state initialized above")
+            .on_process_exit(ctx)
+    }
+
+    #[inline]
+    pub fn output_drained(&self) -> bool {
+        self.exit_state
+            .as_ref()
+            .map(LifecycleScriptExit::output_drained)
+            .unwrap_or(self.pending_output_fds == 0)
+    }
+
+    #[inline]
+    pub fn exit_status(&self) -> Option<Status> {
+        self.exit_state
+            .as_ref()
+            .and_then(|exit_state| exit_state.exit_status.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +173,41 @@ mod tests {
         assert_eq!(SCRIPT_NAMES[1], "install");
         assert_eq!(ScriptsList::script_name(list.first_index as usize), "install");
         assert_eq!(list.first(), b"bun run install");
+    }
+
+    #[test]
+    fn lifecycle_state_records_reader_before_process_exit() {
+        let process = ProcessIdentity::from_usize(10).unwrap();
+        let rusage = bun_spawn_types::rusage_zeroed();
+        let mut state = LifecycleScriptState::new(
+            ScriptsList {
+                items: [
+                    Some(Box::<[u8]>::from(b"preinstall".as_slice())),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                first_index: 0,
+                total: 1,
+                cwd: ZBox::from_bytes(b"/tmp/pkg"),
+                package_name: Box::<[u8]>::from(b"pkg".as_slice()),
+            },
+            false,
+            false,
+        );
+
+        state.record_output_fd();
+        assert_eq!(state.record_reader_done(), LifecycleScriptExitAction::Pending);
+        assert_eq!(
+            state.on_process_exit(&ProcessExitContext::new(
+                process,
+                Status::Exited(bun_spawn_types::Exited { code: 0, signal: 0 }),
+                &rusage,
+            )),
+            LifecycleScriptExitAction::MaybeFinished
+        );
+        assert_eq!(state.exit_status().and_then(|status| status.exit_code()), Some(0));
     }
 }

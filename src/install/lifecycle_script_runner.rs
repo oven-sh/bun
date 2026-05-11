@@ -15,7 +15,8 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
-use bun_install_types::process_exit::{LifecycleScriptExit, LifecycleScriptExitAction};
+use bun_install_types::lifecycle::LifecycleScriptState;
+use bun_install_types::process_exit::LifecycleScriptExitAction;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
 use bun_str::ZStr;
@@ -200,19 +201,13 @@ pub fn replace_package_manager_run(
 }
 
 pub struct LifecycleScriptSubprocess<'a> {
-    pub package_name: Box<[u8]>,
-
-    pub scripts: ScriptsList,
-    pub current_script_index: u8,
-
-    pub pending_output_fds: i8,
+    pub state: LifecycleScriptState,
     /// Zig: `?*Process`. `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
     /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
     /// in `reset_polls` (mirrors Zig `process.close(); process.deref();`). Null = none.
     pub process: *mut Process,
     pub stdout: OutputReader,
     pub stderr: OutputReader,
-    pub exit_state: Option<LifecycleScriptExit>,
     /// Zig: `manager: *PackageManager`. Stored as raw `*mut` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
@@ -228,10 +223,6 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub timer: Option<Timer>,
 
     pub has_incremented_alive_count: bool,
-
-    pub foreground: bool,
-    pub optional: bool,
-    pub started_at: u64,
 
     pub ctx: Option<InstallCtx<'a>>,
 
@@ -270,7 +261,7 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     ) -> bool {
         // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
         // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+        unsafe { (*a).state.started_at < (*b).state.started_at }
     }
 }
 
@@ -337,36 +328,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn script_name(&self) -> &'static [u8] {
-        debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());
-        LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
+        self.state.script_name()
     }
 
     pub fn on_reader_done(&mut self) {
-        let action = if let Some(exit_state) = self.exit_state.as_mut() {
-            exit_state.record_reader_done()
-        } else {
-            debug_assert!(self.pending_output_fds > 0);
-            self.pending_output_fds = self.pending_output_fds.saturating_sub(1);
-            LifecycleScriptExitAction::Pending
-        };
-
+        let action = self.state.record_reader_done();
         self.apply_exit_action(action);
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        let action = if let Some(exit_state) = self.exit_state.as_mut() {
-            exit_state.record_reader_done()
-        } else {
-            debug_assert!(self.pending_output_fds > 0);
-            self.pending_output_fds = self.pending_output_fds.saturating_sub(1);
-            LifecycleScriptExitAction::Pending
-        };
+        let action = self.state.record_reader_done();
 
         Output::pretty_errorln(
             format_args!(
                 "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
                 bstr::BStr::new(self.script_name()),
-                bstr::BStr::new(&self.package_name),
+                bstr::BStr::new(&self.state.package_name),
                 err.errno,
                 <&'static str>::from(err.get_errno()),
             ),
@@ -384,11 +361,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             LifecycleScriptExitAction::Pending => {}
             LifecycleScriptExitAction::MaybeFinished => {
-                let Some(status) = self
-                    .exit_state
-                    .as_ref()
-                    .and_then(|exit_state| exit_state.exit_status.clone())
-                else {
+                let Some(status) = self.state.exit_status() else {
                     return;
                 };
                 self.handle_exit(status);
@@ -508,20 +481,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // whole-struct `&mut Self` across reentrant calls.
         unsafe {
         let manager: *mut PackageManager = (*this).manager;
-        let original_script = (*this).scripts.items[next_script_index as usize]
-            .as_ref()
-            .expect("script present");
-        let cwd = (*this).scripts.cwd.as_bytes();
         (*this).stdout.set_parent(this.cast::<c_void>());
         (*this).stderr.set_parent(this.cast::<c_void>());
 
-        // Raw-ptr receiver: touches only `heap`/`manager`, so the shared
-        // borrows `original_script`/`cwd` (into `(*this).scripts`) survive.
         Self::ensure_not_in_heap(this);
+        (*this).state.reset_for_script(next_script_index);
 
-        (*this).current_script_index = next_script_index;
-        (*this).pending_output_fds = 0;
-        (*this).exit_state = None;
+        let original_script = (*this).state.scripts.items[next_script_index as usize]
+            .as_ref()
+            .expect("script present");
+        let cwd = (*this).state.scripts.cwd.as_bytes();
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
         replace_package_manager_run(&mut copy_script, original_script)?;
@@ -531,12 +500,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let combined_script: &mut ZStr =
             ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
 
-        if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
+        if (*this).state.foreground && (*manager).options.log_level != crate::LogLevel::Silent {
             Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
         } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
             (*manager).set_node_name::<true>(
                 scripts_node,
-                &(*this).package_name,
+                &(*this).state.package_name,
                 ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );
             // .monotonic is okay because because this value is only used by hoisted installs, which
@@ -550,7 +519,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_output::scoped_log!(
             Script,
             "{} - {} $ {}",
-            bstr::BStr::new(&(*this).package_name),
+            bstr::BStr::new(&(*this).state.package_name),
             bstr::BStr::new((*this).script_name()),
             bstr::BStr::new(combined_script.as_bytes())
         );
@@ -596,7 +565,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // `mut` only for the Windows error-path `.deinit()` below.
         #[allow(unused_mut)]
         let mut spawn_options = SpawnOptions {
-            stdin: if (*this).foreground {
+            stdin: if (*this).state.foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 bun_spawn::Stdio::Ignore
@@ -604,7 +573,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+            } else if (*manager).options.log_level.is_verbose() || (*this).state.foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]
@@ -623,7 +592,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             },
             stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
                 bun_spawn::Stdio::Ignore
-            } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+            } else if (*manager).options.log_level.is_verbose() || (*this).state.foreground {
                 bun_spawn::Stdio::Inherit
             } else {
                 #[cfg(unix)]
@@ -651,9 +620,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ..Default::default()
         };
 
-        (*this).pending_output_fds = 0;
-        (*this).started_at =
-            bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime).ns();
+        (*this).state.mark_started_at(
+            bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime).ns(),
+        );
         // Store the allocation-rooted `this` in the intrusive heap — not a `&mut self`
         // reborrow, whose SB tag would be invalidated by the field accesses below.
         (*manager)
@@ -697,7 +666,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if !spawned.memfds[1] {
                     (*this).stdout.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stdout);
-                    (*this).pending_output_fds += 1;
+                    (*this).state.record_output_fd();
 
                     Self::reset_output_flags(&mut (*this).stdout, stdout);
                     (*this).stdout.start(stdout, true)?;
@@ -713,7 +682,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if !spawned.memfds[2] {
                     (*this).stderr.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stderr);
-                    (*this).pending_output_fds += 1;
+                    (*this).state.record_output_fd();
 
                     Self::reset_output_flags(&mut (*this).stderr, stderr);
                     (*this).stderr.start(stderr, true)?;
@@ -739,13 +708,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                 (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stdout.set_parent(this.cast::<c_void>());
-                (*this).pending_output_fds += 1;
+                (*this).state.record_output_fd();
                 (*this).stdout.start_with_current_pipe()?;
             }
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
                 (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stderr.set_parent(this.cast::<c_void>());
-                (*this).pending_output_fds += 1;
+                (*this).state.record_output_fd();
                 (*this).stderr.start_with_current_pipe()?;
             }
         }
@@ -760,10 +729,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         (*this).process = process;
         let process_identity = ProcessIdentity::from_ptr(process)
             .expect("spawned Process pointer must not be null");
-        (*this).exit_state = Some(LifecycleScriptExit::new(
-            process_identity,
-            (*this).pending_output_fds,
-        ));
+        (*this).state.initialize_exit_state(process_identity);
         // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
         // we hold no live `&mut Self` here, so the synchronous `on_exit`
         // dispatch below may reenter `on_process_exit` through it without
@@ -833,7 +799,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_output::scoped_log!(
             Script,
             "{} - {} finished {}",
-            bstr::BStr::new(&self.package_name),
+            bstr::BStr::new(&self.state.package_name),
             bstr::BStr::new(self.script_name()),
             status
         );
@@ -854,7 +820,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 let maybe_duration = self.timer.as_mut().map(|t| t.read());
 
                 if exit.code > 0 {
-                    if self.optional {
+                    if self.state.optional {
                         if let Some(ctx) = &self.ctx {
                             // SAFETY: `installer` outlives every subprocess and is
                             // single-threaded across the lifecycle-script callbacks.
@@ -874,7 +840,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
                         bstr::BStr::new(self.script_name()),
-                        bstr::BStr::new(&self.package_name),
+                        bstr::BStr::new(&self.state.package_name),
                         exit.code,
                     ));
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -883,7 +849,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Global::exit(exit.code as u32);
                 }
 
-                if !self.foreground
+                if !self.state.foreground
                     && let Some(scripts_node) = self.manager().scripts_node_mut()
                 {
                     // .monotonic is okay because because this value is only used by hoisted
@@ -909,8 +875,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
                             // `destroy`, so the log entry takes its own owned copy.
                             LifecycleScriptTimeLogEntry {
-                                package_name: self.package_name.clone(),
-                                script_id: self.current_script_index,
+                                package_name: self.state.package_name.clone(),
+                                script_id: self.state.current_script_index,
                                 duration: nanos,
                             },
                         );
@@ -918,7 +884,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if let Some(ctx) = &self.ctx {
-                    match self.current_script_index {
+                    match self.state.current_script_index {
                         // preinstall
                         0 => {
                             // SAFETY: see above (`installer` outlives every subprocess).
@@ -939,9 +905,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 for new_script_index in
-                    (self.current_script_index as usize + 1)..LockfileScripts::NAMES.len()
+                    (self.state.current_script_index as usize + 1)..LockfileScripts::NAMES.len()
                 {
-                    if self.scripts.items[new_script_index].is_some() {
+                    if self.state.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
                         // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
                         // uniquely owned here; we do not touch `self` again on the
@@ -969,7 +935,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if PackageManager::verbose_install() {
                     Output::pretty_errorln(format_args!(
                         "<r><d>[Scripts]<r> Finished scripts for <b>{}<r>",
-                        bun_core::fmt::quote(&self.package_name),
+                        bun_core::fmt::quote(&self.state.package_name),
                     ));
                 }
 
@@ -980,7 +946,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             [ctx.entry_id.get() as usize]
                             .swap(Step::Done as u32, Ordering::Release);
                         if bun_core::Environment::CI_ASSERT {
-                            debug_assert!(self.current_script_index != 0);
+                            debug_assert!(self.state.current_script_index != 0);
                             debug_assert!(
                                 previous_step == Step::RunPostInstallAndPrePostPrepare as u32
                             );
@@ -1003,7 +969,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(&self.package_name),
+                    bstr::BStr::new(&self.state.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 ));
 
@@ -1018,7 +984,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 );
             }
             Status::Err(err) => {
-                if self.optional {
+                if self.state.optional {
                     if let Some(ctx) = &self.ctx {
                         // SAFETY: see above (`installer` outlives every subprocess).
                         unsafe {
@@ -1037,7 +1003,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to\n{}",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(&self.package_name),
+                    bstr::BStr::new(&self.state.package_name),
                     err,
                 ));
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1049,7 +1015,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Output::panic(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(&self.package_name),
+                    bstr::BStr::new(&self.state.package_name),
                     status,
                 ));
             }
@@ -1070,16 +1036,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ));
             return;
         }
-        if self.exit_state.is_none() {
-            self.exit_state = Some(LifecycleScriptExit::new(
-                process_identity,
-                self.pending_output_fds,
-            ));
-        }
         let action = self
-            .exit_state
-            .as_mut()
-            .expect("exit state initialized above")
+            .state
             .on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
         self.apply_exit_action(action);
     }
@@ -1087,9 +1045,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub fn reset_polls(&mut self) {
         if cfg!(debug_assertions) {
             debug_assert!(
-                self.exit_state
+                self.state.exit_state
                     .as_ref()
-                    .is_none_or(LifecycleScriptExit::output_drained)
+                    .is_none_or(|exit_state| exit_state.output_drained())
             );
         }
 
@@ -1107,8 +1065,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
-        self.exit_state = None;
-        self.pending_output_fds = 0;
+        self.state.reset_exit_state();
     }
 
     /// Consumes and frees a heap-allocated `LifecycleScriptSubprocess` created by [`Self::new`].
@@ -1128,15 +1085,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if self.manager().options.log_level.is_verbose() {
             Output::warn(format_args!(
                 "deleting optional dependency '{}' due to failed '{}' script",
-                bstr::BStr::new(&self.package_name),
+                bstr::BStr::new(&self.state.package_name),
                 bstr::BStr::new(self.script_name()),
             ));
         }
         'try_delete_dir: {
-            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
+            let Some(dirname) = bun_core::dirname(self.state.scripts.cwd.as_bytes()) else {
                 break 'try_delete_dir;
             };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
+            let basename = bun_paths::basename(self.state.scripts.cwd.as_bytes());
             let Ok(dir) = bun_sys::open_dir_absolute(dirname) else {
                 break 'try_delete_dir;
             };
@@ -1162,27 +1119,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
+            state: LifecycleScriptState::new(list, foreground, optional),
             manager,
             envp,
             shell_bin,
-            package_name,
-            scripts: list,
-            foreground,
-            optional,
             ctx,
-            // defaults:
-            current_script_index: 0,
-            pending_output_fds: 0,
             process: core::ptr::null_mut(),
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
-            exit_state: None,
             timer: None,
             has_incremented_alive_count: false,
-            started_at: 0,
             heap: io_heap::IntrusiveField::default(),
         });
 
@@ -1190,7 +1137,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Output::pretty_errorln(format_args!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
                 // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
-                bstr::BStr::new(unsafe { &(*lifecycle_subprocess).scripts.package_name }),
+                bstr::BStr::new(unsafe {
+                    &(*lifecycle_subprocess).state.scripts.package_name
+                }),
             ));
         }
 
@@ -1198,7 +1147,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { &*lifecycle_subprocess }.increment_pending_script_tasks();
 
         // SAFETY: as above.
-        let first_index = unsafe { &(*lifecycle_subprocess).scripts }.first_index;
+        let first_index = unsafe { &(*lifecycle_subprocess).state.scripts }.first_index;
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {

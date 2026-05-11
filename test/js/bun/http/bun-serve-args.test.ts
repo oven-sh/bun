@@ -678,7 +678,7 @@ describe("app.bundlerOptions validation", () => {
     expect(() => {
       // @ts-expect-error - Testing invalid input
       serve({ port: 0, app: { bundlerOptions: value } });
-    }).toThrow(TypeError);
+    }).toThrow("'app.bundlerOptions' must be an object");
   });
 
   describe.each(["server", "client", "ssr"])("bundlerOptions.%s", key => {
@@ -686,7 +686,7 @@ describe("app.bundlerOptions validation", () => {
       expect(() => {
         // @ts-expect-error - Testing invalid input
         serve({ port: 0, app: { bundlerOptions: { [key]: value } } });
-      }).toThrow(TypeError);
+      }).toThrow(`'app.bundlerOptions.${key}' must be an object`);
     });
   });
 });

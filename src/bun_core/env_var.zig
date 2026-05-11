@@ -37,6 +37,11 @@ pub const BUN_CONFIG_DISABLE_ioctl_ficlonerange = New(kind.boolean, "BUN_CONFIG_
 ///
 /// It's unclear why this was done.
 pub const BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS = New(kind.unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", .{ .default = 30 });
+/// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
+/// The timer is armed when the socket opens and re-armed on every read/write;
+/// if it fires the request fails with `error.Timeout`. Covers the TLS
+/// handshake through the response body. 0 disables. See `src/http/http.zig`.
+pub const BUN_CONFIG_HTTP_IDLE_TIMEOUT = New(kind.unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", .{ .default = 300 });
 pub const BUN_CRASH_REPORT_URL = New(kind.string, "BUN_CRASH_REPORT_URL", .{});
 pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});

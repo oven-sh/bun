@@ -92,6 +92,14 @@ describe("Bun.Terminal", () => {
     test("throws when options is undefined", () => {
       expect(() => new Bun.Terminal(undefined as any)).toThrow();
     });
+
+    test("throws when options is not an object", () => {
+      expect(() => new Bun.Terminal(8 as any)).toThrow();
+      expect(() => new Bun.Terminal("hello" as any)).toThrow();
+      expect(() => new Bun.Terminal(true as any)).toThrow();
+      expect(() => new Bun.Terminal(1n as any)).toThrow();
+      expect(() => new Bun.Terminal(Symbol() as any)).toThrow();
+    });
   });
 
   describe("write", () => {

@@ -77,12 +77,31 @@ pub struct DirWatcher {
     /// must be initialized to zero (even though it's never read or written in our code),
     /// otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
     pub overlapped: w::OVERLAPPED,
-    // TODO(port): Zig had `align(@alignOf(w.FILE_NOTIFY_INFORMATION))` on this field.
-    // FILE_NOTIFY_INFORMATION is DWORD-aligned (4); preceding OVERLAPPED guarantees ≥ that,
-    // but Phase B should add an explicit `#[repr(align(4))]` wrapper or static-assert.
+    /// Zig had `align(@alignOf(w.FILE_NOTIFY_INFORMATION))` on this field.
+    /// `FILE_NOTIFY_INFORMATION` is DWORD-aligned (4); the preceding
+    /// `OVERLAPPED` (32 bytes, align 8) guarantees `buf` lands at offset 32,
+    /// which the `assert_ffi_layout!` below locks in (and `32 % 4 == 0` is the
+    /// alignment proof for the `FILE_NOTIFY_INFORMATION` cast in
+    /// `EventIterator::next`).
     pub buf: [u8; 64 * 1024],
     pub dir_handle: HANDLE,
 }
+
+// `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
+// the `*FILE_NOTIFY_INFORMATION` cast. Asserting the offset (not just the
+// total size) is what discharges the dropped Zig `align(...)` annotation.
+bun_core::assert_ffi_layout!(
+    DirWatcher,
+    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>(),
+    ::core::mem::align_of::<w::OVERLAPPED>();
+    overlapped @ 0, buf @ 32, dir_handle @ 32 + 64 * 1024,
+);
+const _: () = assert!(
+    ::core::mem::offset_of!(DirWatcher, buf)
+        % ::core::mem::align_of::<w::FILE_NOTIFY_INFORMATION>()
+        == 0,
+    "DirWatcher.buf must be FILE_NOTIFY_INFORMATION-aligned",
+);
 
 impl DirWatcher {
     /// invalidates any EventIterators

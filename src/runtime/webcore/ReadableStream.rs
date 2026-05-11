@@ -501,6 +501,16 @@ pub enum Tag {
     Bytes = 4,
 }
 
+// `ReadableStreamTag__tagged` (C++ `webcore/ReadableStream.cpp:387`) returns
+// raw `int32_t`; the extern decl above types it as `Tag`, so an out-of-range
+// value would be immediate UB. Lock the discriminant width and every variant
+// value so a C++-side addition that Rust hasn't mirrored fails the build here
+// instead of materialising an invalid enum.
+bun_core::assert_ffi_discr!(
+    Tag, i32;
+    Invalid = -1, JavaScript = 0, Blob = 1, File = 2, Direct = 3, Bytes = 4,
+);
+
 // Clone/Copy: bitwise OK — variant pointers are non-owning handles to
 // JSC-managed loader objects (lifetime governed by the stream/JS heap).
 #[derive(Copy, Clone)]

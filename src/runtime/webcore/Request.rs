@@ -109,9 +109,14 @@ pub struct Request {
     pub internal_event_callback: JsCell<InternalJSEventCallback>,
 }
 
-// TODO(port): was `packed struct(u8)`. Fields are enums + 1 bool, not all-bool, so the
-// guide says #[repr(transparent)] u8 + shift accessors. Kept as a plain struct here to
-// preserve direct-field-access logic 1:1; restore bit-packing in Phase B if size/FFI matters.
+// PORT NOTE: Zig was `packed struct(u8)` (u2+u3+u2+bool = 8 bits). Fields are
+// enums + 1 bool, so the canonical port would be `#[repr(transparent)]` u8 +
+// shift accessors. Kept as a `#[repr(C)]` 4-byte struct to preserve direct
+// field access — `Request` is only ever passed to C++ by **pointer** with size
+// reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
+// not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout
+// deterministic and grep-discoverable.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub redirect: FetchRedirect,
@@ -119,6 +124,8 @@ pub struct Flags {
     pub mode: FetchRequestMode,
     pub https: bool,
 }
+
+bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
 
 impl Default for Flags {
     fn default() -> Self {

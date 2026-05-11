@@ -36,6 +36,13 @@ pub enum BunPluginTarget {
     Browser = 2,
 }
 
+// Crosses FFI by-value to `JSBundlerPlugin__create` / `Bun__runOn*Plugins`
+// (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
+// C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
+// disagree with Zig `JSGlobalObject.zig:265` (`node = 1`, `browser = 2`); Rust
+// matches the Zig spec. The width (`u8`) is what matters at the ABI.
+bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
+
 /// Spec PluginRunner.zig:34 `onResolve` — the JSC-aware resolve hook.
 ///
 /// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be

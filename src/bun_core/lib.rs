@@ -302,6 +302,11 @@ pub use bun_alloc::{
     Alignment, Allocator, page_size, ZigString,
 };
 pub use bun_alloc::oom_from_alloc;
+// FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
+// that hosts both the opaque-handle macro and the layout-assert macro, so all
+// "FFI shape invariant" tooling lives in one file. Re-exported here so callers
+// can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
+pub use bun_opaque::{assert_ffi_discr, assert_ffi_layout, FfiLayout};
 pub use util::*;
 pub use result::*;
 pub use Global::*;

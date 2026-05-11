@@ -216,13 +216,13 @@ impl Value {
                 // callback that frees the slice via that arena then destroys the
                 // context. With the global arena, the context collapses to the
                 // (ptr, len) pair already passed to the callback.
-                extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: u32) {
+                extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: usize) {
                     // SAFETY: `buffer`/`len` were produced by `heap::alloc` on a
                     // `Box<[u8]>` below; reconstructing and dropping is sound.
                     unsafe {
                         drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                             buffer.cast::<u8>(),
-                            len as usize,
+                            len,
                         )));
                     }
                 }
@@ -264,7 +264,7 @@ impl Value {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
                 }
-                extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: u32) {}
+                extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
                 // latin1 = true (matches Zig).
                 BunString::create_external::<*mut c_void>(
                     bytes,

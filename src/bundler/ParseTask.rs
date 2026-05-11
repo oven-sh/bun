@@ -1497,12 +1497,6 @@ pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
     result: *mut OnBeforeParseResult,
 }
 
-// TODO(port): comptime size/align asserts vs bun.c.OnBeforeParseArguments etc.
-// Phase B: const _: () = assert!(size_of::<OnBeforeParseArguments>() == size_of::<bun_sys::c::OnBeforeParseArguments>());
-const _: () = {
-    // Placeholder to keep the comptime block visible to reviewers.
-};
-
 #[repr(C)]
 pub struct OnBeforeParseArguments {
     pub struct_size: usize,
@@ -1540,9 +1534,12 @@ pub struct BunLogOptions {
     pub source_line_text_ptr: *const u8,
     pub source_line_text_len: usize,
     pub level: bun_ast::Level,
+    // Field order matches `packages/bun-native-bundler-plugin-api/bundler_plugin.h`
+    // `BunLogOptions` (`line, lineEnd, column, columnEnd`) — verified by the
+    // `assert_ffi_layout!` offset checks below.
     pub line: i32,
-    pub column: i32,
     pub line_end: i32,
+    pub column: i32,
     pub column_end: i32,
 }
 
@@ -1558,12 +1555,34 @@ impl Default for BunLogOptions {
             source_line_text_len: 0,
             level: bun_ast::Level::Err,
             line: 0,
-            column: 0,
             line_end: 0,
+            column: 0,
             column_end: 0,
         }
     }
 }
+
+// Restore the Zig comptime asserts (`ParseTask.zig:808-818`) the port dropped.
+// These structs are passed by-pointer to **third-party** native plugins via
+// `packages/bun-native-bundler-plugin-api/bundler_plugin.h`, so layout drift
+// is a silent ABI break for every plugin in the wild. Literals are the 64-bit
+// C layout; Phase-B codegen will replace them with probed constants.
+bun_core::assert_ffi_layout!(
+    OnBeforeParseArguments, 64, 8;
+    struct_size @ 0, context @ 8, path_ptr @ 16, path_len @ 24,
+    namespace_ptr @ 32, namespace_len @ 40, default_loader @ 48, external @ 56,
+);
+bun_core::assert_ffi_layout!(
+    BunLogOptions, 80, 8;
+    struct_size @ 0, message_ptr @ 8, message_len @ 16, path_ptr @ 24,
+    path_len @ 32, source_line_text_ptr @ 40, source_line_text_len @ 48,
+    level @ 56, line @ 60, line_end @ 64, column @ 68, column_end @ 72,
+);
+bun_core::assert_ffi_layout!(
+    OnBeforeParseResult, 64, 8;
+    struct_size @ 0, source_ptr @ 8, source_len @ 16, loader @ 24,
+    fetch_source_code_fn @ 32, user_context @ 40, free_user_context @ 48, log @ 56,
+);
 
 impl BunLogOptions {
     pub fn source_line_text(&self) -> &[u8] {

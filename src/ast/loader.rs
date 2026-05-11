@@ -42,6 +42,18 @@ pub enum Loader {
     Md = 20,
 }
 
+// Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
+// `OnBeforeParseArguments` / `OnBeforeParseResult` (`bundler_plugin.h`); lock
+// the discriminant width and the values native plugins observe. NB: the C
+// header's `BUN_LOADER_TOML = 7` etc. predate `Jsonc`'s insertion at 7 and are
+// known-stale — Zig `options.zig` is the source of truth, which Rust matches.
+bun_core::assert_ffi_discr!(
+    Loader, u8;
+    Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
+    Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
+    Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
+);
+
 impl Default for Loader {
     /// Mirrors Zig's `Loader = .file` default field initializer.
     fn default() -> Self {

@@ -759,10 +759,10 @@ impl HTMLString {
 
     /// Free callback for `bun.String.createExternal`. Exposed so the higher-level
     /// wrapper crate can build an external WTF string backed by this buffer.
-    pub extern "C" fn deinit_external(_: *mut u8, ptr: *mut c_void, len: u32) {
+    pub extern "C" fn deinit_external(_: *mut u8, ptr: *mut c_void, len: usize) {
         auto_disable();
         // SAFETY: ptr/len were the original HTMLString fields passed to createExternal
-        unsafe { lol_html_str_free(HTMLString { ptr: ptr as *const u8, len: len as usize }) };
+        unsafe { lol_html_str_free(HTMLString { ptr: ptr as *const u8, len }) };
     }
 
     // `to_string(self) -> bun.String` and `to_js` live in the higher-tier

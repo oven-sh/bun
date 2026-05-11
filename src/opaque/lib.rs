@@ -86,6 +86,130 @@ macro_rules! opaque_ffi {
     };
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// FFI layout assertions
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Marker: `Self` is passed across `extern "C"` by value (or embedded in a
+/// type that is) and its Rust layout has been **statically verified** against
+/// the foreign side's `sizeof`/`alignof`. Implemented only via
+/// [`assert_ffi_layout!`]; never `impl` by hand.
+///
+/// Generic FFI helpers may bound on `T: FfiLayout` to refuse unaudited types
+/// at the *call* site, not just the *decl* site.
+///
+/// # Safety
+/// Implementing this trait asserts that `size_of::<Self>() == C_SIZE` and
+/// `align_of::<Self>() == C_ALIGN`, and that those constants match the C/C++
+/// declaration `Self` is paired with. The only sound way to discharge this
+/// obligation is via [`assert_ffi_layout!`], which `const`-asserts both.
+pub unsafe trait FfiLayout {
+    /// `sizeof(T)` on the C/C++ side. Equals `size_of::<Self>()` (asserted).
+    const C_SIZE: usize;
+    /// `alignof(T)` on the C/C++ side. Equals `align_of::<Self>()` (asserted).
+    const C_ALIGN: usize;
+}
+
+/// Compile-time-fail if `size_of::<$T>() != $size` or
+/// `align_of::<$T>() != $align`. Also implements [`FfiLayout`] for `$T`, so
+/// the assertion is the *only* way to acquire the marker.
+///
+/// ```ignore
+/// // Mirrors C++: static_assert(sizeof(BunString) == 24 && alignof == 8)
+/// bun_opaque::assert_ffi_layout!(BunString, 24, 8);
+///
+/// // With per-field offset checks (catches field-order swaps that preserve
+/// // total size — e.g. ParseTask.rs BunLogOptions level/line swap):
+/// bun_opaque::assert_ffi_layout!(BunLogOptions, 80, 8; level @ 56, line @ 60);
+///
+/// // Cross-checked against a bindgen'd / codegen'd mirror struct instead of
+/// // a literal — preferred when one exists:
+/// bun_opaque::assert_ffi_layout!(OnBeforeParseArguments = bun_sys::c::OnBeforeParseArguments);
+/// ```
+///
+/// The error message embeds both expected and actual values via
+/// `concat!`/`stringify!` so a drift shows *what* changed, not just "false".
+#[macro_export]
+macro_rules! assert_ffi_layout {
+    // literal size, align
+    ($T:ty, $size:expr, $align:expr $(; $($field:ident @ $off:expr),+ $(,)?)?) => {
+        const _: () = {
+            ::core::assert!(
+                ::core::mem::size_of::<$T>() == $size,
+                concat!(
+                    "FFI layout: size_of::<", stringify!($T), ">() != ", stringify!($size),
+                    " — Rust struct drifted from C/C++ declaration"
+                ),
+            );
+            ::core::assert!(
+                ::core::mem::align_of::<$T>() == $align,
+                concat!("FFI layout: align_of::<", stringify!($T), ">() != ", stringify!($align)),
+            );
+            $($(
+                ::core::assert!(
+                    ::core::mem::offset_of!($T, $field) == $off,
+                    concat!(
+                        "FFI layout: offset_of!(", stringify!($T), ", ",
+                        stringify!($field), ") != ", stringify!($off)
+                    ),
+                );
+            )+)?
+        };
+        // SAFETY: the const-asserts above are the proof obligation.
+        unsafe impl $crate::FfiLayout for $T {
+            const C_SIZE: usize = $size;
+            const C_ALIGN: usize = $align;
+        }
+    };
+    // mirror-type form: assert against a bindgen'd C struct
+    ($T:ty = $Mirror:ty $(; $($field:ident),+ $(,)?)?) => {
+        $crate::assert_ffi_layout!(
+            $T,
+            ::core::mem::size_of::<$Mirror>(),
+            ::core::mem::align_of::<$Mirror>()
+            $(; $($field @ ::core::mem::offset_of!($Mirror, $field)),+)?
+        );
+    };
+}
+
+/// Compile-time-fail if a `#[repr(<int>)]` enum's discriminant type is not the
+/// width the C side expects. Catches `#[repr(u8)]` ↔ C `int` mismatches.
+///
+/// ```ignore
+/// bun_opaque::assert_ffi_discr!(BufferEncodingType, u8);   // C++ is `enum class : uint8_t`
+/// bun_opaque::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
+/// ```
+#[macro_export]
+macro_rules! assert_ffi_discr {
+    ($T:ty, $int:ty $(; $($var:ident = $val:expr),+ $(,)?)?) => {
+        const _: () = {
+            ::core::assert!(
+                ::core::mem::size_of::<$T>() == ::core::mem::size_of::<$int>(),
+                concat!(
+                    "FFI discriminant: size_of::<", stringify!($T),
+                    ">() != size_of::<", stringify!($int), ">()"
+                ),
+            );
+            ::core::assert!(
+                ::core::mem::align_of::<$T>() == ::core::mem::align_of::<$int>(),
+                concat!(
+                    "FFI discriminant: align_of::<", stringify!($T),
+                    ">() != align_of::<", stringify!($int), ">()"
+                ),
+            );
+            $($(
+                ::core::assert!(
+                    <$T>::$var as $int == $val,
+                    concat!(
+                        "FFI discriminant: ", stringify!($T), "::",
+                        stringify!($var), " != ", stringify!($val)
+                    ),
+                );
+            )+)?
+        };
+    };
+}
+
 /// Safe `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
 /// handle (the body emitted by [`opaque_ffi!`]).
 ///

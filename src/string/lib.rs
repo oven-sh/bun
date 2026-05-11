@@ -45,8 +45,10 @@ pub use bun_alloc::{StringImpl, Tag};
 #[derive(Clone, Copy)]
 pub struct String(pub bun_alloc::String);
 
-const _: () = assert!(core::mem::size_of::<String>() == 24);
-const _: () = assert!(core::mem::align_of::<String>() == 8);
+// C++ mirror: `struct BunString { BunStringTag tag; BunStringImpl impl; }`
+// (`headers-handwritten.h`); returned **by value** from every `BunString__*`
+// FFI below, so size/align drift is silent ABI corruption.
+bun_core::assert_ffi_layout!(String, 24, 8);
 // The `as_zig()` accessor reinterprets `&bun_alloc::ZigString` as
 // `&crate::ZigString`; both are `#[repr(C)] { *const u8, usize }` with the
 // same pointer-tag-bit scheme.
@@ -76,7 +78,7 @@ unsafe extern "C" {
         len: usize,
         is_latin1: bool,
         ctx: *mut core::ffi::c_void,
-        callback: Option<extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, u32)>,
+        callback: Option<extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize)>,
     ) -> String;
     fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> String;
     fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
@@ -84,8 +86,13 @@ unsafe extern "C" {
 
 /// `ctx` is the pointer passed into `create_external`; `buffer` is the
 /// `[*]u8`/`[*]u16` storage; `len` is the character count.
+///
+/// C++ signature (`BunString.cpp` `BunString__createExternal`):
+/// `void (*)(void*, void*, size_t)` — the third arg is `size_t`, **not**
+/// `unsigned`. A `u32` here would truncate on 64-bit and (worse) shift the
+/// stack/register layout for the callee on Win64 where `size_t` ≠ `unsigned`.
 pub type ExternalStringImplFreeFunction<Ctx> =
-    extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: u32);
+    extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
     pub const EMPTY: Self = Self(bun_alloc::String::EMPTY);
@@ -268,7 +275,7 @@ impl String {
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
         if bytes.len() >= Self::max_length() {
-            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len() as u32);
+            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
             return Self::DEAD;
         }
         // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` (raw pointer, no
@@ -281,11 +288,11 @@ impl String {
         // above); read the bits as `*mut c_void`.
         let ctx_erased: *mut c_void =
             unsafe { core::ptr::from_ref::<Ctx>(&*ctx).cast::<*mut c_void>().read() };
-        let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
+        let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, usize)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
             Some(unsafe { bun_ptr::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
-                extern "C" fn(*mut c_void, *mut c_void, u32),
+                extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
         // SAFETY: bytes describes a valid slice; len < max_length checked.
         let s = unsafe {

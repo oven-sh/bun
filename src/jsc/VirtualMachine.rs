@@ -2901,7 +2901,7 @@ unsafe extern "C" {
     fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
-extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: u32) {
+extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
     // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
     // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
     unsafe { crate::ref_string::RefString::destroy(str_) };

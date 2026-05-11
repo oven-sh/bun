@@ -1056,13 +1056,16 @@ impl PackageManager {
         // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
         // reference, only a place projection.
         let event_loop: *mut AnyEventLoop<'static> = unsafe { &raw mut (*this).event_loop };
-        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
-        // calls (never across them), so the callback's `&mut PackageManager`
-        // never overlaps a live `&mut AnyEventLoop`.
+        // SAFETY: `tick_raw_with_current_context` reborrows `*event_loop` only
+        // between `is_done` calls (never across them), so the callback's `&mut
+        // PackageManager` never overlaps a live `&mut AnyEventLoop`. The
+        // closure remains the task/is_done context, while process-exit delivery
+        // sees the stable PackageManager context.
         unsafe {
-            AnyEventLoop::tick_raw(
+            AnyEventLoop::tick_raw_with_current_context(
                 event_loop,
                 (&raw mut erased).cast::<c_void>(),
+                this.cast::<c_void>(),
                 trampoline::<C>,
             )
         };

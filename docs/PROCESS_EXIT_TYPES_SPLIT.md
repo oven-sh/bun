@@ -197,6 +197,13 @@ Mini shell subprocesses use the same idea with shell arena identity:
 the standalone-shell driver exposes the live `Interpreter` as the Mini tick
 context, and runtime dispatch calls back into the command arena by `NodeId`
 without storing `ShellSubprocess*` in the process.
+Installer sleeps now use the same current-context shape without changing their
+closure callback context: `PackageManager::sleep_until` keeps its erased
+`is_done` closure as the Mini/JS task context, while exposing `PackageManager*`
+as the event-loop current context during tick bodies. That removes the previous
+ambiguity where the event-loop context could be an arbitrary local closure
+slot, but it still only identifies the manager, not the exact lifecycle
+subprocess.
 
 Lifecycle scripts and cron register/remove already use typed readiness reducers
 for process/output ordering, but their `ProcessExit` owner re-entry remains a
@@ -327,7 +334,12 @@ Process-exit production wiring
   ├─> event_loop/AnyEventLoop.rs and jsc/event_loop.rs
   │     ├─> MiniEventLoop already exposed the tick context while draining tasks and file polls
   │     ├─> the JS AnyEventLoop arm now sets/restores EventLoop.current_context around tick work too
+  │     ├─> AnyEventLoop::tick_raw_with_current_context separates is_done/task context from current typed context
   │     └─> runtime dispatch can rely on the same typed current-context boundary for JS and Mini drivers
+  ├─> install/PackageManager.rs
+  │     ├─> sleep_until keeps the local closure pointer as the is_done/task context
+  │     ├─> exposes PackageManager* as the event-loop current context while tick work runs
+  │     └─> does not by itself identify which LifecycleScriptSubprocess completed
   ├─> runtime/shell/interpreter.rs and subproc.rs
   │     ├─> standalone shell passes the live Interpreter as MiniEventLoop tick context
   │     ├─> Mini shell subprocesses install RuntimeProcessExitTarget::ShellCommand { command: NodeId }
@@ -363,7 +375,8 @@ Remaining owner movement
   │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, timer, intrusive heap node
   │     │     - spawn_next_script_inner still installs ProcessExit::LifecycleScript after ProcessIdentity exists
   │     ├─> current event-loop context
-  │     │     - PackageManager::tick_lifecycle_scripts / sleep pass PackageManager* as AnyEventLoop context
+  │     │     - PackageManager::tick_lifecycle_scripts passes PackageManager* directly
+  │     │     - PackageManager::sleep_until now separates task/is_done closure context from current typed context and exposes PackageManager*
   │     │     - that proves the manager is live, but it does not identify which active LifecycleScriptSubprocess finished
   │     ├─> current re-entry: LifecycleScriptSubprocess::on_process_exit
   │     │     - validates ProcessIdentity, updates LifecycleScriptExit, then calls apply_exit_action()
@@ -440,6 +453,7 @@ Required deeper type movement
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
   │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
+  │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
   │     ├─> lifecycle still needs the command state/storage split that owns those handles without recovering LifecycleScriptSubprocess
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone

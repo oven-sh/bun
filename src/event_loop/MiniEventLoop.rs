@@ -387,8 +387,17 @@ impl<'a> MiniEventLoop<'a> {
 
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
+        self.tick_once_with_current_context(context, context);
+    }
+
+    #[inline]
+    pub fn tick_once_with_current_context(
+        &mut self,
+        task_context: *mut c_void,
+        current_context: *mut c_void,
+    ) {
         let previous_context = self.current_context;
-        self.current_context = NonNull::new(context);
+        self.current_context = NonNull::new(current_context);
 
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: see `loop_ptr()` invariant.
@@ -403,7 +412,7 @@ impl<'a> MiniEventLoop<'a> {
 
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
-            unsafe { (*task).run(context) };
+            unsafe { (*task).run(task_context) };
         }
 
         self.current_context = previous_context;

@@ -996,8 +996,9 @@ pub mod waiter_thread_posix {
             // event loop hands ownership back here exactly once.
             if let Some(delivery) = unsafe { bun_core::heap::take(this) }.run_from_main_thread() {
                 // SAFETY: this is the same high-tier delivery dispatcher used by
-                // FilePoll exits; the Mini task context is supplied by tick_once.
-                unsafe { __bun_dispatch_process_exit_delivery(delivery, context.cast()) };
+                // FilePoll exits; both paths read the loop's current typed context.
+                let _ = context;
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut()) };
             }
         }
     }

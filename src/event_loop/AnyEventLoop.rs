@@ -204,14 +204,30 @@ impl<'a> AnyEventLoop<'a> {
         context: *mut core::ffi::c_void,
         is_done: fn(*mut core::ffi::c_void) -> bool,
     ) {
-        while !is_done(context) {
+        unsafe { Self::tick_raw_with_current_context(this, context, context, is_done) };
+    }
+
+    /// Variant of [`Self::tick_raw`] for drivers whose `is_done` callback needs
+    /// one erased context while process-exit/task delivery should expose a
+    /// stable owner context through [`EventLoopHandle::current_context`].
+    ///
+    /// SAFETY: same as [`Self::tick_raw`]. `task_context` is passed to queued
+    /// Mini tasks and to `is_done`; `current_context` is only stored as the
+    /// event-loop current context while a tick body is running.
+    pub unsafe fn tick_raw_with_current_context(
+        this: *mut Self,
+        task_context: *mut core::ffi::c_void,
+        current_context: *mut core::ffi::c_void,
+        is_done: fn(*mut core::ffi::c_void) -> bool,
+    ) {
+        while !is_done(task_context) {
             // SAFETY: per fn contract — reborrow strictly after `is_done`
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
             match unsafe { &mut *this } {
                 AnyEventLoop::Js { owner } => {
                     let owner = *owner;
-                    let previous_context = owner.set_current_context(context);
+                    let previous_context = owner.set_current_context(current_context);
                     let _context_guard = scopeguard::guard(previous_context, |previous_context| {
                         owner.restore_current_context(previous_context);
                     });
@@ -225,7 +241,7 @@ impl<'a> AnyEventLoop<'a> {
                     // borrow ends at the bottom of this match arm before the
                     // next `is_done` reborrow. Spec: MiniEventLoop.zig `tick`
                     // loop body.
-                    mini.tick_once(context);
+                    mini.tick_once_with_current_context(task_context, current_context);
                 }
             }
         }

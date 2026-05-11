@@ -684,7 +684,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
         }
         poll_tag::DNS_RESOLVER => {
-            let resolver = owner_as!(DNSResolver);
+            // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
+            // `Channel::process` re-enters the resolver via c-ares callbacks.
+            // SAFETY: tag set with this pointee type at `FilePoll::init`.
+            let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
             // SAFETY: `poll` outlives this call (caller contract).
             resolver.on_dns_poll(unsafe { &mut *poll });
         }
@@ -937,9 +940,13 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*container).on_timeout() };
         }
         EventLoopTimerTag::DNSResolver => {
+            // R-2: `event_loop_timer` is `JsCell<EventLoopTimer>` (repr(transparent),
+            // so `t` addresses the field directly); deref the container as shared
+            // (`&*const`) since `check_timeouts` takes `&self` and re-enters via
+            // `ares_process_fd`.
             let container = owner!(DNSResolver, event_loop_timer);
             // SAFETY: per fn contract.
-            unsafe { (*container).check_timeouts(&*now, &*vm) };
+            unsafe { (&*container.cast_const()).check_timeouts(&*now, &*vm) };
         }
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]

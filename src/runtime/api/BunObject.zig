@@ -1216,33 +1216,37 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
-            .SHARED
-        else
-            .PRIVATE;
+        if (opts.isObject()) {
+            flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
+                .SHARED
+            else
+                .PRIVATE;
 
-        if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
-                flags.TYPE = .SHARED_VALIDATE;
-                flags.SYNC = true;
+            if (@hasField(std.c.MAP, "SYNC")) {
+                if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
+                    flags.TYPE = .SHARED_VALIDATE;
+                    flags.SYNC = true;
+                }
             }
-        }
 
-        if (try opts.get(globalThis, "size")) |value| {
-            const size_value = try value.coerceToInt64(globalThis);
-            if (size_value < 0) {
-                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            if (try opts.get(globalThis, "size")) |value| {
+                const size_value = try value.coerceToInt64(globalThis);
+                if (size_value < 0) {
+                    return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+                }
+                map_size = @intCast(size_value);
             }
-            map_size = @intCast(size_value);
-        }
 
-        if (try opts.get(globalThis, "offset")) |value| {
-            const offset_value = try value.coerceToInt64(globalThis);
-            if (offset_value < 0) {
-                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            if (try opts.get(globalThis, "offset")) |value| {
+                const offset_value = try value.coerceToInt64(globalThis);
+                if (offset_value < 0) {
+                    return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+                }
+                offset = @intCast(offset_value);
+                offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
             }
-            offset = @intCast(offset_value);
-            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
+        } else if (!opts.isUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
         }
     }
 

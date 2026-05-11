@@ -3522,9 +3522,9 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        // SAFETY: `parent_vm()` is non-null and outlives this worker while
+        // `parent_vm()` is a `BackRef`; the parent outlives this worker while
         // `parent_poll_ref` is held (see web_worker.rs file header).
-        let parent = unsafe { &*worker.parent_vm() };
+        let parent = worker.parent_vm();
         vm_ref.standalone_module_graph = parent.standalone_module_graph;
         // Spec VirtualMachine.zig:1465 `initWorker` — the worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers

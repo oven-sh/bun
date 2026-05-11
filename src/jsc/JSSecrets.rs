@@ -7,7 +7,7 @@ use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JSValue, Strong, VirtualMachineRef as VirtualMachine};
 
 pub struct SecretsJob {
-    vm: *mut VirtualMachine,
+    vm: bun_ptr::BackRef<VirtualMachine>,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -36,7 +36,7 @@ impl SecretsJob {
         ctx: *mut SecretsJobOptions,
         promise: JSValue,
     ) -> *mut SecretsJob {
-        let vm = global.bun_vm_ptr();
+        let vm = bun_ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(SecretsJob {
             vm,
             task: WorkPoolTask {
@@ -69,11 +69,9 @@ impl SecretsJob {
         // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;
         // moved after the FFI call since there is no early return between them.
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
-        // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
-        unsafe {
-            Bun__SecretsJobOptions__runTask(job.ctx, (*vm).global);
-            (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-        }
+        unsafe { Bun__SecretsJobOptions__runTask(job.ctx, vm.global) };
+        vm.event_loop_shared()
+            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }
 
     fn run_from_js_erased(this: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
@@ -95,9 +93,9 @@ impl SecretsJob {
             return Ok(());
         }
 
-        // SAFETY: `vm` is the live per-thread VM stored at `create`; its `global`
-        // field is initialized during VM startup and valid for the VM lifetime.
-        let global = unsafe { &*(*vm).global };
+        // `vm` is a `BackRef` to the live per-thread VM stored at `create`;
+        // `global()` is the safe `&'static JSGlobalObject` accessor.
+        let global = vm.global();
         // `Bun__SecretsJobOptions__runFromJS` opens a `DECLARE_THROW_SCOPE` and
         // returns via `RELEASE_AND_RETURN`, which simulates a throw to the parent
         // scope under `BUN_JSC_validateExceptionChecks=1`. Without an enclosing
@@ -105,10 +103,7 @@ impl SecretsJob {
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
-        // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
-        unsafe {
-            Bun__SecretsJobOptions__runFromJS(this.ctx, (*vm).global, promise);
-        }
+        unsafe { Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global, promise) };
         scope
             .assert_no_exception_except_termination()
             .map_err(Into::into)

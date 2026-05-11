@@ -93,9 +93,10 @@ pub struct WebWorker {
     /// is itself a worker, nothing joins us on its exit — the nested-worker
     /// "Known gap" in the file header. When `parent_poll_ref` is held (the
     /// default), the parent's loop stays alive until the close task runs.
-    // TODO(port): lifetime — `&'a VirtualMachine` in Zig; raw ptr here because
-    // the struct is FFI-owned and crosses threads.
-    parent: *mut VirtualMachine,
+    // `BackRef` (not `&'a VirtualMachine`) because the struct is FFI-owned and
+    // crosses threads; the backref invariant (parent outlives child via
+    // `parent_poll_ref`) is documented above.
+    parent: bun_ptr::BackRef<VirtualMachine>,
     parent_context_id: u32,
     execution_context_id: u32,
     mini: bool,
@@ -531,7 +532,8 @@ impl WebWorker {
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
-            parent,
+            // `parent` is the calling thread's live VM; non-null by FFI contract.
+            parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
             parent_context_id,
             execution_context_id: this_context_id,
             mini,
@@ -700,10 +702,11 @@ impl WebWorker {
         unsafe { &*this }.parent_poll_ref_mut().unref(parent_event_loop_ctx());
     }
 
-    /// Raw parent-VM pointer. See field doc for validity (`parent_poll_ref`
-    /// keeps the parent loop alive until the close task runs).
+    /// Non-owning back-reference to the parent VM. See field doc for validity
+    /// (`parent_poll_ref` keeps the parent loop alive until the close task
+    /// runs).
     #[inline]
-    pub fn parent_vm(&self) -> *mut VirtualMachine {
+    pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
         self.parent
     }
 
@@ -818,7 +821,7 @@ impl WebWorker {
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
 
-        // SAFETY: `parent` is non-null and outlives this worker while
+        // `parent` is a `BackRef` and outlives this worker while
         // `parent_poll_ref` is held (see file header). The parent VM runs
         // concurrently on its own thread, so we must NOT materialise a
         // `&mut VirtualMachine` here — Zig's `*T` aliases freely but a
@@ -826,7 +829,7 @@ impl WebWorker {
         // below are read-only (clone of transform_options, locked read of
         // proxy_env_storage / env.map, copy of standalone_module_graph),
         // so a shared reference is sufficient and matches the .zig intent.
-        let parent = unsafe { &*self.parent };
+        let parent = self.parent.get();
         // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();

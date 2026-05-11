@@ -49,11 +49,13 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. Returns the raw pointer (PORTING.md
-    /// §Global mutable state — VirtualMachine is process-lifetime; callers
-    /// deref per-access so two calls don't fabricate aliasing `&mut`).
-    pub fn get_vm(&self) -> Option<NonNull<VirtualMachine>> {
-        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self))
+    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
+    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
+    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
+    /// route mutation through the VM's safe interior accessors (e.g.
+    /// `event_loop_shared()`).
+    pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
+        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
 }
 
@@ -76,8 +78,7 @@ impl ConcurrentCppTask {
         drop(self);
         EventLoopTaskNoContext::run(cpp_task);
         if let Some(vm) = maybe_vm {
-            // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
-            unsafe { (*(*vm.as_ptr()).event_loop()).unref_concurrently() };
+            vm.event_loop_shared().unref_concurrently();
         }
     }
 }
@@ -87,8 +88,7 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
     crate::mark_binding!();
     // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext freshly handed over from C++.
     if let Some(vm) = unsafe { (*cpp_task).get_vm() } {
-        // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
-        unsafe { (*(*vm.as_ptr()).event_loop()).ref_concurrently() };
+        vm.event_loop_shared().ref_concurrently();
     }
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

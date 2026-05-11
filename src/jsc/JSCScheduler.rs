@@ -37,13 +37,13 @@ impl JSCDeferredWorkTask {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: *mut VirtualMachine,
+    jsc_vm: &VirtualMachine,
     delta: c_int,
 ) {
     crate::mark_binding!();
-    // SAFETY: caller (C++) guarantees `jsc_vm` is a valid live VirtualMachine and
-    // `event_loop` always points at one of the VM's owned EventLoop fields.
-    let event_loop: &EventLoop = unsafe { &*(*jsc_vm).event_loop };
+    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
+    // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
+    let event_loop: &EventLoop = jsc_vm.event_loop_shared();
     if delta > 0 {
         event_loop.ref_concurrently();
     } else {
@@ -53,12 +53,12 @@ pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
-    jsc_vm: *mut VirtualMachine,
+    jsc_vm: &VirtualMachine,
     task: *mut JSCDeferredWorkTask,
 ) {
     crate::mark_binding!();
-    // SAFETY: caller (C++) guarantees `jsc_vm` is a valid live VirtualMachine.
-    let loop_: &EventLoop = unsafe { &*(*jsc_vm).event_loop() };
+    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
+    let loop_: &EventLoop = jsc_vm.event_loop_shared();
     // Zig: `ConcurrentTask.new(.{ .task = Task.init(task), .next = .auto_delete })`
     // — `create_from` is exactly that (heap-allocates with the auto-delete bit set).
     loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));

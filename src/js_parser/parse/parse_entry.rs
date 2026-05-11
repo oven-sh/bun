@@ -1563,8 +1563,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Analyze cross-part dependencies for tree shaking and code splitting
-        let mut exports_kind = js_ast::ExportsKind::None;
+        // Analyze cross-part dependencies for tree shaking and code splitting.
+        // The if/else-if/else-match below exhaustively assigns this on every path.
+        let mut exports_kind: js_ast::ExportsKind;
         let exports_ref_usage_count =
             p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate;
         let uses_exports_ref = exports_ref_usage_count > 0;

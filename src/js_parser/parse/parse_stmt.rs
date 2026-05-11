@@ -336,14 +336,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.expect(T::TOpenBrace)?;
             let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.arena);
             let mut found_default = false;
-            let mut stmt_opts = ParseStatementOptions {
-                lexical_decl: LexicalDecl::AllowAll,
-                ..Default::default()
-            };
-            let mut value: Option<js_ast::Expr> = None;
             while p.lexer.token != T::TCloseBrace {
                 let mut body = StmtList::new_in(p.arena);
-                value = None;
+                // PORT NOTE: Zig hoisted `value`/`stmt_opts` above the loop;
+                // both are reinitialized every iteration before any read, so
+                // declare per-iteration.
+                let mut value: Option<js_ast::Expr> = None;
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         p.log().add_range_error(
@@ -369,7 +367,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             break 'case_body;
                         }
                         _ => {
-                            stmt_opts = ParseStatementOptions {
+                            let mut stmt_opts = ParseStatementOptions {
                                 lexical_decl: LexicalDecl::AllowAll,
                                 ..Default::default()
                             };
@@ -1135,7 +1133,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 p.lexer.next()?;
-                let mut namespace_ref: Ref = Ref::NONE;
+                // Both arms below assign exactly once before any read.
+                let namespace_ref: Ref;
                 let mut alias: Option<G::ExportStarAlias> = None;
                 let path: ParsedPath;
 
@@ -1545,11 +1544,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
         let name = p.lexer.identifier;
-        // Parse either an async function, an async expression, or a normal expression
-        let mut expr: Expr = Expr {
-            loc,
-            data: js_ast::ExprData::EMissing(Default::default()),
-        };
+        // Parse either an async function, an async expression, or a normal expression.
+        // Every branch below either assigns `expr` or `return`s.
+        let mut expr: Expr;
         if is_identifier && p.lexer.raw() == b"async" {
             let async_range = p.lexer.range();
             p.lexer.next()?;

@@ -4678,13 +4678,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    fn binding_can_be_removed_if_unused(&mut self, binding: Binding) -> bool {
-        if !self.options.features.dead_code_elimination {
-            return false;
-        }
-        self.binding_can_be_removed_if_unused_without_dce_check(binding)
-    }
-
+    // PORT NOTE: Zig p.zig:3719 declares `bindingCanBeRemovedIfUnused` (the
+    // DCE-gated wrapper) but never calls it — every caller goes through
+    // `stmtsCanBeRemovedIfUnused` which already gates on
+    // `dead_code_elimination` and then invokes the `_without_dce_check`
+    // recursion below. The wrapper is dead in spec and is dropped here.
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
         match binding.data {
             js_ast::b::B::BArray(bi) => {

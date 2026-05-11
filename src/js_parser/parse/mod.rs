@@ -195,19 +195,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassBody, body_loc)
             .expect("unreachable");
 
-        let mut opts = PropertyOpts {
-            is_class: true,
-            allow_ts_decorators: class_opts.allow_ts_decorators,
-            class_has_extends: extends.is_some(),
-            ..Default::default()
-        };
         while !p.lexer.token.is_close_brace_or_eof() {
             if p.lexer.token == T::TSemicolon {
                 p.lexer.next()?;
                 continue;
             }
 
-            opts = PropertyOpts {
+            // PORT NOTE: Zig hoisted `opts` above the loop; it is fully
+            // reinitialized here every iteration before any read, so declare
+            // per-iteration.
+            let mut opts = PropertyOpts {
                 is_class: true,
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some(),
@@ -291,7 +288,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Allow "in" inside template literals
         let old_allow_in = p.allow_in;
         p.allow_in = true;
-        let mut tail_loc = p.lexer.loc();
+        // Reassigned every iteration of the (always-entered) loop body before
+        // any read; the loop's only `break` is after the assignment.
+        let mut tail_loc;
 
         'parse_template_part: loop {
             p.lexer.next()?;
@@ -1113,7 +1112,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
         let p = self;
-        let mut key: Expr = Expr::EMPTY;
+        // Every match arm below assigns `key` (or `return`s) before any read.
+        let key: Expr;
         let mut is_computed = false;
 
         match p.lexer.token {

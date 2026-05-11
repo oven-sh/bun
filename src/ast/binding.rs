@@ -289,6 +289,11 @@ impl Binding {
 // the aggregate. `Serializable` is a private layout-only carrier.
 // ──────────────────────────────────────────────────────────────────────────
 
+// Fields are the JSON-serialization payload (Zig std.json wrote each via
+// `@typeInfo` reflection). No `BindingJsonWriter` implementor exists yet, so
+// rustc correctly proves they are never *read*; they are the data contract for
+// when the writer lands, not dead code.
+#[expect(dead_code)]
 pub struct Serializable {
     r#type: Tag,
     object: &'static [u8],

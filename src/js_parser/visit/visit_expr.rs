@@ -805,7 +805,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // existing memory without allocating anything.
         let stack_bottom = p.binary_expression_stack.len();
 
-        let mut current = expr;
+        // Assigned on every `break` arm of the loop below; the initial input
+        // `expr` is never read directly (Zig's `var current = expr` was a
+        // pre-init habit, not load-bearing).
+        let mut current;
 
         // Iterate down into the AST along the left node of the binary operation.
         // Continue iterating until we encounter something that's not a binary node.
@@ -1110,11 +1113,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     r,
                     format_args!(
                         "Cannot assign to property on import \"{}\"",
-                        BStr::new(unsafe {
+                        // `original_name: StoreStr` has a safe `Deref<Target=[u8]>`.
+                        BStr::new(
                             &*p.symbols
                                 [e_.target.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
-                                .original_name
-                        })
+                                .original_name,
+                        )
                     ),
                 );
         }

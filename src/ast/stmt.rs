@@ -47,6 +47,10 @@ impl Stmt {
     }
 }
 
+// See `binding.rs::Serializable` — JSON-payload carrier passed to the
+// shape-agnostic `JsonWriter::write<V>`; fields are the serialization
+// contract, not dead, but no reflective writer exists yet to read them.
+#[expect(dead_code)]
 struct Serializable {
     r#type: Tag,
     object: &'static [u8],

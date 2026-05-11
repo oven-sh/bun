@@ -218,10 +218,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut errors = errors_;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
-            let mut key: Expr = Expr {
-                loc: bun_ast::Loc::EMPTY,
-                data: js_ast::ExprData::EMissing(E::Missing {}),
-            };
+            // Every match arm below assigns `key` (or `continue 'restart` /
+            // `return`) before any read; Zig's `var key: Expr = undefined` pre-
+            // init is unnecessary here.
+            let mut key: Expr;
             let key_range = p.lexer.range();
             let mut is_computed = false;
 

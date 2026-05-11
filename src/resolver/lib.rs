@@ -5,7 +5,7 @@
 #![warn(unused_must_use)]
 #![allow(unused_macros, ambiguous_glob_reexports)]
 #![allow(incomplete_features)]
-#![feature(adt_const_params, sync_unsafe_cell)]
+#![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:

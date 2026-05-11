@@ -575,7 +575,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
-            let mut needs_symbol = false;
+            // Assigned in both live arms below; the third arm returns.
+            let needs_symbol: bool;
 
             // Parse the name
             if p.lexer.token == T::TStringLiteral {

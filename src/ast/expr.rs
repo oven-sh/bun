@@ -933,10 +933,11 @@ impl Expr {
 #[cfg(debug_assertions)]
 pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-// We don't need to dynamically allocate booleans
-static TRUE_BOOL: E::Boolean = E::Boolean { value: true };
-static FALSE_BOOL: E::Boolean = E::Boolean { value: false };
-static BOOL_VALUES: [&E::Boolean; 2] = [&FALSE_BOOL, &TRUE_BOOL];
+// PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
+// statics but never references them — `E.Boolean` is stored by value in
+// `Data.e_boolean` (both `allocate` and `init` arms), not as a pointer to a
+// pooled singleton. Dropped here; the comment "We don't need to dynamically
+// allocate booleans" already holds because `E::Boolean` is inline in `Data`.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Expr::allocate / Expr::init — comptime-type dispatch → trait

@@ -27,7 +27,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<FindSymbolResult, bun_core::Error> {
-        let mut declare_loc: bun_ast::Loc = bun_ast::Loc::EMPTY;
+        // Every `break 'brk` below assigns `declare_loc` first; the one
+        // early-`return` builds its own `FindSymbolResult` without reading it.
+        let declare_loc: bun_ast::Loc;
         let mut is_inside_with_scope = false;
         // This function can show up in profiling.
         // That's part of why we do this.

@@ -1520,6 +1520,15 @@ impl<'arena> ScopeOrder<'arena> {
     pub fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
         Self { loc, scope, _phantom: core::marker::PhantomData }
     }
+    /// Arena-backed handle to the scope. `StoreRef` has safe `Deref`/`DerefMut`,
+    /// so callers read `order.scope_ref().kind` instead of open-coding
+    /// `unsafe { &*order.scope }` at every visit-pass check.
+    #[inline]
+    pub fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
+        // `scope` is always set from a live arena allocation in
+        // `push_scope_for_parse_pass`; never null in practice.
+        js_ast::StoreRef::from(core::ptr::NonNull::new(self.scope).expect("ScopeOrder.scope non-null"))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1652,7 +1661,12 @@ pub struct FnOnlyDataVisit<'a> {
     /// This is a reference to the enclosing class name if there is one. It's used
     /// to implement "this" and "super" references. A name is automatically generated
     /// if one is missing so this will always be present inside a class body.
-    pub class_name_ref: Option<&'a mut Ref>,
+    ///
+    /// Zig's `?*Ref` becomes `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
+    /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
+    /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
+    /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
+    pub class_name_ref: Option<&'a core::cell::Cell<Ref>>,
 
     /// If true, we're inside a static class context where "this" expressions
     /// should be replaced with the class name.

@@ -798,6 +798,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         js_ast::StoreRef::from(NonNull::new(self.current_scope).expect("current_scope non-null after init()"))
     }
 
+    /// `module_scope` as an arena-backed [`StoreRef`](js_ast::StoreRef) handle.
+    /// Same rationale as [`current_scope_ref`] — `Copy` and does not borrow
+    /// `self`, so it can be held across `&mut self` calls.
+    #[inline]
+    pub fn module_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
+        js_ast::StoreRef::from(NonNull::new(self.module_scope).expect("module_scope non-null after init()"))
+    }
+
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
     //    can reference them; the full bodies with SCAN_ONLY require-scan and
     //    @typeInfo branches stay in the gated block below) ────────────────
@@ -3137,8 +3145,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // PORT NOTE: Zig `and` binds tighter than `or`, so the original
         // `allow_assert and loc_mismatch or kind_mismatch` keeps the kind check
         // unconditional in release builds. Preserve that grouping here.
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        if (cfg!(debug_assertions) && order.loc.start != loc.start) || unsafe { &*order.scope }.kind != kind {
+        let order_scope = order.scope_ref();
+        if (cfg!(debug_assertions) && order.loc.start != loc.start) || order_scope.kind != kind {
             self.log().level = bun_ast::Level::Verbose;
             let _ = self.log().add_debug_fmt(
                 Some(self.source),
@@ -3148,8 +3156,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let _ = self.log().add_debug_fmt(
                 Some(self.source),
                 order.loc,
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                format_args!("Found this scope (.{})", <&'static str>::from(unsafe { &*order.scope }.kind)),
+                format_args!("Found this scope (.{})", <&'static str>::from(order_scope.kind)),
             );
             self.panic("Scope mismatch while visiting", format_args!(""));
         }
@@ -3234,8 +3241,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
         if KIND == js_ast::scope::Kind::FunctionBody {
-            // SAFETY: arena-owned Scope; parent != scope (fresh alloc) so no alias.
-            let parent_ref = unsafe { &*parent };
+            // `parent_nn` is the saved old `current_scope`; arena-owned, distinct
+            // from the freshly-allocated `scope`, so the read does not alias the
+            // `&mut *scope` write below.
+            let parent_ref = js_ast::StoreRef::from(parent_nn);
             debug_assert!(parent_ref.kind == js_ast::scope::Kind::FunctionArgs);
 
             for (key, value) in parent_ref.members.iter() {
@@ -3435,20 +3444,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn pop_and_discard_scope(&mut self, scope_index: usize) {
         // Move up to the parent scope
-        let to_discard = self.current_scope;
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let parent = unsafe { &*to_discard }.parent.expect("unreachable").as_ptr();
+        let to_discard = self.current_scope_ref();
+        let parent = to_discard.parent.expect("unreachable");
 
-        self.current_scope = parent;
+        self.current_scope = parent.as_ptr();
 
         // Truncate the scope order where we started to pretend we never saw this scope
         self.scopes_in_order.truncate(scope_index);
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let children = &unsafe { &*parent }.children;
+        let children = &parent.children;
         // Remove the last child from the parent scope
         let last = children.len_u32() - 1;
-        if children.slice()[last as usize].as_ptr() != to_discard {
+        if children.slice()[last as usize] != to_discard {
             self.panic("Internal error", format_args!(""));
         }
 
@@ -3845,19 +3852,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn discard_scopes_up_to(&mut self, scope_index: usize) {
-        // Remove any direct children from their parent
-        let current_scope_ptr: *mut js_ast::Scope = self.current_scope;
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding.
-        // The raw deref does not borrow `self`, so the immutable iter over scopes_in_order is fine.
-        let children = unsafe { &mut (*current_scope_ptr).children };
+        // Remove any direct children from their parent. `StoreRef` is `Copy` and
+        // does not borrow `self`, so the immutable iter over `scopes_in_order`
+        // can run while `children` is held `&mut` through the handle.
+        let mut cur = self.current_scope_ref();
+        let current_scope_ptr: *mut js_ast::Scope = cur.as_ptr();
+        let children = &mut cur.children;
         // PORT NOTE: Zig copied `var children = scope.children` + `defer scope.children = children`.
-        // Vec isn't Copy in Rust; mutate the field in place via the raw ptr instead.
+        // Vec isn't Copy in Rust; mutate the field in place via the handle instead.
 
         for _child in &self.scopes_in_order[scope_index..] {
             let Some(child) = _child else { continue };
 
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding.
-            let parent = unsafe { (*child.scope).parent };
+            let parent = child.scope_ref().parent;
             if parent.map(|p| p.as_ptr()) == Some(current_scope_ptr) {
                 let mut i: usize = (children.len_u32() - 1) as usize;
                 loop {
@@ -4432,10 +4439,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn pop_scope(&mut self) {
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
-        // borrow only — the loop body writes to `self.symbols` (disjoint alloc)
-        // and we never mutate `*current_scope`, so no unique tag is needed.
-        let current_scope = unsafe { &*self.current_scope };
+        // `StoreRef` handle is `Copy` and does not borrow `self`, so the loop
+        // body can write to `self.symbols` (disjoint allocation) while the
+        // scope is read via `Deref`.
+        let current_scope = self.current_scope_ref();
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
             let mut iter = current_scope.members.iter();
@@ -4868,10 +4875,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         // Substitute "this" if we're inside a static class property initializer
         if self.fn_only_data_visit.should_replace_this_with_class_name_ref {
-            // class_name_ref is `Option<&'a mut Ref>` (points at stack-owned Ref in the
-            // enclosing visit frame); copy the Ref out so the &mut self borrow is released
-            // before record_usage/new_expr.
-            if let Some(r) = self.fn_only_data_visit.class_name_ref.as_deref().copied() {
+            // class_name_ref is `Option<&'a Cell<Ref>>` (arena slot owned by the enclosing
+            // `visit_class` frame); copy the Ref out so the field borrow is released before
+            // record_usage/new_expr.
+            if let Some(r) = self.fn_only_data_visit.class_name_ref.map(|c| c.get()) {
                 self.record_usage(r);
                 return Some(self.new_expr(E::Identifier { ref_: r, ..Default::default() }, loc));
             }
@@ -6659,13 +6666,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // swapRemove is fast. But a little more dangerous.
     // Instead, we just tombstone it.
     pub fn pop_and_flatten_scope(&mut self, scope_index: usize) {
-        // Move up to the parent scope
-        let to_flatten = self.current_scope;
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let parent_ptr = unsafe { &*to_flatten }.parent.unwrap();
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let parent = unsafe { &mut *parent_ptr.as_ptr() };
-        self.current_scope = parent_ptr.as_ptr();
+        // Move up to the parent scope. `StoreRef` handles are `Copy` and carry
+        // safe `Deref`/`DerefMut`, so the parent-chain walk needs no open-coded
+        // raw-pointer derefs. `to_flatten` and `parent` are distinct arena
+        // allocations (a scope is never its own parent), so the shared read of
+        // `to_flatten.children` below does not alias the `&mut parent.children`
+        // writes.
+        let to_flatten = self.current_scope_ref();
+        let mut parent = to_flatten.parent.unwrap();
+        self.current_scope = parent.as_ptr();
 
         // Erase this scope from the order. This will shift over the indices of all
         // the scopes that were created after us. However, we shouldn't have to
@@ -6682,14 +6691,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // Remove the last child from the parent scope
         let last = parent.children.len_u32() - 1;
-        debug_assert!(parent.children.slice()[last as usize].as_ptr().cast_const() == to_flatten);
+        debug_assert!(parent.children.slice()[last as usize] == to_flatten);
         parent.children.truncate(last as usize);
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        for item in unsafe { &*to_flatten }.children.slice() {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *item.as_ptr() }.parent = Some(parent_ptr);
-            VecExt::append(&mut parent.children, *item);
+        for item in to_flatten.children.slice() {
+            let mut item = *item;
+            item.parent = Some(parent);
+            VecExt::append(&mut parent.children, item);
         }
     }
 
@@ -7486,10 +7494,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // now in the parser because we want it to be done in parallel per file and
         // we're already executing code in parallel here
         let nested_scope_slot_counts = if self.options.features.minify_identifiers {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+            // `StoreRef` handle does not borrow `self`, so the `&mut self.symbols`
+            // below does not conflict with the scope read.
+            let module_scope = self.module_scope_ref();
             renamer::assign_nested_scope_slots(
                 arena,
-                unsafe { &*self.module_scope },
+                module_scope.get(),
                 self.symbols.as_mut_slice(),
             )
         } else {

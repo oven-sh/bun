@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
+use core::mem::MaybeUninit;
 use std::sync::Once;
 
 #[repr(C)]
@@ -145,6 +146,39 @@ impl Compressor {
         }
     }
 
+    /// Like [`compress`](Self::compress) but writes into a possibly-uninitialized
+    /// output buffer (e.g. `Vec::spare_capacity_mut()`). libdeflate only writes
+    /// to `output`, never reads, so `MaybeUninit<u8>` is the correct element type
+    /// and avoids the UB of materializing `&mut [u8]` over uninitialized bytes.
+    /// On return, `output[..result.written]` is initialized.
+    pub fn compress_into(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        encoding: Encoding,
+    ) -> Result {
+        let in_ptr = input.as_ptr().cast::<c_void>();
+        let in_len = input.len();
+        let out_ptr = output.as_mut_ptr().cast::<c_void>();
+        let out_len = output.len();
+        // SAFETY: self is a valid *mut Compressor; ptr/len pairs are valid for the
+        // FFI contract (input read-only, output write-only for `out_len` bytes).
+        let written = unsafe {
+            match encoding {
+                Encoding::Deflate => {
+                    libdeflate_deflate_compress(self, in_ptr, in_len, out_ptr, out_len)
+                }
+                Encoding::Zlib => libdeflate_zlib_compress(self, in_ptr, in_len, out_ptr, out_len),
+                Encoding::Gzip => libdeflate_gzip_compress(self, in_ptr, in_len, out_ptr, out_len),
+            }
+        };
+        Result {
+            read: in_len,
+            written,
+            status: Status::Success,
+        }
+    }
+
     pub fn zlib(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
         let result = unsafe {
@@ -271,6 +305,60 @@ impl Decompressor {
             Encoding::Zlib => self.zlib(input, output),
             Encoding::Gzip => self.gzip(input, output),
         }
+    }
+
+    /// Like [`decompress`](Self::decompress) but writes into a possibly-uninitialized
+    /// output buffer (e.g. `Vec::spare_capacity_mut()`). libdeflate only writes
+    /// to `output`, never reads, so `MaybeUninit<u8>` is the correct element type
+    /// and avoids the UB of materializing `&mut [u8]` over uninitialized bytes.
+    /// On `Status::Success`, `output[..result.written]` is initialized.
+    pub fn decompress_into(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        encoding: Encoding,
+    ) -> Result {
+        let in_ptr = input.as_ptr().cast::<c_void>();
+        let in_len = input.len();
+        let out_ptr = output.as_mut_ptr().cast::<c_void>();
+        let out_len = output.len();
+        let mut read: usize = in_len;
+        let mut written: usize = out_len;
+        // SAFETY: self is a valid *mut Decompressor; ptr/len pairs are valid for the
+        // FFI contract (input read-only, output write-only for `out_len` bytes);
+        // out-params are valid `*mut usize`.
+        let status = unsafe {
+            match encoding {
+                Encoding::Deflate => libdeflate_deflate_decompress_ex(
+                    self,
+                    in_ptr,
+                    in_len,
+                    out_ptr,
+                    out_len,
+                    &raw mut read,
+                    &raw mut written,
+                ),
+                Encoding::Zlib => libdeflate_zlib_decompress_ex(
+                    self,
+                    in_ptr,
+                    in_len,
+                    out_ptr,
+                    out_len,
+                    &raw mut read,
+                    &raw mut written,
+                ),
+                Encoding::Gzip => libdeflate_gzip_decompress_ex(
+                    self,
+                    in_ptr,
+                    in_len,
+                    out_ptr,
+                    out_len,
+                    &raw mut read,
+                    &raw mut written,
+                ),
+            }
+        };
+        Result { read, written, status }
     }
 }
 

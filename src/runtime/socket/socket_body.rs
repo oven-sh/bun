@@ -916,7 +916,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Connection failed before open; allow the wrapper to be GC'd
             // regardless of whether this path is promise-backed (e.g. the
             // duplex TLS upgrade flow has no connect promise).
-            if !matches!(unsafe { &(*this).this_value }, JsRef::Finalized) {
+            if !unsafe { &(*this).this_value }.is_finalized() {
                 unsafe { (*this).this_value.downgrade() };
             }
             // SAFETY: re-derived; no `&mut Handlers` held across the
@@ -1026,7 +1026,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `handlers.markInactive()` frees the Handlers allocation
             // entirely, and for the last server-side connection on a
             // stopped listener it releases the listener's own strong ref.
-            if !matches!(self.this_value, JsRef::Finalized) {
+            if !self.this_value.is_finalized() {
                 self.this_value.downgrade();
             }
             // During VM shutdown, the Listener (which embeds `handlers`
@@ -1216,7 +1216,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.try_get() {
             return value;
         }
-        if matches!(self.this_value, JsRef::Finalized) {
+        if self.this_value.is_finalized() {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` (and double-deref) later.
             return JSValue::UNDEFINED;

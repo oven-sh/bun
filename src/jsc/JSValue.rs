@@ -11,6 +11,7 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
+use bun_jsc_types::EncodedJSValue;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     bun_string_jsc, ffi, host_fn, AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator,
@@ -63,9 +64,15 @@ impl JSValue {
     /// Construct a JSValue from an opaque encoded bit-pattern (Zig: `@enumFromInt`).
     #[inline]
     pub const fn from_encoded(bits: usize) -> JSValue { JSValue(bits, PhantomData) }
+    /// Construct a JSValue from the sidecar-owned encoded storage shape.
+    #[inline]
+    pub const fn from_encoded_value(value: EncodedJSValue) -> JSValue { JSValue(value.bits(), PhantomData) }
     /// Read the raw encoded bit-pattern (Zig: `@intFromEnum`).
     #[inline]
     pub const fn encoded(self) -> usize { self.0 }
+    /// Return the sidecar-owned encoded storage shape.
+    #[inline]
+    pub const fn encoded_value(self) -> EncodedJSValue { EncodedJSValue::from_bits(self.0) }
     /// Signed view of the encoded bit-pattern (Zig backing type is `i64`).
     #[inline]
     pub const fn raw(self) -> i64 { self.0 as i64 }

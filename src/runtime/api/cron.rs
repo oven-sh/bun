@@ -1303,7 +1303,7 @@ impl CronJob {
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
     fn maybe_downgrade(&mut self) {
-        if self.stopped && !self.pending_ref && !matches!(self.this_value, JsRef::Finalized) {
+        if self.stopped && !self.pending_ref && !self.this_value.is_finalized() {
             self.this_value.downgrade();
         }
     }

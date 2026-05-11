@@ -1,9 +1,7 @@
 use core::marker::PhantomData;
 
-// PORT NOTE: JSRef.zig stores `jsc.Strong.Optional`, not `jsc.Strong`. The
-// methods below (`get() -> Option`, `has()`, `try_swap()`) live on the
-// Optional wrapper, so import it under the local name `Strong`.
-use crate::strong::Optional as Strong;
+use bun_jsc_types::JsRefState;
+use crate::strong;
 use crate::{JSGlobalObject, JSValue};
 
 /// Holds a reference to a JSValue with lifecycle management.
@@ -35,12 +33,12 @@ use crate::{JSGlobalObject, JSValue};
 ///     fn update_reference_type(&mut self) {
 ///         if self.connection.is_active() {
 ///             // Keep object alive while connection is active
-///             if self.this_value.is_not_empty() && matches!(self.this_value, JsRef::Weak(_)) {
+///             if self.this_value.is_not_empty() && self.this_value.is_weak() {
 ///                 self.this_value.upgrade(global);
 ///             }
 ///         } else {
 ///             // Allow GC when connection is idle
-///             if self.this_value.is_not_empty() && matches!(self.this_value, JsRef::Strong(_)) {
+///             if self.this_value.is_not_empty() && self.this_value.is_strong() {
 ///                 self.this_value.downgrade();
 ///             }
 ///         }
@@ -96,48 +94,66 @@ use crate::{JSGlobalObject, JSValue};
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
-/// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `HandleSlot` backing `Strong` is owned by the VM's `HandleSet` and must be
-/// dropped on the JS thread.
-pub enum JsRef {
-    Weak(JSValue),
-    Strong(Strong),
-    Finalized,
+/// `JsRef` is `!Send + !Sync` (transitively via the encoded JS value state):
+/// the `HandleSlot` backing a strong state is owned by the VM's `HandleSet`
+/// and must be dropped on the JS thread.
+pub struct JsRef {
+    state: JsRefState,
 }
 
-// Belt-and-suspenders: JSValue and Strong are already !Send/!Sync, but make it
-// explicit so a future refactor of those types cannot accidentally make JsRef
-// sendable.
+// Belt-and-suspenders: JsRefState is already !Send/!Sync through its encoded
+// JS value payload, but make the marker explicit so a future refactor of that
+// sidecar state cannot accidentally make JsRef sendable.
 // TODO(port): if a zero-cost marker is preferred over auto-trait inference,
 // wrap in a struct with `PhantomData<*const ()>`.
 const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {
+    #[inline]
+    fn from_state(state: JsRefState) -> Self {
+        Self { state }
+    }
+
+    fn destroy_strong_if_present(&mut self) {
+        let Some(handle) = self.state.take_strong_handle() else { return };
+        // SAFETY: a strong handle stored in JsRef was allocated by
+        // `strong::init_handle` and is consumed exactly once here.
+        unsafe { strong::destroy_handle(handle) };
+    }
+
     pub fn init_weak(value: JSValue) -> Self {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        JsRef::Weak(value)
+        Self::from_state(JsRefState::weak(value.encoded_value()))
     }
 
     pub fn init_strong(value: JSValue, global: &JSGlobalObject) -> Self {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        JsRef::Strong(Strong::create(value, global))
+        Self::from_state(JsRefState::strong(strong::init_handle(global, value)))
     }
 
     pub fn empty() -> Self {
-        JsRef::Weak(JSValue::UNDEFINED)
+        Self::from_state(JsRefState::empty())
     }
 
     pub fn try_get(&self) -> Option<JSValue> {
-        match self {
-            JsRef::Weak(weak) => {
+        match self.state {
+            JsRefState::Weak(weak) => {
                 if weak.is_empty_or_undefined_or_null() {
                     None
                 } else {
-                    Some(*weak)
+                    Some(JSValue::from_encoded_value(weak))
                 }
             }
-            JsRef::Strong(strong) => strong.get(),
-            JsRef::Finalized => None,
+            JsRefState::Strong(strong) => {
+                let handle = strong.get()?;
+                let value = strong::get_handle(handle);
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            JsRefState::Finalized => None,
         }
     }
 
@@ -151,103 +167,148 @@ impl JsRef {
 
     pub fn set_weak(&mut self, value: JSValue) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        match self {
-            JsRef::Weak(_) => {}
-            JsRef::Strong(_) => {
+        match self.state {
+            JsRefState::Weak(_) => {}
+            JsRefState::Strong(_) => {
                 // PORT NOTE: Zig calls `this.strong.deinit()` here. In Rust,
-                // `Strong`'s `Drop` deallocates the HandleSlot when `*self` is
-                // overwritten below, so the explicit call is elided.
+                // `JsRef` owns the inert strong handle and explicitly destroys
+                // it before overwriting the state below.
+                self.destroy_strong_if_present();
             }
-            JsRef::Finalized => {
+            JsRefState::Finalized => {
                 return;
             }
         }
-        *self = JsRef::Weak(value);
+        self.state = JsRefState::weak(value.encoded_value());
     }
 
     pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
-        if let JsRef::Strong(strong) = self {
-            strong.set(global, value);
-            return;
+        if let JsRefState::Strong(strong) = &mut self.state {
+            let Some(handle) = strong.get() else {
+                strong.set(strong::init_handle(global, value));
+                return;
+            };
+            strong::set_handle(handle, global, value);
+        } else {
+            self.state = JsRefState::strong(strong::init_handle(global, value));
         }
-        *self = JsRef::Strong(Strong::create(value, global));
     }
 
     pub fn upgrade(&mut self, global: &JSGlobalObject) {
-        match self {
-            JsRef::Weak(weak) => {
+        match self.state {
+            JsRefState::Weak(weak) => {
+                let weak = JSValue::from_encoded_value(weak);
                 debug_assert!(!weak.is_empty_or_undefined_or_null());
-                let weak = *weak;
-                *self = JsRef::Strong(Strong::create(weak, global));
+                self.state = JsRefState::strong(strong::init_handle(global, weak));
             }
-            JsRef::Strong(_) => {}
-            JsRef::Finalized => {
+            JsRefState::Strong(_) => {}
+            JsRefState::Finalized => {
                 debug_assert!(false);
             }
         }
     }
 
     pub fn downgrade(&mut self) {
-        match self {
-            JsRef::Weak(_) => {}
-            JsRef::Strong(strong) => {
-                let value = strong.try_swap().unwrap_or(JSValue::UNDEFINED);
+        match self.state {
+            JsRefState::Weak(_) => {}
+            JsRefState::Strong(_) => {
+                let value = if let Some(handle) = self.state.take_strong_handle() {
+                    let value = strong::get_handle(handle);
+                    let value = if value.is_empty() {
+                        JSValue::UNDEFINED
+                    } else {
+                        strong::clear_handle(handle);
+                        value
+                    };
+                    // SAFETY: a strong handle stored in JsRef was allocated by
+                    // `strong::init_handle` and is consumed exactly once here.
+                    unsafe { strong::destroy_handle(handle) };
+                    value
+                } else {
+                    JSValue::UNDEFINED
+                };
                 value.ensure_still_alive();
-                // PORT NOTE: Zig calls `strong.deinit()` here; in Rust the old
-                // `Strong` is dropped by the assignment below.
-                // PORT NOTE: reshaped for borrowck — `strong` borrow ends at
-                // last use above, permitting reassignment of `*self`.
-                *self = JsRef::Weak(value);
+                // PORT NOTE: Zig calls `strong.deinit()` here. `JsRef` owns
+                // the inert sidecar handle and destroys it before storing the
+                // weak encoded value.
+                self.state = JsRefState::weak(value.encoded_value());
             }
-            JsRef::Finalized => {}
+            JsRefState::Finalized => {}
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        match self {
-            JsRef::Weak(weak) => weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => !strong.has(),
-            JsRef::Finalized => true,
+        match self.state {
+            JsRefState::Weak(weak) => weak.is_empty_or_undefined_or_null(),
+            JsRefState::Strong(strong) => {
+                let Some(handle) = strong.get() else { return true };
+                strong::get_handle(handle).is_empty()
+            }
+            JsRefState::Finalized => true,
         }
     }
 
     pub fn is_not_empty(&self) -> bool {
-        match self {
-            JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => strong.has(),
-            JsRef::Finalized => false,
+        match self.state {
+            JsRefState::Weak(weak) => !weak.is_empty_or_undefined_or_null(),
+            JsRefState::Strong(strong) => {
+                let Some(handle) = strong.get() else { return false };
+                !strong::get_handle(handle).is_empty()
+            }
+            JsRefState::Finalized => false,
         }
+    }
+
+    pub fn is_weak(&self) -> bool {
+        self.state.is_weak()
     }
 
     /// Test whether this reference is a strong reference.
     pub fn is_strong(&self) -> bool {
-        matches!(self, JsRef::Strong(_))
+        self.state.is_strong()
+    }
+
+    pub fn is_finalized(&self) -> bool {
+        self.state.is_finalized()
     }
 
     pub fn finalize(&mut self) {
         // PORT NOTE: Zig calls `self.deinit()` then sets `.finalized`. In Rust,
-        // overwriting `*self` drops the prior variant (releasing the `Strong`
-        // HandleSlot via its `Drop`), so the explicit deinit step is elided.
+        // `JsRef` owns the inert strong handle and explicitly destroys it
+        // before setting `.finalized`.
         // Phase B: external `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
-        *self = JsRef::Finalized;
+        self.destroy_strong_if_present();
+        self.state = JsRefState::finalized();
     }
 
     pub fn update(&mut self, global: &JSGlobalObject, value: JSValue) {
-        match self {
-            JsRef::Weak(weak) => {
+        match &mut self.state {
+            JsRefState::Weak(weak) => {
                 debug_assert!(!value.is_empty_or_undefined_or_null());
-                *weak = value;
+                *weak = value.encoded_value();
             }
-            JsRef::Strong(strong) => {
-                if strong.get() != Some(value) {
-                    strong.set(global, value);
+            JsRefState::Strong(strong) => {
+                let Some(handle) = strong.get() else {
+                    if !value.is_empty() {
+                        strong.set(strong::init_handle(global, value));
+                    }
+                    return;
+                };
+                if strong::get_handle(handle) != value {
+                    strong::set_handle(handle, global, value);
                 }
             }
-            JsRef::Finalized => {
+            JsRefState::Finalized => {
                 debug_assert!(false);
             }
         }
+    }
+}
+
+impl Drop for JsRef {
+    fn drop(&mut self) {
+        self.destroy_strong_if_present();
     }
 }
 

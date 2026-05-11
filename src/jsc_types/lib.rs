@@ -1,7 +1,62 @@
 #![allow(dead_code)]
 
 use core::fmt;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
+
+/// ABI-compatible encoded JSC value bits.
+///
+/// This is the inert storage shape for `bun_jsc::JSValue`. The JSC owner crate
+/// keeps the methods that inspect cells, call functions, and interact with the
+/// VM; this type crate only names the 64-bit payload that higher sidecars need
+/// to store without depending on `bun_jsc`.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EncodedJSValue(pub usize, PhantomData<*const ()>);
+
+impl EncodedJSValue {
+    pub const ZERO: Self = Self(0, PhantomData);
+    pub const UNDEFINED: Self = Self(0xa, PhantomData);
+    pub const NULL: Self = Self(0x2, PhantomData);
+    pub const TRUE: Self = Self(0x7, PhantomData);
+    pub const FALSE: Self = Self(0x6, PhantomData);
+    pub const PROPERTY_DOES_NOT_EXIST: Self = Self(0x4, PhantomData);
+
+    #[inline(always)]
+    pub const fn from_bits(bits: usize) -> Self {
+        Self(bits, PhantomData)
+    }
+
+    #[inline(always)]
+    pub const fn bits(self) -> usize {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn raw(self) -> i64 {
+        self.0 as i64
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline(always)]
+    pub const fn is_undefined_or_null(self) -> bool {
+        (self.0 | 0x8) == 0xa
+    }
+
+    #[inline(always)]
+    pub const fn is_empty_or_undefined_or_null(self) -> bool {
+        self.is_empty() || self.is_undefined_or_null()
+    }
+}
+
+const _: () = assert!(
+    core::mem::size_of::<EncodedJSValue>() == core::mem::size_of::<i64>(),
+    "EncodedJSValue must be 64 bits"
+);
 
 // Opaque handle slot allocated by JSC's strong-reference table.
 //
@@ -146,6 +201,64 @@ impl JSPromiseStrongHandle {
     }
 }
 
+/// Inert storage state for a JS wrapper reference.
+///
+/// `bun_jsc::JsRef` owns the effectful behavior: creating/destroying strong
+/// slots, reading weak values, and touching the VM. This sidecar type only
+/// names the storage states so higher `_types` crates can carry JS wrapper
+/// identity without depending on the `bun_jsc` implementation crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsRefState {
+    Weak(EncodedJSValue),
+    Strong(OptionalStrongRefHandle),
+    Finalized,
+}
+
+impl JsRefState {
+    #[inline(always)]
+    pub const fn empty() -> Self {
+        Self::Weak(EncodedJSValue::UNDEFINED)
+    }
+
+    #[inline(always)]
+    pub fn weak(value: EncodedJSValue) -> Self {
+        Self::Weak(value)
+    }
+
+    #[inline(always)]
+    pub fn strong(handle: StrongRefHandle) -> Self {
+        Self::Strong(OptionalStrongRefHandle::new(handle))
+    }
+
+    #[inline(always)]
+    pub const fn finalized() -> Self {
+        Self::Finalized
+    }
+
+    #[inline(always)]
+    pub fn is_strong(&self) -> bool {
+        matches!(self, Self::Strong(_))
+    }
+
+    #[inline(always)]
+    pub fn is_weak(&self) -> bool {
+        matches!(self, Self::Weak(_))
+    }
+
+    #[inline(always)]
+    pub fn is_finalized(&self) -> bool {
+        matches!(self, Self::Finalized)
+    }
+
+    #[inline(always)]
+    pub fn take_strong_handle(&mut self) -> Option<StrongRefHandle> {
+        match self {
+            Self::Strong(handle) => handle.take(),
+            Self::Weak(_) | Self::Finalized => None,
+        }
+    }
+}
+
 /// VM-lifetime handle to a JSC-owned global object.
 ///
 /// This is only pointer identity. The concrete JSC crate supplies the typed
@@ -284,5 +397,36 @@ mod tests {
             unsafe { JSPromiseStrongHandle::from_non_null(None) },
             JSPromiseStrongHandle::empty()
         );
+    }
+
+    #[test]
+    fn encoded_js_value_preserves_jsvalue_shape() {
+        assert_eq!(
+            core::mem::size_of::<EncodedJSValue>(),
+            core::mem::size_of::<i64>()
+        );
+
+        let value = EncodedJSValue::from_bits(0xa);
+        assert_eq!(value.bits(), EncodedJSValue::UNDEFINED.bits());
+        assert!(value.is_empty_or_undefined_or_null());
+        assert!(EncodedJSValue::NULL.is_undefined_or_null());
+        assert!(!EncodedJSValue::TRUE.is_empty_or_undefined_or_null());
+    }
+
+    #[test]
+    fn js_ref_state_carries_weak_or_strong_storage() {
+        let weak = JsRefState::weak(EncodedJSValue::UNDEFINED);
+        assert!(weak.is_weak());
+        assert!(!weak.is_strong());
+        assert!(!weak.is_finalized());
+
+        let slot = NonNull::<StrongRefSlot>::dangling();
+        let handle = unsafe { StrongRefHandle::from_non_null(slot) };
+        let mut strong = JsRefState::strong(handle);
+        assert!(strong.is_strong());
+        assert_eq!(strong.take_strong_handle(), Some(handle));
+        assert_eq!(strong.take_strong_handle(), None);
+
+        assert!(JsRefState::finalized().is_finalized());
     }
 }

@@ -93,12 +93,16 @@ Natural sibling crates
   ├─> bun_jsc_types
   │     ├─> GlobalRef<T>
   │     │     └─> copyable VM-lifetime pointer wrapper; bun_jsc aliases it as GlobalRef<JSGlobalObject>
+  │     ├─> EncodedJSValue
+  │     │     └─> inert 64-bit JSC value payload used by weak JS wrapper refs
   │     ├─> StrongRefSlot
   │     │     └─> opaque strong-reference slot storage identity
-  │     └─> StrongRefHandle
-  │           ├─> non-null slot handle; allocation, mutation, clear, and drop stay in bun_jsc::strong
-  │           ├─> OptionalStrongRefHandle is the nullable slot shape behind jsc.Strong.Optional
-  │           └─> JSPromiseStrongHandle is the nullable promise-root slot shape behind JSPromiseStrong
+  │     ├─> StrongRefHandle
+  │     │     ├─> non-null slot handle; allocation, mutation, clear, and drop stay in bun_jsc::strong
+  │     │     ├─> OptionalStrongRefHandle is the nullable slot shape behind jsc.Strong.Optional
+  │     │     └─> JSPromiseStrongHandle is the nullable promise-root slot shape behind JSPromiseStrong
+  │     └─> JsRefState
+  │           └─> weak/strong/finalized storage state; bun_jsc::JsRef owns strong-slot effects/drop
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     ├─> LifecycleScriptState
@@ -298,8 +302,12 @@ promise-root handle shape. `bun_jsc` now aliases `GlobalRef<JSGlobalObject>`,
 shape while `bun_jsc::strong::{Strong, Optional}` still own allocation,
 mutation, clearing, and destruction of those slots. `JSPromiseStrong` now
 stores the sidecar handle but still owns promise reads, resolution/rejection
-entry points, clearing, and destruction in `bun_jsc`; `JsRef` and
-`Strong::Optional` likewise still carry drop/effect semantics.
+entry points, clearing, and destruction in `bun_jsc`. `EncodedJSValue` and
+`JsRefState` now live in `bun_jsc_types` too, so `JsRef` stores the weak
+encoded value / optional strong-slot identity as sidecar state, while
+`bun_jsc::JsRef` still owns creating, reading, clearing, and destroying the
+JSC strong slot. `Strong::Optional` likewise still carries drop/effect
+semantics in `bun_jsc`.
 Moving the full `Subprocess`/cron job owner below `bun_runtime`
 is therefore not a matter of copying a few pointer-sized fields into
 `bun_runtime_types`; the remaining drop-owning JSC wrappers and runtime
@@ -517,16 +525,16 @@ Remaining owner movement
   │     │     - the sidecar OS-cron state now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, inert GlobalRef<()>, process reducer, status-policy reducer, and error buffer
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar job state records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
-  │     │     - JSPromiseStrong now stores an inert sidecar handle, but the wrapper still owns promise effects/drop; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
+  │     │     - JSPromiseStrong and JsRef now store inert sidecar handle/state shapes, but their wrappers still own promise/ref effects/drop; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
-  │     │     - bun_runtime_types now depends on bun_spawn_types and bun_jsc_types; bun_jsc_types covers inert global pointer plus non-null/nullable strong slot-handle shapes, including the JSPromiseStrongHandle shape, but not drop-owning promise/strong wrappers or promise effects
+  │     │     - bun_runtime_types now depends on bun_spawn_types and bun_jsc_types; bun_jsc_types covers inert global pointer, encoded JS value, JsRef storage state, and non-null/nullable strong slot-handle shapes, including the JSPromiseStrongHandle shape, but not drop-owning promise/strong wrappers or promise effects
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
   │     │     - may resolve/reject promises, spawn the next cron command, free the job, or continue cron-specific cleanup
   │     └─> honest next move
-  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, and introduce/move any lower JSC handle types before putting promise/strong-like fields in that shape
+  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, using lower JSC storage shapes where the state only needs inert pointer/slot identity and keeping promise effects in bun_runtime/bun_jsc
   │           - a ProcessExitTarget that stores only ProcessState preserves the reducer but loses process-exit-last synchronous owner re-entry
   │           - a ProcessExitTarget that stores CronRegisterJob*/CronRemoveJob* is the old callback owner pointer under a typed spelling
   │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
@@ -579,15 +587,15 @@ Required deeper type movement
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now own ready-status policy and return CronProcessCompletion
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
-  │     ├─> JSPromiseStrongHandle has moved below bun_jsc, but promise resolution/rejection and slot destruction still stay in the bun_runtime/bun_jsc effect layer
+  │     ├─> JSPromiseStrongHandle and JsRefState have moved below bun_jsc, but promise resolution/rejection, strong-slot creation/destruction, and wrapper effects still stay in the bun_runtime/bun_jsc effect layer
   │     └─> if the promise/effect owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   └─> Bun.spawn needs a separable subprocess exit state
         ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
         ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
-        ├─> GlobalRef<T>, StrongRefSlot, StrongRefHandle, OptionalStrongRefHandle, and JSPromiseStrongHandle have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
-        ├─> a real split therefore needs the remaining lower JSC handle/sys sidecar work before Subprocess or cron can move all owner state below bun_runtime
+        ├─> GlobalRef<T>, EncodedJSValue, StrongRefSlot, StrongRefHandle, OptionalStrongRefHandle, JSPromiseStrongHandle, and JsRefState have moved to bun_jsc_types as inert pointer/value/slot shapes, but JsRef/Strong/JSPromiseStrong wrappers still bring JSC handle-slot allocation, effects, and drop semantics with them
+        ├─> a real split therefore still needs the remaining owner/resource state split before Subprocess or cron can move all owner state below bun_runtime
         └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```
 

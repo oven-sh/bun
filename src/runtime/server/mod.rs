@@ -1475,7 +1475,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if self.has_active_web_sockets() { "active" } else { "no" },
             self.flags.contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
             if self.all_closed_promise.has_value() { "has" } else { "no" },
-            matches!(self.js_value, jsc::JsRef::Finalized),
+            self.js_value.is_finalized(),
         );
 
         let vm = self.vm_mut();
@@ -1527,7 +1527,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // Only free the memory if the JS reference has been freed too.
-            if matches!(self.js_value, jsc::JsRef::Finalized) {
+            if self.js_value.is_finalized() {
                 self.schedule_deinit();
             }
         }

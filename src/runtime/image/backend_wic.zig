@@ -61,20 +61,32 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     var w: u32 = 0;
     var h: u32 = 0;
     if (frame.?.vt.GetSize(frame.?, &w, &h) < 0 or w == 0 or h == 0) return error.DecodeFailed;
-    if (@as(u64, w) * @as(u64, h) > max_pixels) return error.TooManyPixels;
 
-    // WIC frames come in whatever pixel format the codec emits; normalise to
-    // straight-alpha RGBA8 in one hop.
+    // Inspect the source's native pixel format. If it carries > 8 bpc
+    // (TIFF-16, HEIC 10/12, AVIF 10/12, HDR10 packed), ask WIC to convert
+    // to 64bppRGBA so the precision survives through to PNG 16-bpc encode.
+    // Otherwise stay on the 32bppRGBA fast path. Issue #30462.
+    var src_pf: GUID = undefined;
+    if (frame.?.vt.GetPixelFormat(frame.?, &src_pf) < 0) return error.DecodeFailed;
+    const want_16 = isHighBitDepthSource(src_pf);
+    // `max_pixels` is a byte budget in disguise (see codec_png.decode); halve
+    // the pixel cap when we're about to allocate 8 B/pixel so the byte cap
+    // stays constant regardless of source depth, same as the PNG halving.
+    const effective_max_pixels: u64 = if (want_16) max_pixels / 2 else max_pixels;
+    if (@as(u64, w) * @as(u64, h) > effective_max_pixels) return error.TooManyPixels;
+
     const convertFn = wicConvertBitmapSource orelse return error.BackendUnavailable;
+    const dst_pf: *const GUID = if (want_16) &GUID_WICPixelFormat64bppRGBA else &GUID_WICPixelFormat32bppRGBA;
     var conv: ?*IWICBitmapSource = null;
-    if (convertFn(&GUID_WICPixelFormat32bppRGBA, frame.?, &conv) < 0 or conv == null)
-        return error.DecodeFailed;
+    if (convertFn(dst_pf, frame.?, &conv) < 0 or conv == null) return error.DecodeFailed;
     defer release(conv);
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4) and Windows ships ReleaseSafe
-    // so the @intCast below is a process abort, not silent truncation.
-    const stride: u64 = @as(u64, w) * 4;
+    // so the @intCast below is a process abort, not silent truncation. 16-bpc
+    // doubles the per-pixel footprint so the u32 ceiling halves in effect.
+    const bytes_per_pixel: u64 = if (want_16) 8 else 4;
+    const stride: u64 = @as(u64, w) * bytes_per_pixel;
     const out_len: u64 = stride * h;
     // CopyPixels takes UINT byte-count + UINT stride — same DWORD ceiling.
     if (out_len > std.math.maxInt(u32)) return error.TooManyPixels;
@@ -83,7 +95,7 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     if (conv.?.vt.CopyPixels(conv.?, null, @intCast(stride), @intCast(out_len), out.ptr) < 0)
         return error.DecodeFailed;
 
-    return .{ .rgba = out, .width = w, .height = h };
+    return .{ .rgba = out, .width = w, .height = h, .bit_depth = if (want_16) 16 else 8 };
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
@@ -297,7 +309,12 @@ const IWICBitmapSource = extern struct {
     const VTable = extern struct {
         unk: IUnknownVTable,
         GetSize: *const fn (*IWICBitmapSource, *u32, *u32) callconv(.winapi) HRESULT,
-        GetPixelFormat: *const anyopaque,
+        // Reports the source's native WIC pixel format GUID. Used by the
+        // 16-bpc path (issue #30462) to pick between `32bppRGBA` and
+        // `64bppRGBA` for the convert step so TIFF-16 / HEIC-10 / AVIF-12
+        // don't silently downcast to 8-bpc in `WICConvertBitmapSource`.
+        // Cheap — the header has already been parsed by CreateDecoderFromStream.
+        GetPixelFormat: *const fn (*IWICBitmapSource, *GUID) callconv(.winapi) HRESULT,
         GetResolution: *const anyopaque,
         CopyPalette: *const anyopaque,
         CopyPixels: *const fn (*IWICBitmapSource, ?*const anyopaque, u32, u32, [*]u8) callconv(.winapi) HRESULT,
@@ -344,6 +361,45 @@ const IWICBitmapFrameEncode = extern struct {
 const CLSID_WICImagingFactory: GUID = .{ .d1 = 0xcacaf262, .d2 = 0x9370, .d3 = 0x4615, .d4 = .{ 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
 const IID_IWICImagingFactory: GUID = .{ .d1 = 0xec5ec8a9, .d2 = 0xc395, .d3 = 0x4314, .d4 = .{ 0x9c, 0x77, 0x54, 0xd7, 0xa9, 0x35, 0xff, 0x70 } };
 const GUID_WICPixelFormat32bppRGBA: GUID = .{ .d1 = 0xf5c7ad2d, .d2 = 0x6a8d, .d3 = 0x43dd, .d4 = .{ 0xa7, 0xa8, 0xa2, 0x99, 0x35, 0x26, 0x1a, 0xe9 } };
+// 16-bit-per-channel RGBA, host-endian u16. WIC widens 10/12-bit HDR sources
+// (HEIC/AVIF) and preserves 16-bit sources (TIFF) losslessly when asked for
+// this target. Straight-alpha (not the "PRGBA" premultiplied variant at
+// `…c9, 0x17`, which would quantise through the normal pipeline ops). Layout
+// matches libspng's SPNG_FMT_RGBA16 so a `TIFF 16 → PNG 16` round-trip is
+// bit-identical without a byte swap in Zig. Issue #30462.
+const GUID_WICPixelFormat64bppRGBA: GUID = .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x16 } };
+
+// Source pixel formats that carry > 8-bit-per-channel precision. Listed
+// explicitly so a future WIC-native format doesn't silently fall back to
+// 8-bpc: adding a new GUID here is the only change needed to preserve its
+// depth. The "Half"/"Float"/"FixedPoint" families are included because
+// WICConvertBitmapSource widens them to u16 RGBA (the float-to-int
+// conversion is `clamp(0..1) * 0xFFFF` in WIC's reference converter).
+// Covers TIFF-16, HEIC/AVIF 10/12/16-bit, and the HDR10 packed formats.
+const high_bpc_sources: [12]GUID = .{
+    // 48bppRGB / 48bppBGR — no-alpha 16-bpc (common TIFF variants).
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x15 } },
+    .{ .d1 = 0xe605a384, .d2 = 0xb468, .d3 = 0x46ce, .d4 = .{ 0xbb, 0x2e, 0x36, 0xf1, 0x80, 0xe6, 0x43, 0x13 } },
+    // 64bppRGBA (straight & premultiplied) + 64bppBGRA.
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x16 } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x17 } },
+    .{ .d1 = 0x1562ff7c, .d2 = 0xd352, .d3 = 0x46f9, .d4 = .{ 0x97, 0x9e, 0x42, 0x97, 0x6b, 0x79, 0x22, 0x46 } },
+    // 64bppRGB — 16-bpc no-alpha.
+    .{ .d1 = 0xa1182111, .d2 = 0x186d, .d3 = 0x4d42, .d4 = .{ 0xbc, 0x6a, 0x9c, 0x83, 0x03, 0xa8, 0xdf, 0xf9 } },
+    // 48bppRGBHalf / 48bppRGBFixedPoint — emitted by HDR TIFF encoders.
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x3b } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x12 } },
+    // 64bppRGBHalf / 64bppRGBAHalf / 64bppRGBAFixedPoint / 64bppRGBFixedPoint.
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x42 } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x3a } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x1d } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x41 } },
+};
+
+fn isHighBitDepthSource(g: GUID) bool {
+    for (high_bpc_sources) |h| if (std.meta.eql(g, h)) return true;
+    return false;
+}
 const GUID_ContainerFormatJpeg: GUID = .{ .d1 = 0x19e4a5aa, .d2 = 0x5662, .d3 = 0x4fc5, .d4 = .{ 0xa0, 0xc0, 0x17, 0x58, 0x02, 0x8e, 0x10, 0x57 } };
 const GUID_ContainerFormatPng: GUID = .{ .d1 = 0x1b7cfaf4, .d2 = 0x713f, .d3 = 0x473c, .d4 = .{ 0xbb, 0xcd, 0x61, 0x37, 0x42, 0x5f, 0xae, 0xaf } };
 const GUID_ContainerFormatWebp: GUID = .{ .d1 = 0xe094b0e2, .d2 = 0x67f2, .d3 = 0x45b3, .d4 = .{ 0xb0, 0xea, 0x11, 0x53, 0x37, 0xca, 0x7c, 0xf3 } };

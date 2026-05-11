@@ -768,6 +768,116 @@ describe("Bun.Image", () => {
       // is an integer-overflow panic.
       await expect(new Bun.Image(buf).metadata()).rejects.toThrow();
     });
+
+    // Hand-roll a minimal truecolour TIFF at `bits`-per-sample (8 or 16).
+    // II/little-endian, 9 IFD tags: Width/Length/BitsPerSample/Compression=1
+    // /Photometric=RGB/StripOffsets/SamplesPerPixel/RowsPerStrip/StripByte
+    // Counts, plus one strip of raw w*h*3*(bits/8) samples. TIFF routes
+    // through the system backend on macOS (CoreGraphics) and Windows (WIC);
+    // Linux returns UnsupportedOnPlatform so the bit_depth plumbing there
+    // is a no-op.
+    function makeTiff(w: number, h: number, bits: 8 | 16, pixelOf: (x: number, y: number) => [number, number, number]) {
+      const bytesPerSample = bits / 8;
+      const strip = new Uint8Array(w * h * 3 * bytesPerSample);
+      const sv = new DataView(strip.buffer);
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const [r, g, b] = pixelOf(x, y);
+          const off = (y * w + x) * 3 * bytesPerSample;
+          if (bits === 16) {
+            sv.setUint16(off, r, true);
+            sv.setUint16(off + 2, g, true);
+            sv.setUint16(off + 4, b, true);
+          } else {
+            strip[off] = r;
+            strip[off + 1] = g;
+            strip[off + 2] = b;
+          }
+        }
+      // BitsPerSample needs an external array (3 values) only for 16-bpc;
+      // for 8-bpc three u16 samples fit in the 4-byte value slot inline,
+      // but TIFF semantics still want the external-offset form when count>1
+      // for LONG type — simplest is: always write 3 u16s externally.
+      const bitsOff = 8 + 2 + 9 * 12 + 4;
+      const stripOff = bitsOff + 6;
+      const total = stripOff + strip.length;
+      const buf = new Uint8Array(total);
+      const dv = new DataView(buf.buffer);
+      buf[0] = 0x49; buf[1] = 0x49; // 'II'
+      dv.setUint16(2, 42, true);
+      dv.setUint32(4, 8, true);
+      dv.setUint16(8, 9, true); // IFD entry count
+      let p = 10;
+      const tag = (id: number, type: number, count: number, value: number) => {
+        dv.setUint16(p, id, true);
+        dv.setUint16(p + 2, type, true);
+        dv.setUint32(p + 4, count, true);
+        dv.setUint32(p + 8, value, true);
+        p += 12;
+      };
+      // Types: 3=SHORT (u16), 4=LONG (u32).
+      tag(256, 4, 1, w);
+      tag(257, 4, 1, h);
+      tag(258, 3, 3, bitsOff); // BitsPerSample — 3 u16s at external offset
+      tag(259, 3, 1, 1); // Compression = none
+      tag(262, 3, 1, 2); // Photometric = RGB
+      tag(273, 4, 1, stripOff); // StripOffsets
+      tag(277, 3, 1, 3); // SamplesPerPixel
+      tag(278, 4, 1, h); // RowsPerStrip (whole image)
+      tag(279, 4, 1, strip.length); // StripByteCounts
+      dv.setUint32(p, 0, true); // next-IFD offset = 0
+      dv.setUint16(bitsOff, bits, true);
+      dv.setUint16(bitsOff + 2, bits, true);
+      dv.setUint16(bitsOff + 4, bits, true);
+      buf.set(strip, stripOff);
+      return buf;
+    }
+
+    // System-backend (CoreGraphics / WIC) 16-bpc plumbing. On Linux both
+    // HEIC and TIFF return UnsupportedOnPlatform (no system backend linked),
+    // so this block only exercises the mac/win paths.
+    describe.skipIf(!isMacOS && !isWindows)("system backend (TIFF / HEIC)", () => {
+      test("TIFF 16-bpc → PNG 16-bpc (system backend reports depth ≥ 9 → widen)", async () => {
+        // 2×2 with distinct u16 values whose low byte is non-zero — an 8-bpc
+        // downcast anywhere in the chain would clobber the low byte and the
+        // assert below would fire. CG uses kCGImagePropertyDepth to pick
+        // RGBA16; WIC uses the source pixel format (GUID_WICPixelFormat48bppRGB)
+        // classifier. Both land on the same RGBA16 output.
+        const src = makeTiff(2, 2, 16, (x, y) => {
+          if (x === 0 && y === 0) return [0xffee, 0x0123, 0x0456];
+          if (x === 1 && y === 0) return [0x0789, 0xfedc, 0x1234];
+          if (x === 0 && y === 1) return [0xdcba, 0x5678, 0xcafe];
+          return [0x2345, 0xabcd, 0x9876];
+        });
+        const out = await new Bun.Image(src).png().bytes();
+        expect(pngBitDepth(out)).toBe(16);
+        const { w, h, data } = decodePngRaw16(out);
+        expect({ w, h }).toEqual({ w: 2, h: 2 });
+        // RGB TIFF → vImage/WIC fill A=0xFFFF (no alpha channel in source).
+        // Neither CG nor WIC does colour-space conversion on an untagged RGB
+        // TIFF, so samples round-trip byte-for-byte.
+        expect(rgba16At(data, w, 0, 0)).toEqual([0xffee, 0x0123, 0x0456, 0xffff]);
+        expect(rgba16At(data, w, 1, 1)).toEqual([0x2345, 0xabcd, 0x9876, 0xffff]);
+      });
+
+      test("TIFF 8-bpc → PNG 8-bpc (classifier does not upgrade 8-bpc sources)", async () => {
+        // Control: the 16-bpc classifier must NOT unconditionally upgrade
+        // every TIFF — only sources whose native WIC pixel format / CG
+        // reported depth is > 8. An 8-bpc TIFF should land on the 32bppRGBA
+        // / VFmt{8,32,…} fast path and encode to 8-bpc PNG.
+        const src = makeTiff(2, 2, 8, (_x, _y) => [10, 20, 30]);
+        const out = await new Bun.Image(src).png().bytes();
+        expect(pngBitDepth(out)).toBe(8);
+      });
+
+      test("TIFF 16-bpc + resize forces downconvert to 8-bpc (geometry kernels are u8)", async () => {
+        // Same rule as PNG 16 → resize: any pipeline op triggers the u8
+        // narrow before the kernel runs.
+        const src = makeTiff(4, 4, 16, (x, y) => [(x * 0x3333) & 0xffff, (y * 0x3333) & 0xffff, 0xffff]);
+        const out = await new Bun.Image(src).resize(2, 2).png().bytes();
+        expect(pngBitDepth(out)).toBe(8);
+      });
+    });
   });
 
   // ICC colour profile preservation — #30197. The RGBA pixel buffer the

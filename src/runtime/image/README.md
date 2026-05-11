@@ -49,13 +49,17 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 ## Invariants
 
 - Pixel format is **RGBA8 everywhere** between decode and encode, with one
-  exception: libspng emits RGBA16 for 16-bpc PNG sources so `PNG 16 → PNG 16`
-  with no ops survives at full precision (issue #30462). `Decoded.bit_depth`
-  tracks 8 vs 16; every op and every non-PNG-truecolour encoder is u8-only,
-  so `PipelineTask.applyPipeline` / `applyOrientation` call
+  exception: libspng emits RGBA16 for 16-bpc PNG sources, CoreGraphics (mac)
+  emits RGBA16 for HEIC/AVIF/TIFF sources with ImageIO-reported depth ≥ 9,
+  and WIC (Windows) emits 64bppRGBA when the source's native pixel format
+  carries > 8 bpc — so high-bit-depth round-trips (PNG 16 ↔ PNG 16, TIFF 16
+  → PNG 16, iPhone HEIC 10-bit → PNG 16) survive at full precision (issue
+  #30462). `Decoded.bit_depth` tracks 8 vs 16 (10/12-bit sources are widened
+  to 16 by the OS codec); every op and every non-PNG-truecolour encoder is
+  u8-only, so `PipelineTask.applyPipeline` / `applyOrientation` call
   `Decoded.downconvertTo8()` before they run, and `PipelineTask.run` does
-  the same before any non-PNG encode. Decoders other than PNG always emit
-  RGBA8, so nothing else branches on channels.
+  the same before any non-PNG encode. JPEG/WebP/BMP/GIF decoders always
+  emit RGBA8, so those paths don't branch on channels.
 - **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
   is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator
   (`tj3Free`/`WebPFree`/`std.c.free`/`mi_free`); `then()` hands that buffer

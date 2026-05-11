@@ -244,7 +244,11 @@ pub const Transpiler = struct {
         if (auto_jsx) {
             // Most of the time, this will already be cached
             if (transpiler.resolver.readDirInfo(transpiler.fs.top_level_dir) catch null) |root_dir| {
-                if (root_dir.tsconfig_json) |tsconfig| {
+                // Prefer the tsconfig that lives in this directory, but fall back
+                // to the enclosing one (e.g. `--tsconfig-override` attaches the
+                // override to the filesystem root; children inherit via
+                // `enclosing_tsconfig_json` only).
+                if (root_dir.tsconfig_json orelse root_dir.enclosing_tsconfig_json) |tsconfig| {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if (transpiler.options.transform_options.jsx == null) {
                         transpiler.options.jsx = tsconfig.jsx;

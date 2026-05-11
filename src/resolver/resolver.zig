@@ -4204,9 +4204,16 @@ pub const Resolver = struct {
             }
 
             if (tsconfig_path) |tsconfigpath| {
+                // Pass .invalid for --tsconfig-override: the override path may
+                // live outside the directory we're iterating, so `fd` isn't its
+                // parent. Using it would trip the `openat(dirname_fd, basename(path))`
+                // path in cache.zig and log an "Internal error: directory mismatch"
+                // warning before falling back to an absolute-path open.
+                const is_override = r.opts.tsconfig_override != null and parent == null;
+                const tsconfig_dir_fd: FD = if (FeatureFlags.store_file_descriptors and !is_override) fd else .invalid;
                 info.tsconfig_json = r.parseTSConfig(
                     tsconfigpath,
-                    if (FeatureFlags.store_file_descriptors) fd else .zero,
+                    tsconfig_dir_fd,
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
@@ -4245,6 +4252,7 @@ pub const Resolver = struct {
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
+                        merged_config.experimental_decorators = merged_config.experimental_decorators or parent_config.experimental_decorators;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                         }

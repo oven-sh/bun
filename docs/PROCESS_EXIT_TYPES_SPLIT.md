@@ -346,6 +346,9 @@ Remaining owner movement
   ├─> LifecycleScriptSubprocess
   │     ├─> current owner: install/lifecycle_script_runner.rs::LifecycleScriptSubprocess
   │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, timer, intrusive heap node
+  │     ├─> current event-loop context
+  │     │     - PackageManager::tick_lifecycle_scripts / sleep pass PackageManager* as AnyEventLoop context
+  │     │     - that proves the manager is live, but it does not identify which active LifecycleScriptSubprocess finished
   │     ├─> current re-entry: LifecycleScriptSubprocess::on_process_exit
   │     │     - validates ProcessIdentity, updates LifecycleScriptExit, then calls apply_exit_action()
   │     ├─> synchronous effect: LifecycleScriptSubprocess::handle_exit
@@ -353,9 +356,12 @@ Remaining owner movement
   │     └─> honest next move
   │           - move the lifecycle owner/effect boundary far enough into bun_install_types that ProcessExitTarget can carry a typed state/handle whose Ready action is directly consumable
   │           - a NonNull<LifecycleScriptExit> target by itself is only reducer state; using it to recover LifecycleScriptSubprocess would be the old owner-pointer coupling under a field-offset disguise
+  │           - scanning PackageManager.active_lifecycle_scripts by ProcessIdentity would add the side lookup path this branch is specifically rejecting
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
   │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
+  │     ├─> current event-loop context
+  │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
@@ -366,6 +372,9 @@ Remaining owner movement
   ├─> Bun.spawn Subprocess
   │     ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
   │     │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
+  │     ├─> existing VM process tracking
+  │     │     - ProcessAutoKiller stores Process* -> (), only for later kill/deref; it has no Subprocess* or JS object owner slot
+  │     │     - therefore ProcessIdentity/Process* cannot recover the Subprocess owner without adding a new registry
   │     ├─> current re-entry: Subprocess::on_process_exit
   │     │     - updates resource usage, removes timers/signals, closes terminal/stdin, resumes stdout/stderr, resolves promises, invokes onExit, disconnects IPC, and derefs self
   │     └─> honest next move

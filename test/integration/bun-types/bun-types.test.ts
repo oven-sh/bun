@@ -24,7 +24,15 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
   dirname(TSCONFIG_SOURCE_PATH),
 ).options;
 
-const $ = Shell.cwd(BUN_REPO_ROOT);
+// The shell below spawns `bun run build` / `bun pm pack` through $PATH. On CI
+// and most developer machines $PATH's `bun` is a release build whose
+// `Bun.version` differs from the debug / ASAN build running this test (e.g.
+// `1.3.14` vs `1.3.14-debug`). Without pinning the version every child
+// process agrees on, the build script stamps `package.json` with whatever
+// `$PATH`'s bun reports, `bun pm pack` names the tarball accordingly, and
+// our subsequent `bun add bun-types@${BUN_TYPES_TARBALL_NAME}` references a
+// filename that no longer exists.
+const $ = Shell.cwd(BUN_REPO_ROOT).env({ ...process.env, BUN_VERSION });
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
@@ -317,49 +325,74 @@ describe("@types/bun integration test", () => {
 
   // Regression test for https://github.com/oven-sh/bun/issues/30503.
   //
-  // When a project has both `bun-types` and the DefinitelyTyped `@types/bun` stub
-  // installed (the layout `bun add -d @types/bun` produces by default), the old
-  // `bun-types/bun.ns.d.ts` did `import * as BunModule from "bun"` to build the
-  // global `Bun` namespace alias. Under TypeScript 6's tighter module resolution,
-  // that `"bun"` resolves to the `@types/bun/index.d.ts` stub (a one-line
-  // `/// <reference types="bun-types" />`) — not the `declare module "bun"` block
-  // in `bun-types/bun.d.ts`. The stub has no exports, so `BunModule` ends up as
-  // an empty namespace. Downstream, every `Bun.X` reference inside `bun-types`'
-  // own `.d.ts` files resolves against that empty namespace and fails, which
-  // then leaves a cascade of interfaces (`ReadableStream`, `Worker`, `WebSocket`,
-  // …) in `globals.d.ts` with no members.
+  // `bun-types/bun.ns.d.ts` used to do `import * as BunModule from "bun"` to
+  // build the global `Bun` namespace alias. With TypeScript 6's tighter module
+  // resolution and the DefinitelyTyped `@types/bun` stub installed alongside
+  // (the layout `bun add -d @types/bun` produces — the stub depends on
+  // `bun-types`), the `"bun"` specifier here resolves to the stub's
+  // `index.d.ts` (a one-line `/// <reference types="bun-types" />`) rather
+  // than the `declare module "bun"` block in `bun-types/bun.d.ts`.
   //
-  // The fix routes the import through an internal `"bun-types:internal"` alias
-  // module whose name contains a `:` so TypeScript treats it as an absolute URI
-  // and skips file-based module resolution. The ambient alias in `bun.d.ts`
-  // re-exports `"bun"`, so `BunModule` gets the real members and the cascade
-  // above does not happen.
-  test("Bun global namespace is populated under TypeScript 6 (#30503)", async () => {
+  // Type-checking often still appears to work because TypeScript merges the
+  // ambient `declare module "bun"` into the resolved module's symbol table —
+  // but that merge is fragile and layout-dependent (monorepos in particular
+  // hit layouts where it no longer rescues the namespace). The only reliable
+  // signal is the module resolution itself: `bun.ns.d.ts` must not reach the
+  // `@types/bun` stub as the source of its `BunModule` binding.
+  //
+  // The fix routes the binding through an ambient `"bun-types:internal"`
+  // module whose `:` makes TypeScript skip file-based module resolution.
+  test("bun.ns.d.ts does not resolve through the @types/bun stub (#30503)", async () => {
     const fixtureDir = await createIsolatedFixture();
+    const bunNsPath = join(fixtureDir, "node_modules", "bun-types", "bun.ns.d.ts");
+    const atTypesBunStub = join(fixtureDir, "node_modules", "@types", "bun", "index.d.ts");
 
-    const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
-      files: {
-        "bun-namespace-30503.ts": `
-          // Direct references via the global Bun namespace. If the namespace
-          // alias resolved to an empty module, each of these would produce a
-          // TS2694 ("Namespace 'Bun' has no exported member 'X'") diagnostic.
-          const f: Bun.BunFile = Bun.file("./tsconfig.json");
-          const s: Bun.S3Client = new Bun.S3Client({ bucket: "x" });
-          const h: Bun.HeadersInit = { foo: "bar" };
-          const n: number = Bun.nanoseconds();
-          void f; void s; void h; void n;
-        `,
-      },
+    // Sanity check: both files exist (the `beforeAll` hook is supposed to
+    // have installed `bun-types` from the freshly packed tarball and written
+    // the DefinitelyTyped stub).
+    expect(await Bun.file(bunNsPath).exists()).toBe(true);
+    expect(await Bun.file(atTypesBunStub).exists()).toBe(true);
+
+    // Parse `bun.ns.d.ts` and pull out the specifier of the sole namespace
+    // import. We verify the specifier itself rather than trusting only that
+    // the compiler "worked", because ambient-module merging can paper over
+    // the misresolution in the fresh-install layout.
+    const nsSource = ts.createSourceFile(
+      bunNsPath,
+      readFileSync(bunNsPath, "utf8"),
+      ts.ScriptTarget.ESNext,
+      true,
+    );
+    let specifier: string | undefined;
+    nsSource.forEachChild(node => {
+      if (
+        ts.isImportDeclaration(node) &&
+        node.importClause?.namedBindings &&
+        ts.isNamespaceImport(node.importClause.namedBindings)
+      ) {
+        specifier = (node.moduleSpecifier as ts.StringLiteral).text;
+      }
     });
+    expect(specifier).toBeDefined();
 
-    // 1. The user file itself type-checks cleanly.
-    const userDiagnostics = diagnostics.filter(d => d.line?.startsWith("bun-namespace-30503.ts"));
-    expect(userDiagnostics).toEqual([]);
+    // Resolve that specifier from `bun.ns.d.ts`'s location using the same
+    // compiler options the rest of the integration suite uses. Two things
+    // must hold:
+    //   1. The resolution does not land on `@types/bun/index.d.ts`. That
+    //      file is the stub with nothing but a triple-slash reference, so
+    //      using it as the source of the namespace alias empties `Bun`.
+    //   2. Either the specifier is unresolvable (ambient-only, like our
+    //      `bun-types:internal` alias) or it points at a real bun-types
+    //      declaration file.
+    const resolved = ts.resolveModuleName(specifier!, bunNsPath, DEFAULT_COMPILER_OPTIONS, {
+      fileExists: ts.sys.fileExists,
+      readFile: ts.sys.readFile,
+    }).resolvedModule?.resolvedFileName;
 
-    // 2. No additional interfaces collapsed to empty because of the cascade
-    //    described above. Without the fix this set grows by ~26 entries
-    //    (`ReadableStream`, `Worker`, `WebSocket`, `MessageEvent`, …).
-    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+    expect(resolved).not.toBe(atTypesBunStub);
+    if (resolved !== undefined) {
+      expect(resolved).toMatch(/bun-types[\\/].+\.d\.ts$/);
+    }
   });
 
   // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,

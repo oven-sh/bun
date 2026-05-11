@@ -20,6 +20,7 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use bun_collections::{VecExt, ByteVecExt};
 use crate::bun_str::WTFStringImplExt as _;
 use core::cell::Cell;
@@ -42,8 +43,9 @@ use bun_jsc::{
 use bun_jsc::js_promise::Status as PromiseStatus;
 
 use bun_bundler::entry_points::ServerEntryPoint;
-use bun_bundler::options::{self, Loader, ModuleType};
-use bun_options_types::import_record::ImportKind;
+use bun_ast::Loader;
+use bun_bundler::options::{self, ModuleType};
+use bun_ast::ImportKind;
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -260,7 +262,7 @@ unsafe fn init_runtime_state(
     // inlined below over the caller-supplied `opts.transform_options`.
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
-    let log: *mut bun_logger::Log =
+    let log: *mut bun_ast::Log =
         unsafe { &*vm }.log.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
     // `bun_bundler::Transpiler::init` is now public (transpiler.rs); its body
     // sub-gates the `BundleOptions::from_api` / `Resolver::init1` tail and
@@ -377,11 +379,11 @@ unsafe fn init_runtime_state(
 /// touches `transpiler.options`).
 unsafe fn configure_debugger(
     vm: *mut VirtualMachine,
-    cli_flag: &bun_options_types::Context::Debugger,
+    cli_flag: &bun_options_types::context::Debugger,
 ) {
     use bun_core::env_var;
     use bun_jsc::debugger::{Debugger, Mode, Wait};
-    use bun_options_types::Context::Debugger as CliDebugger;
+    use bun_options_types::context::Debugger as CliDebugger;
 
     if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get().is_some() {
         return;
@@ -595,7 +597,7 @@ unsafe fn load_preloads(
                     // SAFETY: `log` is the unique per-VM `Box<Log>`.
                     let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} resolving preload {}",
                             e.name(),
@@ -613,7 +615,7 @@ unsafe fn load_preloads(
                     // SAFETY: `log` is the unique per-VM `Box<Log>`.
                     let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "preload not found {}",
                             bun_core::fmt::format_json_string_latin1(unsafe { &*preload }),
@@ -1312,7 +1314,7 @@ mod vm_loader_ctx {
                 .module_loader
                 .eval_source
                 .as_deref()
-                .map(core::ptr::from_ref::<bun_logger::Source>),
+                .map(core::ptr::from_ref::<bun_ast::Source>),
             main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
@@ -1903,10 +1905,10 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::Js | L::Jsx | L::Ts | L::Tsx | L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5
         | L::Text | L::Md => {
-            // TODO(b2-blocked): `js_ast::ASTMemoryAllocator::Scope` — gated in
+            // TODO(b2-blocked): `bun_ast::ASTMemoryAllocator::Scope` — gated in
             // `bun_js_parser`. Spec :117-119.
             
-            let mut _ast_scope = bun_js_parser::ast::ast_memory_allocator::Scope::default();
+            let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -2012,8 +2014,8 @@ fn transpile_source_code_inner(
             // default_allocator`. The bundler-side `cache::RuntimeTranspilerCache`
             // dropped those fields per PORTING.md §Allocators (cache buffers use
             // global mimalloc), so `Default::default()` matches.
-            let mut cache = bun_bundler::cache::RuntimeTranspilerCache {
-                r#impl: Some(bun_js_parser::TranspilerCacheImplKind::Jsc),
+            let mut cache = bun_ast::RuntimeTranspilerCache {
+                r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
                 ..Default::default()
             };
 
@@ -2143,17 +2145,17 @@ fn transpile_source_code_inner(
 
             // ── Node-fallback virtual source ────────────────────────────────
             // Spec :258-264.
-            let mut fallback_source: bun_logger::Source;
+            let mut fallback_source: bun_ast::Source;
             let mut virtual_source = args.virtual_source;
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     // TODO(port): lifetime — `Fs::Path::init` wants `'static`;
                     // `specifier` is `&'a [u8]`. Spec stores the `Path` in a
-                    // stack `logger::Source`, so the borrow is sound for the
+                    // stack `bun_ast::Source`, so the borrow is sound for the
                     // call. Un-gate once `Fs::Path<'a>` lands.
                     
                     {
-                        // PORT NOTE: `bun_logger::Source::path` is the logger-local
+                        // PORT NOTE: `bun_ast::Source::path` is the logger-local
                         // `fs::Path` (NOT `bun_resolver::fs::Path`). `specifier`
                         // here is a `node_fallbacks` key — a `&'static [u8]`
                         // literal — so no lifetime erasure needed.
@@ -2163,8 +2165,8 @@ fn transpile_source_code_inner(
                             core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
                         };
                         let fallback_path =
-                            bun_logger::fs::Path::init_with_namespace(spec_static, b"node");
-                        fallback_source = bun_logger::Source {
+                            bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
+                        fallback_source = bun_ast::Source {
                             path: fallback_path,
                             contents: bun_ptr::Cow::Borrowed(code),
                             ..Default::default()
@@ -2182,7 +2184,7 @@ fn transpile_source_code_inner(
             // ════════════════════════════════════════════════════════════════
             {
                 use bun_bundler::transpiler::{ParseOptions, ParseResult, AlreadyBundled};
-                use bun_bundler::cache::RuntimeTranspilerCache;
+                use bun_ast::RuntimeTranspilerCache;
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
                 // TODO(b2-cycle): `Debugger::set_breakpoint_on_first_line` +
@@ -2191,8 +2193,8 @@ fn transpile_source_code_inner(
                 let set_breakpoint_on_first_line = false;
                 let _ = is_main;
 
-                // PORT NOTE: `ParseOptions::path` is `bun_logger::fs::Path`
-                // (the `'static`-slice flavour used by `logger::Source`), but
+                // PORT NOTE: `ParseOptions::path` is `bun_paths::fs::Path<'static>`
+                // (the `'static`-slice flavour used by `bun_ast::Source`), but
                 // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
                 // are field-identical. The resolver entry path interns into
                 // `'static` BSSStringList stores, but the `transpile_file`
@@ -2213,11 +2215,11 @@ fn transpile_source_code_inner(
                 // with no intern at all (ModuleLoader.zig:90); the intern is a
                 // Phase-A workaround for the async-module queue path only.
                 let parse_path = if disable_transpilying {
-                    bun_logger::fs::Path {
+                    bun_paths::fs::Path {
                         pretty: path.pretty,
                         text: path.text,
                         namespace: path.namespace,
-                        name: bun_logger::fs::PathName::init(path.text),
+                        name: bun_paths::fs::PathName::init(path.text),
                         is_disabled: path.is_disabled,
                         is_symlink: path.is_symlink,
                     }
@@ -2242,11 +2244,11 @@ fn transpile_source_code_inner(
                     } else {
                         intern_transpile_path(path.namespace)
                     };
-                    bun_logger::fs::Path {
+                    bun_paths::fs::Path {
                         pretty,
                         text,
                         namespace,
-                        name: bun_logger::fs::PathName::init(text),
+                        name: bun_paths::fs::PathName::init(text),
                         is_disabled: path.is_disabled,
                         is_symlink: path.is_symlink,
                     }
@@ -2451,7 +2453,7 @@ fn transpile_source_code_inner(
                         // arena outlives this call (returned to the VM by the
                         // scopeguard above only after we return).
                         let stmt = unsafe { &(*part.stmts)[0] };
-                        let bun_js_parser::StmtData::SExpr(s_expr) = &stmt.data else {
+                        let bun_ast::StmtData::SExpr(s_expr) = &stmt.data else {
                             // Parser guarantees JSON/TOML/YAML produce a single
                             // `SExpr` part; anything else is a parser bug.
                             unreachable!("JSON/TOML/YAML parse result is always SExpr")
@@ -2675,7 +2677,7 @@ fn transpile_source_code_inner(
 
                 // Spec :516-523.
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-                    || parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
+                    || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
                 // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
 
                 // ── js_printer::print ───────────────────────────────────────
@@ -3227,14 +3229,14 @@ fn get_hardcoded_module(
         }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
-            // shim, embedded as a static string in `bun_js_parser::runtime`.
+            // shim, embedded as a static string in `bun_ast::runtime`.
             
-            // TODO(b2-cycle): `Runtime::source_code()` — `bun_js_parser::runtime`
+            // TODO(b2-cycle): `Runtime::source_code()` — `bun_ast::runtime`
             // is a stub re-export until `runtime.rs` un-gates there.
             {
                 return Some(ResolvedSource {
                     source_code: bun_string::String::init(
-                        bun_js_parser::runtime_full::Runtime::source_code(),
+                        bun_ast::runtime::Runtime::source_code(),
                     ),
                     specifier: *specifier,
                     source_url: *specifier,
@@ -3414,17 +3416,17 @@ export default db;
 // The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
 // is ``-gated behind a `VmLoaderCtx` vtable that nothing
 // constructs yet, and `Fs::Path::loader` returns the lower-tier
-// `bun_options_types::BundleEnums::Loader` (a *distinct* nominal type from the
-// `bun_bundler::options::Loader` we need for `TranspileExtra`). Porting the
+// `bun_ast::Loader` (a *distinct* nominal type from the
+// `bun_ast::Loader` we need for `TranspileExtra`). Porting the
 // body inline here lets us name `VirtualMachine` directly (no vtable) and look
 // the loader up in `transpiler.options.loaders` (which is already
-// `StringArrayHashMap<options::Loader>`), so no inter-enum bridge is required.
+// `StringArrayHashMap<bun_ast::Loader>`), so no inter-enum bridge is required.
 // ────────────────────────────────────────────────────────────────────────────
 
 /// `bun.options.Loader.Optional.fromAPI` (spec options.zig) — maps the wire
 /// `bun.schema.api.Loader` (`#[repr(u8)]`, `_none = 254`) discriminant that
 /// crosses the C++ boundary as `force_loader: u8` to the runtime
-/// `options::Loader`. Exhaustive match (any unknown tag — including 0, which
+/// `bun_ast::Loader`. Exhaustive match (any unknown tag — including 0, which
 /// `api::Loader` never uses — collapses to `None`).
 #[inline]
 fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
@@ -3457,11 +3459,11 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
 }
 
 /// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
-/// `options::LoaderHashTable` (= `StringArrayHashMap<options::Loader>`).
+/// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
 /// Spec resolver/fs.zig `Path.loader`.
 fn loader_for_path(
     path: &Fs::Path<'_>,
-    loaders: &options::LoaderHashTable,
+    loaders: &bun_ast::LoaderHashTable,
 ) -> Option<Loader> {
     if path.is_data_url() {
         return Some(Loader::Dataurl);
@@ -3521,7 +3523,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult` (options.zig:944-953).
 struct LoaderResult<'a> {
     loader: Option<Loader>,
-    virtual_source: Option<&'a bun_logger::Source>,
+    virtual_source: Option<&'a bun_ast::Source>,
     path: Fs::Path<'a>,
     is_main: bool,
     specifier: &'a [u8],
@@ -3539,7 +3541,7 @@ struct LoaderResult<'a> {
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
-    virtual_source_to_use: &'a mut Option<bun_logger::Source>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
     blob_to_deinit: &mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, bun_core::Error> {
@@ -3551,7 +3553,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
     let mut loader: Option<Loader> =
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
-    let mut virtual_source: Option<&'a bun_logger::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     // Spec :971-979 — synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
@@ -3570,7 +3572,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
             // outlives the synchronous transpile this borrow feeds into.
             virtual_source =
-                Some(unsafe { &*std::ptr::from_ref::<bun_logger::Source>(eval_source) });
+                Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
             loader = Some(Loader::Tsx);
         }
     }
@@ -3607,7 +3609,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // SAFETY: same lifetime erasure as above — `shared_view()`
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
-                    // `bun_logger::Source` stores `&'static [u8]` (Phase A
+                    // `bun_ast::Source` stores `&'static [u8]` (Phase A
                     // shape — see logger/lib.rs §`type Str`), so erase to
                     // `'static`; sound because the blob outlives the
                     // synchronous `transpile_source_code_inner` call.
@@ -3618,11 +3620,11 @@ unsafe fn get_loader_and_virtual_source<'a>(
                             core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()),
                         )
                     };
-                    *virtual_source_to_use = Some(bun_logger::Source {
-                        // PORT NOTE: `bun_logger::Source::path` is the
+                    *virtual_source_to_use = Some(bun_ast::Source {
+                        // PORT NOTE: `bun_ast::Source::path` is the
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
-                        path: bun_logger::fs::Path::init(path_text),
+                        path: bun_paths::fs::Path::init(path_text),
                         contents: bun_ptr::Cow::Borrowed(contents),
                         ..Default::default()
                     });
@@ -3695,7 +3697,7 @@ thread_local! {
 ///
 /// PORT NOTE: the Zig spec passes `path: Fs.Path` by value into
 /// `transpileSourceCode` with no intern (ModuleLoader.zig:90); the
-/// `bun_logger::fs::Path<'static>` shape forced the Rust port to re-intern on
+/// `bun_paths::fs::Path<'static><'static>` shape forced the Rust port to re-intern on
 /// every call. `BSSStringList::append` does not dedupe, so a `require()`
 /// loop that busts `require.cache` (test/cli/run/require-cache.test.ts —
 /// "files transpiled and loaded don't leak file paths") leaked one path-len
@@ -3742,7 +3744,6 @@ unsafe fn transpile_file(
     force_loader: u8,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-    use bun_logger as logger;
 
     // SAFETY: per fn contract.
     let global_ref = unsafe { &*global };
@@ -3751,7 +3752,7 @@ unsafe fn transpile_file(
 
     // Spec :895 — `var log = logger.Log.init(jsc_vm.transpiler.allocator)`.
     // PORT NOTE: per §Allocators the explicit allocator threads are dropped.
-    let mut log = logger::Log::init();
+    let mut log = bun_ast::Log::init();
     // PORT NOTE: reshaped for borrowck — Zig `defer log.deinit()` becomes a
     // scopeguard so every `return null` path still frees the msg vec.
     let mut log = scopeguard::guard(log, |mut l| {
@@ -3769,7 +3770,7 @@ unsafe fn transpile_file(
         unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
 
     // Spec :907-913.
-    let mut virtual_source_to_use: Option<logger::Source> = None;
+    let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let mut lr = match unsafe {
@@ -4153,8 +4154,8 @@ unsafe fn transpile_virtual_module(
     let referrer_slice = unsafe { &*referrer_ptr }.to_utf8();
 
     let virtual_source =
-        bun_logger::Source::init_path_string(specifier, source_code_slice.slice());
-    let mut log = bun_logger::Log::init();
+        bun_ast::Source::init_path_string(specifier, source_code_slice.slice());
+    let mut log = bun_ast::Log::init();
     // SAFETY: `TranspileExtra::path` is typed `'static` for the cross-crate
     // fn-ptr ABI; the borrow actually lives only for this call (the `extra`
     // struct is consumed by `transpile_source_code_inner` before
@@ -4427,7 +4428,8 @@ unsafe fn _resolve<'a>(
     ret_query: &mut &'a [u8],
 ) -> Result<(), bun_core::Error> {
     use bun_jsc::virtual_machine::MAIN_FILE_NAME;
-    use bun_resolve_builtins::{Alias, Cfg as AliasCfg, Target};
+    use bun_resolve_builtins::{Alias, Cfg as AliasCfg};
+    use bun_ast::Target;
 
     // Spec :1732 — `Runtime.Runtime.Imports.alt_name` == `Runtime.Runtime.Imports.Name`
     // == `"bun:wrap"` (see js_parser/runtime.rs:644-645). Zig compared the
@@ -4627,8 +4629,8 @@ unsafe fn resolve_hook(
     is_user_require_resolve: bool,
 ) -> bool {
     use bun_jsc::ResolveMessage;
-    use bun_logger as logger;
-    use bun_resolve_builtins::{Alias, Cfg as AliasCfg, Target};
+    use bun_resolve_builtins::{Alias, Cfg as AliasCfg};
+    use bun_ast::Target;
 
     // SAFETY: per fn contract.
     let global_ref = unsafe { &*global };
@@ -4660,8 +4662,8 @@ unsafe fn resolve_hook(
             bun_core::err!("NameTooLong"),
             import_kind.into(),
         );
-        let msg = logger::Msg {
-            data: logger::range_data(None, logger::Range::NONE, printed),
+        let msg = bun_ast::Msg {
+            data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
             ..Default::default()
         };
         let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
@@ -4729,13 +4731,13 @@ unsafe fn resolve_hook(
     // transpile_source_code's identical swap at jsc_hooks.rs:848-879), so the
     // pointer write is sound; restore via scopeguard so the early-`return
     // false` paths don't leave a dangling stack pointer.
-    let mut log = logger::Log::init();
+    let mut log = bun_ast::Log::init();
     // SAFETY: `vm.log` is `Option<NonNull<Log>>`.
-    let old_log: *mut logger::Log = match unsafe { &*vm }.log {
+    let old_log: *mut bun_ast::Log = match unsafe { &*vm }.log {
         Some(p) => p.as_ptr(),
         None => ptr::null_mut(),
     };
-    let log_ptr: *mut logger::Log = &raw mut log;
+    let log_ptr: *mut bun_ast::Log = &raw mut log;
     // SAFETY: `vm` is the live per-thread VM; the log fields are raw `*mut`.
     unsafe {
         (*vm).log = core::ptr::NonNull::new(log_ptr);
@@ -4773,9 +4775,9 @@ unsafe fn resolve_hook(
     } {
         // Spec :1956-1999 — synthesise a `ResolveMessage` from the first
         // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
-        let msg: logger::Msg = 'brk: {
+        let msg: bun_ast::Msg = 'brk: {
             for m in log.msgs.iter() {
-                if let logger::Metadata::Resolve(r) = &m.metadata {
+                if let bun_ast::Metadata::Resolve(r) = &m.metadata {
                     err = r.err;
                     // PORT NOTE: Zig moved the msg out (`break :brk m`); the
                     // Rust `Msg` is `Clone` (Result<Msg, AllocError>).
@@ -4797,10 +4799,10 @@ unsafe fn resolve_hook(
                 err,
                 import_kind.into(),
             );
-            logger::Msg {
-                data: logger::range_data(None, logger::Range::NONE, printed.clone()),
-                metadata: logger::Metadata::Resolve(logger::MetadataResolve {
-                    specifier: logger::BabyString::r#in(&printed, specifier_utf8.slice()),
+            bun_ast::Msg {
+                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
+                metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                    specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
                     import_kind: import_kind.into(),
                     err,
                 }),

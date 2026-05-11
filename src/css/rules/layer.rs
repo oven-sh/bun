@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_alloc::Arena;
 use bun_collections::{ArrayHashMap, VecExt};
-use bun_options_types::ImportRecord;
+use bun_ast::ImportRecord;
 
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};

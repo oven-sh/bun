@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_collections::{AutoBitSet, VecExt, HashMap};
-use bun_options_types::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord};
 
 use crate::{
     Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,
@@ -8,7 +8,7 @@ use crate::{
     js_meta::Wrap,
     linker_graph::FileColumns as _,
 };
-use bun_js_parser::js_ast;
+use bun_ast as js_ast;
 use bun_core::perf;
 
 pub fn find_all_imported_parts_in_js_order(
@@ -141,7 +141,7 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
     visitor: &mut FindImportedPartsVisitor<'_, '_>,
     chunk_order_array: &[Order],
 ) {
-    visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value);
+    visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value());
     for order in chunk_order_array {
         visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(order.source_index);
     }
@@ -192,7 +192,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         &mut self,
         source_index: IndexInt,
     ) {
-        if source_index == Index::INVALID.value {
+        if source_index == Index::INVALID.value() {
             return;
         }
         let visited_entry = bun_core::handle_oom(self.visited.get_or_put(source_index));
@@ -218,12 +218,12 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         let parts = self.parts[source_index as usize].slice();
         if can_be_split
             && is_file_in_chunk
-            && parts[js_ast::NAMESPACE_EXPORT_PART_INDEX as usize].is_live
+            && parts[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize].is_live
         {
             Self::append_or_extend_range(
                 &mut self.part_ranges,
                 source_index,
-                js_ast::NAMESPACE_EXPORT_PART_INDEX,
+                bun_ast::NAMESPACE_EXPORT_PART_INDEX,
             );
         }
 
@@ -252,10 +252,10 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                 is_file_in_chunk = true;
 
                 if can_be_split
-                    && part_index != js_ast::NAMESPACE_EXPORT_PART_INDEX
+                    && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
                     && self.c.should_include_part(source_index, part)
                 {
-                    let js_parts = if source_index == Index::RUNTIME.value {
+                    let js_parts = if source_index == Index::RUNTIME.value() {
                         &mut self.parts_prefix
                     } else {
                         &mut self.part_ranges

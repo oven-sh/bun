@@ -10,9 +10,8 @@ use bun_threading::Futex;
 use crate::api::bun_process::sync as spawn_sync;
 use bun_str::{strings, MutableString};
 use bun_paths::{self as resolve_path, PathBuffer, OSPathSlice};
-use bun_logger as logger;
-use bun_js_parser::ast as js_ast;
-use bun_interchange::json as JSON;
+use bun_ast as js_ast;
+use bun_parsers::json as JSON;
 use bun_js_printer as JSPrinter;
 use bun_http as HTTP;
 use bun_http::Headers;
@@ -88,7 +87,7 @@ struct UnsupportedPackages {
 }
 
 impl UnsupportedPackages {
-    pub fn update(&mut self, expr: js_ast::Expr) {
+    pub fn update(&mut self, expr: bun_ast::Expr) {
         for prop in expr.data.e_object().expect("infallible: variant checked").properties.slice() {
             // inline for over field names — only one field: "styled-jsx"
             if prop.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data == b"styled-jsx" {
@@ -759,9 +758,9 @@ impl CreateCommand {
             if package_json_file.is_some() {
                 initialize_store();
 
-                let source = logger::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
+                let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
 
-                let log: &mut logger::Log = unsafe { ctx.log_mut() };
+                let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
@@ -799,9 +798,9 @@ impl CreateCommand {
                         // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
                         // to `'static` to match `EString.data: &'static [u8]`. Mirrors Zig's
                         // `@ptrFromInt(@intFromPtr(...))` cast.
-                        s.data = unsafe {
+                        s.data = bun_ast::StoreStr::new(unsafe {
                             core::slice::from_raw_parts(basename.as_ptr(), basename.len())
-                        };
+                        });
                     }
                 }
 
@@ -851,8 +850,8 @@ impl CreateCommand {
                 //     }
                 // };
 
-                let mut dev_dependencies: Option<js_ast::Expr> = None;
-                let mut dependencies: Option<js_ast::Expr> = None;
+                let mut dev_dependencies: Option<bun_ast::Expr> = None;
+                let mut dependencies: Option<bun_ast::Expr> = None;
 
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
@@ -968,7 +967,7 @@ impl CreateCommand {
                 //     try properties_list.ensureUnusedCapacity(new_properties_count);
                 // }
 
-                use js_ast::E;
+                use bun_ast::E;
 
                 // TODO(port): InjectionPrefill — large block of mutable static AST nodes used to
                 // inject "bun"/"macros"/dependency properties into package.json. The Zig code builds
@@ -1061,11 +1060,11 @@ impl CreateCommand {
                         // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
                     }
 
-                    pub fn npx_react_scripts_build() -> bun_logger::js_ast::Expr {
-                        // TODO(port): build js_ast::Expr { .e_string = "npx react-scripts build" }
-                        bun_logger::js_ast::Expr::init(
-                            bun_logger::js_ast::E::EString::init(b"npx react-scripts build"),
-                            logger::Loc::EMPTY,
+                    pub fn npx_react_scripts_build() -> bun_ast::Expr {
+                        // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
+                        bun_ast::Expr::init(
+                            bun_ast::E::EString::init(b"npx react-scripts build"),
+                            bun_ast::Loc::EMPTY,
                         )
                     }
                 }
@@ -1184,7 +1183,7 @@ impl CreateCommand {
                 // above; the aliasing round-trip is a no-op while the injection
                 // appends remain commented out, so `properties` is already current.)
                 {
-                    use bun_logger::js_ast::expr::Data as LExprData;
+                    use bun_ast::ExprData as LExprData;
                     let mut i: usize = 0;
                     let mut property_i: usize = 0;
                     let props = &mut package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties;
@@ -1213,7 +1212,7 @@ impl CreateCommand {
                                             .data
                                             .e_string()
                                             .unwrap()
-                                            .data;
+                                            .data.slice();
 
                                         if strings::contains(script, b"react-scripts start")
                                             || strings::contains(script, b"next dev")
@@ -1269,7 +1268,7 @@ impl CreateCommand {
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match postinstall.expr.data {
                                 LExprData::EString(single_task) => {
-                                    postinstall_tasks.push(arena_str(single_task.data));
+                                    postinstall_tasks.push(arena_str(single_task.data.slice()));
                                 }
                                 LExprData::EArray(tasks) => {
                                     let items = tasks.slice();
@@ -1301,7 +1300,7 @@ impl CreateCommand {
                         if let Some(preinstall) = value.as_property(b"preinstall") {
                             match preinstall.expr.data {
                                 LExprData::EString(single_task) => {
-                                    preinstall_tasks.push(arena_str(single_task.data));
+                                    preinstall_tasks.push(arena_str(single_task.data.slice()));
                                 }
                                 LExprData::EArray(tasks) => {
                                     for task in tasks.items.slice() {
@@ -2388,7 +2387,7 @@ impl Example {
         progress.name = b"Parsing package.json";
         refresher.refresh();
         initialize_store();
-        let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
+        let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
@@ -2416,11 +2415,7 @@ impl Example {
 
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
-        }
-
-        // PORT NOTE: `bun_install::bun_json::ExprAccessors` is `pub(crate)`; the
-        // inherent `Expr::{as_property, as_utf8_string_literal}` on
-        // `bun_logger::js_ast::Expr` cover the same surface (Zig: `asProperty`/
+        }        // `bun_ast::Expr` cover the same surface (Zig: `asProperty`/
         // `asString` for parse_utf8-produced UTF-8 literals).
         let tarball_url: &[u8] = 'brk: {
             if let Some(q) = expr.as_property(b"dist") {
@@ -2551,7 +2546,7 @@ impl Example {
         }
 
         initialize_store();
-        let source = logger::Source::init_path_string(b"examples.json", mutable.list.as_slice());
+        let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
@@ -2584,7 +2579,7 @@ impl Example {
 
                 let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
                 for (i, property) in q.expr.data.e_object().expect("infallible: variant checked").properties.slice().iter().enumerate() {
-                    let name = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data;
+                    let name = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data.slice();
                     list[i] = Example {
                         name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {
                             &name[slash as usize + 1..]
@@ -2600,7 +2595,8 @@ impl Example {
                             .data
                             .e_string()
                             .unwrap()
-                            .data,
+                            .data
+                            .slice(),
                         description: property
                             .value
                             .unwrap()
@@ -2610,7 +2606,8 @@ impl Example {
                             .data
                             .e_string()
                             .unwrap()
-                            .data,
+                            .data
+                            .slice(),
                         local: false,
                     };
                 }

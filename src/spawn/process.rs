@@ -181,11 +181,17 @@ impl Process {
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
     }
 
+    /// Drop one ref. Takes `*mut Self`, **not** `&mut self`: on the last ref
+    /// the destructor `Box::from_raw`-drops the allocation, and a `&mut self`
+    /// argument carries a Stacked-Borrows protector for the call's full
+    /// duration — freeing while it's live is UB even though we never touch
+    /// `self` afterwards. Same rationale as [`Process::has_exited`] (:215).
+    ///
+    /// # Safety
+    /// `this` must point at a live `Process` with refcount ≥ 1.
     #[inline]
-    pub fn deref(&mut self) {
-        // SAFETY: `self` is a live Process; destructor frees the Box if this
-        // was the last ref.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(std::ptr::from_mut(self)) };
+    pub unsafe fn deref(this: *mut Self) {
+        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
@@ -301,25 +307,37 @@ impl Process {
         let _ = sync_;
     }
 
+    /// # Safety
+    /// `this` carries the +1 ref taken when the waiter-thread task was queued.
+    /// `ScopedRef::adopt` releases it on return — which may free `this` — so
+    /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
+    /// Stacked-Borrows protector outliving the allocation is UB; see :215).
     #[cfg(unix)]
-    pub fn on_wait_pid_from_waiter_thread(
-        &mut self,
+    pub unsafe fn on_wait_pid_from_waiter_thread(
+        this: *mut Self,
         waitpid_result: &bun_sys::Result<WaitPidResult>,
         rusage: &Rusage,
     ) {
-        if let Poller::WaiterThread(waiter) = &mut self.poller {
-            let ctx = event_loop_handle_to_ctx(self.event_loop);
+        // SAFETY: caller contract — adopts the queued +1 ref.
+        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        // SAFETY: `_g` keeps `this` live for this block.
+        let self_ = unsafe { &mut *this };
+        if let Poller::WaiterThread(waiter) = &mut self_.poller {
+            let ctx = event_loop_handle_to_ctx(self_.event_loop);
             waiter.unref(ctx);
-            self.poller = Poller::Detached;
+            self_.poller = Poller::Detached;
         }
-        self.on_wait_pid(waitpid_result, rusage);
-        self.deref();
+        self_.on_wait_pid(waitpid_result, rusage);
     }
 
+    /// # Safety
+    /// See [`Process::on_wait_pid_from_waiter_thread`].
     #[cfg(unix)]
-    pub fn on_wait_pid_from_event_loop_task(&mut self) {
-        self.wait(false);
-        self.deref();
+    pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
+        // SAFETY: caller contract — adopts the queued +1 ref.
+        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        // SAFETY: `_g` keeps `this` live.
+        unsafe { (*this).wait(false) };
     }
 
     #[cfg(unix)]
@@ -548,20 +566,22 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
-        // SAFETY: read POD `pid` BEFORE creating `this: &mut Process` —
-        // `uv_handle` points at the inline `Poller::Uv` payload inside `*this`,
-        // so once `this` exclusively borrows the whole `Process`, dereferencing
-        // `uv_handle` would pop `this`'s Unique tag (see `on_exit_uv`).
+        // SAFETY: read POD `pid` first — `uv_handle` points at the inline
+        // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
         let pid = unsafe { (*uv_handle).pid };
-        // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
-        // `uv_handle` is not dereferenced again after this point.
-        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*uv_handle).data) };
+        // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
+        // raw — `ScopedRef::Drop` may free the allocation, so never bind a
+        // `&mut Process` whose tag would have to outlive that.
+        let this: *mut Process = unsafe { (*uv_handle).data.cast() };
+        // SAFETY: adopts the +1 ref taken at `uv_spawn`.
+        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", pid);
-
-        if matches!(this.poller, Poller::Uv(_)) {
-            this.poller = Poller::Detached;
+        // SAFETY: `_g` keeps `this` live for this block.
+        unsafe {
+            if matches!((*this).poller, Poller::Uv(_)) {
+                (*this).poller = Poller::Detached;
+            }
         }
-        this.deref();
     }
 
     pub fn close(&mut self) {
@@ -1110,7 +1130,7 @@ pub mod waiter_thread_posix {
             rusage: &Rusage,
         ) {
             // SAFETY: caller contract.
-            unsafe { (*this).on_wait_pid_from_waiter_thread(result, rusage) };
+            unsafe { Process::on_wait_pid_from_waiter_thread(this, result, rusage) };
         }
     }
 
@@ -2077,7 +2097,7 @@ pub fn spawn_process_windows(
         // SAFETY: process is valid
         unsafe {
             (*process).close();
-            (*process).deref();
+            Process::deref(process);
         }
         return Ok(Err(err));
     }
@@ -2531,7 +2551,7 @@ pub mod sync {
             // re-uses that tag instead of conflicting with it.
             unsafe {
                 (*process).detach();
-                (*process).deref();
+                Process::deref(process);
             }
         }
 
@@ -2588,7 +2608,7 @@ pub mod sync {
             // `{ process.detach(); process.deref(); }`.
             unsafe {
                 (*process).detach();
-                (*process).deref();
+                Process::deref(process);
             }
         });
         // SAFETY: just allocated; no other borrow live yet.
@@ -2718,7 +2738,7 @@ pub mod sync {
         // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
         // allocation. Mirrors Zig `this.process.deref(); destroy(this);`.
         unsafe {
-            (*(*this_ptr).process).deref();
+            Process::deref((*this_ptr).process);
             drop(bun_core::heap::take(this_ptr));
         }
         Ok(Ok(result))

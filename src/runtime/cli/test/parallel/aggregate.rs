@@ -10,7 +10,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{self, err, Output, ZBox};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
-use bun_options_types::CodeCoverageOptions::{CodeCoverageOptions, Fraction as CoverageFraction};
+use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
 use bun_str::strings;
 use bun_sys::{self, Fd, File, O};
 

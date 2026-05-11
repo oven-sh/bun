@@ -2,9 +2,8 @@ use core::ptr::NonNull;
 
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{VecExt, MultiArrayList};
-use bun_js_parser::ast::server_component_boundary;
-use bun_js_parser::BundledAst as JSAst;
-use bun_logger as logger;
+use bun_ast::server_component_boundary;
+use crate::BundledAst as JSAst;
 use enum_map::EnumMap;
 
 use crate::options;
@@ -12,11 +11,11 @@ use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
-pub use bun_js_parser::Index;
-pub use bun_js_parser::Ref;
+use bun_ast::Index;
+use bun_ast::Ref;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
-pub use crate::IndexInt;
+pub(crate) use crate::IndexInt;
 
 pub struct Graph {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
@@ -101,7 +100,7 @@ pub struct HtmlImports {
 
 #[derive(Default)]
 pub struct InputFile {
-    pub source: logger::Source,
+    pub source: bun_ast::Source,
     pub secondary_path: Box<[u8]>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
@@ -119,7 +118,7 @@ pub struct InputFile {
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
-        source: logger::Source,
+        source: bun_ast::Source,
         secondary_path: Box<[u8]>,
         loader: options::Loader,
         side_effects: SideEffects,
@@ -228,6 +227,6 @@ impl Graph {
 // crate re-exports the canonical enum from `bun_options_types`; re-export it
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
-pub use bun_resolver::SideEffects;
+use bun_ast::SideEffects;
 
 // ported from: src/bundler/Graph.zig

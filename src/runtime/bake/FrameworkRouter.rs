@@ -847,7 +847,7 @@ impl Style {
     ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
         let without_ext = &file_path_raw[0..file_path_raw.len() - ext.len()];
         let basename = paths::basename(without_ext);
-        let Some(loader) = bun_bundler::options::Loader::from_string(ext) else {
+        let Some(loader) = bun_ast::Loader::from_string(ext) else {
             return Ok(None);
         };
 

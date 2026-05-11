@@ -671,7 +671,7 @@ pub fn compute_chunks(
                     Err(err) => {
                         this.log.add_error_fmt(
                             None,
-                            bun_logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "{}: Failed to get full path for directory '{}'",
                                 bstr::BStr::new(err.name()),

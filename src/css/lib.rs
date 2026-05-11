@@ -254,7 +254,7 @@ pub use dependencies::Dependency;
 // `bun_css::Foo` paths resolve for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
-    ParserOptions, SrcIndex, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
+    ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
 pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler` (Zig had a now-removed

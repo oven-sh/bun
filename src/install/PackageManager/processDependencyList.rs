@@ -1,7 +1,6 @@
 use core::cell::Cell;
 
 use bun_core::{Global, Output};
-use bun_logger as logger;
 use bun_paths::dirname;
 use bun_paths::resolve_path::join_abs_string_z;
 use bun_paths::platform;
@@ -150,7 +149,7 @@ impl PackageManager {
                     let mut pkg = Package::default();
                     if let Some(json) = &data.json {
                         let package_json_source =
-                            &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
+                            &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
 
                         if let Err(err) = pkg.parse_from_real_manager(
                             std::ptr::from_mut::<PackageManager>(self),
@@ -237,7 +236,7 @@ impl PackageManager {
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
                 let package_json_source =
-                    &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
+                    &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                 let mut package = Package::default();
 
                 let mut resolver = TarballResolver {
@@ -294,7 +293,7 @@ impl PackageManager {
                 if !data.json.as_ref().unwrap().buf.is_empty() {
                     let json = data.json.as_ref().unwrap();
                     let package_json_source =
-                        &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
+                        &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run (mirrors Zig's non-optional `*logger.Log`).

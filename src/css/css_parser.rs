@@ -10,7 +10,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, VecExt, MapEntry};
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-use bun_logger::{self as logger, Log};
+use bun_ast::{Log};
 use bun_string::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -21,11 +21,11 @@ use bun_string::strings;
 // Parser/Tokenizer core compiles standalone. Shims become `pub use` lines as
 // each module un-gates.
 
-pub use bun_logger::symbol::List as SymbolList;
-pub use bun_options_types::{ImportKind, ImportRecord};
+use bun_ast::symbol::List as SymbolList;
+use bun_ast::{ImportKind, ImportRecord};
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
-pub use bun_options_types::BundleEnums::Index as SrcIndex;
+use bun_ast::Index as SrcIndex;
 
 pub use crate::prefixes;
 pub use crate::dependencies::{self, Dependency};
@@ -122,7 +122,7 @@ mod gated_shims {
     /// `bun_js_parser`; css sits below that tier. The real types were
     /// MOVE_DOWN'd into `bun_logger` (see logger/lib.rs:216).
     pub mod ast {
-        pub use bun_logger::{Ref, RefTag};
+        pub use bun_ast::{Ref, RefTag};
         pub type MangledProps = bun_collections::ArrayHashMap<Ref, *const [u8]>;
         /// `bun.fs.Path` — `ImportRecord.path` field type. The
         /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
@@ -189,8 +189,8 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub fn to_logger_location(&self, file: &'static [u8]) -> logger::Location {
-        logger::Location {
+    pub fn to_logger_location(&self, file: &'static [u8]) -> bun_ast::Location {
+        bun_ast::Location {
             file: std::borrow::Cow::Borrowed(file),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
@@ -879,8 +879,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         import_records.push(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
-            range: logger::Range {
-                loc: logger::Loc { start: i32::try_from(start_position).expect("int cast") },
+            range: bun_ast::Range {
+                loc: bun_ast::Loc { start: i32::try_from(start_position).expect("int cast") },
                 len: i32::try_from(end_position - start_position).expect("int cast"),
             },
             // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
@@ -2119,8 +2119,8 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
             for ref_ in this.composes_refs.slice() {
                 let entry = this.local_properties.entry(*ref_).or_insert_with(|| {
                     PropertyUsage {
-                        range: logger::Range {
-                            loc: logger::Loc { start: i32::try_from(location).expect("int cast") },
+                        range: bun_ast::Range {
+                            loc: bun_ast::Loc { start: i32::try_from(location).expect("int cast") },
                             len: i32::try_from(len).expect("int cast"),
                         },
                         ..Default::default()
@@ -2311,15 +2311,15 @@ impl CssRef {
         source_index
     }
 
-    pub fn to_real_ref(self, source_index: u32) -> bun_logger::Ref {
+    pub fn to_real_ref(self, source_index: u32) -> bun_ast::Ref {
         // Spec (css_parser.zig) constructs `Ref{ .tag = .symbol, ... }`.
-        bun_logger::Ref::new(self.inner_index(), source_index, bun_logger::RefTag::Symbol)
+        bun_ast::Ref::new(self.inner_index(), source_index, bun_ast::RefTag::Symbol)
     }
 }
 
 pub struct LocalEntry {
     pub ref_: CssRef,
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
 }
 
 /// If css modules is enabled, this maps locally scoped class names to their
@@ -2331,8 +2331,8 @@ pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
 pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
 /// according to the css modules spec. We should warn the user about this.
-pub type LocalPropertyUsage = ArrayHashMap<bun_logger::Ref, PropertyUsage>;
-pub type ComposesMap = ArrayHashMap<bun_logger::Ref, ComposesEntry>;
+pub type LocalPropertyUsage = ArrayHashMap<bun_ast::Ref, PropertyUsage>;
+pub type ComposesMap = ArrayHashMap<bun_ast::Ref, ComposesEntry>;
 
 #[derive(Default)]
 pub struct ComposesEntry {
@@ -2342,7 +2342,7 @@ pub struct ComposesEntry {
 pub struct PropertyUsage {
     pub bitset: PropertyBitset,
     pub custom_properties: Box<[&'static [u8]]>, // TODO(port): lifetime — arena slices
-    pub range: logger::Range,
+    pub range: bun_ast::Range,
 }
 
 impl Default for PropertyUsage {
@@ -2350,7 +2350,7 @@ impl Default for PropertyUsage {
         Self {
             bitset: PropertyBitset::init_empty(),
             custom_properties: Box::default(),
-            range: logger::Range::default(),
+            range: bun_ast::Range::default(),
         }
     }
 }
@@ -2528,7 +2528,7 @@ impl<AtRule> StyleSheet<AtRule> {
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a LocalsResultsMap>,
-        symbols: &'a bun_logger::symbol::Map,
+        symbols: &'a bun_ast::symbol::Map,
     ) -> PrintResult<ToCssResultInternal> {
         // PORT NOTE: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
         // the lone field we re-read after moving `options` into Printer::new.
@@ -2628,7 +2628,7 @@ impl<AtRule> StyleSheet<AtRule> {
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a LocalsResultsMap>,
-        symbols: &'a bun_logger::symbol::Map,
+        symbols: &'a bun_ast::symbol::Map,
     ) -> PrintResult<ToCssResult> {
         // TODO: this is not necessary
         // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
@@ -2882,7 +2882,7 @@ impl<AtRule> StyleSheet<AtRule> {
                         } else {
                             ImportKind::At
                         },
-                        range: logger::Range::NONE,
+                        range: bun_ast::Range::NONE,
                         // NOTE: `ImportRecord` deliberately has no `Default`; spell out
                         // remaining fields explicitly (matches on_import_rule above).
                         tag: Default::default(),
@@ -2961,7 +2961,7 @@ impl StyleAttribute {
         //   "Source maps are not supported for style attributes"
         // );
 
-        let symbols = bun_logger::symbol::Map::init_list(Default::default());
+        let symbols = bun_ast::symbol::Map::init_list(Default::default());
         // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; route
         // through bun_io::Write over Vec<u8> until 'bump dest threads.
         let mut dest: Vec<u8> = Vec::new();
@@ -3210,7 +3210,7 @@ impl<'a> ParserOptions<'a> {
         args: fmt::Arguments<'_>,
         line: u32,
         column: u32,
-        notes: Box<[logger::Data]>,
+        notes: Box<[bun_ast::Data]>,
     ) {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
@@ -3225,15 +3225,15 @@ impl<'a> ParserOptions<'a> {
         line: u32,
         column: u32,
         note_args: fmt::Arguments<'_>,
-        note_range: logger::Range,
+        note_range: bun_ast::Range,
     ) {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_range_warning_fmt_with_note(
                 None,
-                logger::Range {
-                    loc: logger::Loc { start: i32::try_from(line).expect("int cast") },
+                bun_ast::Range {
+                    loc: bun_ast::Loc { start: i32::try_from(line).expect("int cast") },
                     len: i32::try_from(column).expect("int cast"),
                 },
                 args,
@@ -3311,8 +3311,8 @@ impl<'a> Parser<'a> {
         &mut self,
         name: &[u8],
         tag: CssRefTag,
-        loc: logger::Loc,
-    ) -> bun_logger::Ref {
+        loc: bun_ast::Loc,
+    ) -> bun_ast::Ref {
         // don't call this if css modules is not enabled!
         debug_assert!(self.flags.css_modules());
         debug_assert!(self.extra.is_some());
@@ -3338,9 +3338,9 @@ impl<'a> Parser<'a> {
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
                 let inner_index = u32::try_from(symbols.len()).unwrap();
-                symbols.push(bun_logger::Symbol {
-                    kind: bun_logger::SymbolKind::LocalCss,
-                    original_name: name_static,
+                symbols.push(bun_ast::Symbol {
+                    kind: bun_ast::SymbolKind::LocalCss,
+                    original_name: name_static.into(),
                     ..Default::default()
                 });
                 v.insert(LocalEntry { ref_: CssRef::new(inner_index, tag), loc })
@@ -3379,8 +3379,8 @@ impl<'a> Parser<'a> {
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
-                range: logger::Range {
-                    loc: logger::Loc { start: i32::try_from(start_position).expect("int cast") },
+                range: bun_ast::Range {
+                    loc: bun_ast::Loc { start: i32::try_from(start_position).expect("int cast") },
                     // TODO: technically this is not correct because the url could be escaped
                     len: i32::try_from(url.len()).expect("int cast"),
                 },
@@ -6414,7 +6414,7 @@ pub mod to_css {
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a LocalsResultsMap>,
-        symbols: &'a bun_logger::symbol::Map,
+        symbols: &'a bun_ast::symbol::Map,
     ) -> Result<Vec<u8>, PrintErr> {
         let mut s: Vec<u8> = Vec::new();
         // PERF: think about how cheap this is to create

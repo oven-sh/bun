@@ -53,8 +53,8 @@ pub use WatchItemKind as Kind;
 // These belong to higher-tier crates that don't yet expose a usable surface
 // to depend on. Watcher only stores/passes them through; never dereferenced.
 
-// TODO(b2-blocked): bun_options_types::Loader
-/// Opaque forward-decl of `bun_options_types::Loader`. Watcher only stores
+// TODO(b2-blocked): bun_ast::Loader
+/// Opaque forward-decl of `bun_ast::Loader`. Watcher only stores
 /// the value in `WatchItem.loader` and passes it through.
 #[derive(Clone, Copy, Default)]
 pub struct Loader(pub u8);

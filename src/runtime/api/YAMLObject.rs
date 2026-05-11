@@ -3,14 +3,13 @@ use core::ffi::c_void;
 
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_interchange::yaml::{YamlParseError, YAML};
-use bun_js_parser::ASTMemoryAllocator;
+use bun_parsers::yaml::{YamlParseError, YAML};
+use bun_ast::ASTMemoryAllocator;
 use bun_jsc::{
     self as jsc, wtf, CallFrame, JSFunction, JSGlobalObject, JSPropertyIterator,
     JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer,
 };
-use bun_logger as logger;
-use bun_logger::js_ast::{expr::Data as ExprData, Expr};
+use bun_ast::{expr::Data as ExprData, Expr};
 use bun_str::{OwnedString, String as BunString};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
@@ -1019,9 +1018,9 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
     };
 
-    let mut log = logger::Log::init();
+    let mut log = bun_ast::Log::init();
 
-    let source = logger::Source::init_path_string(b"input.yaml", input.slice());
+    let source = bun_ast::Source::init_path_string(b"input.yaml", input.slice());
 
     let root = match YAML::parse(&source, &mut log, &arena) {
         Ok(root) => root,
@@ -1088,9 +1087,9 @@ impl From<JsError> for ToJsError {
 
 bun_core::oom_from_alloc!(ToJsError);
 
-impl From<bun_js_parser::ToJSError> for ToJsError {
-    fn from(e: bun_js_parser::ToJSError) -> Self {
-        use bun_js_parser::ToJSError as Up;
+impl From<bun_ast::ToJSError> for ToJsError {
+    fn from(e: bun_ast::ToJSError) -> Self {
+        use bun_ast::ToJSError as Up;
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,

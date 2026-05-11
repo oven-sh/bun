@@ -30,7 +30,7 @@ use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::{ZigString, ZigStringSlice};
-use bun_logger as Log;
+use bun_ast as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_str::strings;
 
@@ -915,7 +915,7 @@ impl MatchedRoute {
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
         if client_framework_enabled {
             // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
-            // `bun_logger::fs::PathName`; `generate_entry_point_path` only copies
+            // `bun_paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
             // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
             let path_name = bun_paths::fs::PathName::init(file_path);
             bun_object::get_public_path(

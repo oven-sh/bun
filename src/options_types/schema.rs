@@ -76,7 +76,7 @@ pub mod api {
     }
 
     /// schema.zig:2295 — `enum(u32)` (open). Kept closed.
-    /// PascalCased: `logger::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
+    /// PascalCased: `bun_ast::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
     #[repr(u32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum MessageLevel {

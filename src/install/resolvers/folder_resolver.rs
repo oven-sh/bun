@@ -2,7 +2,6 @@ use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
@@ -303,7 +302,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
         // SAFETY: `log` is set by `PackageManager::init()` before any resolver
         // path runs (mirrors Zig's non-optional `*logger.Log`).
-        let log: &mut logger::Log = unsafe { &mut *(*manager_ptr).log };
+        let log: &mut bun_ast::Log = unsafe { &mut *(*manager_ptr).log };
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
@@ -312,12 +311,12 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
         // formed for `parse_with_json`.
         let root: Expr = json.root;
-        let source: *const logger::Source = &raw const json.source;
+        let source: *const bun_ast::Source = &raw const json.source;
 
         // SAFETY: see PORT NOTE above on borrow splitting.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            let log: *mut logger::Log = (*manager_ptr).log;
+            let log: *mut bun_ast::Log = (*manager_ptr).log;
             package.parse_with_json::<R>(
                 &mut *lockfile,
                 &mut *manager_ptr,
@@ -346,13 +345,13 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             let _ = file.close();
             read_result?;
 
-            logger::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
+            bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
 
         // SAFETY: see PORT NOTE above on borrow splitting.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            let log: *mut logger::Log = (*manager_ptr).log;
+            let log: *mut bun_ast::Log = (*manager_ptr).log;
             package.parse::<R>(
                 &mut *lockfile,
                 &mut *manager_ptr,

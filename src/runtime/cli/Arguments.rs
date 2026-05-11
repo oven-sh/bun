@@ -8,6 +8,7 @@
 //! concatenated tables (`AUTO_PARAMS` etc.) stay `LazyLock<Vec<_>>` because
 //! Rust has no const slice `++`.
 
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use std::sync::LazyLock;
 
 use bstr::BStr;
@@ -18,10 +19,9 @@ use bun_core::env::OperatingSystem;
 use bun_core::{self, env_var, FeatureFlags, Global, Output};
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_jsc::RegularExpression;
-use bun_logger as logger;
 use bun_options_types::schema::api;
-use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
-use bun_options_types::Context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
+use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_paths::resolve_path;
 use bun_paths::{platform, PathBuffer};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
@@ -44,7 +44,7 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 
 pub fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
     let option_loader =
-        options::Loader::from_string(input).ok_or(bun_core::err!("InvalidLoader"))?;
+        bun_ast::Loader::from_string(input).ok_or(bun_core::err!("InvalidLoader"))?;
     Ok(option_loader.to_api())
 }
 
@@ -423,7 +423,6 @@ pub static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): `loadConfig` / `loadConfigPath` / `loadConfigWithCmdArgs` and
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
@@ -1052,11 +1051,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::OfflineMode::OfflineMode::Offline
+            bun_options_types::offline_mode::OfflineMode::Offline
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::OfflineMode::OfflineMode::Latest
+            bun_options_types::offline_mode::OfflineMode::Latest
         } else {
-            bun_options_types::OfflineMode::OfflineMode::Online
+            bun_options_types::offline_mode::OfflineMode::Online
         });
 
         if args.flag(b"--no-install") {
@@ -1455,7 +1454,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     if ctx.bundler_options.bytecode {
                         Output::err_generic(
                             "target must be 'bun' when bytecode is true. Received: {}",
-                            format_args!("{:?}", options::Target::from(opts.target)),
+                            format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(opts.target)),
                         );
                         Global::exit(1);
                     }
@@ -1463,7 +1462,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     if ctx.bundler_options.bake {
                         Output::err_generic(
                             "target must be 'bun' when using --app. Received: {}",
-                            format_args!("{:?}", options::Target::from(opts.target)),
+                            format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(opts.target)),
                         );
                     }
                 }
@@ -1810,10 +1809,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if args.flag(b"--server-components") {
             ctx.bundler_options.server_components = true;
             if let Some(target) = opts.target {
-                if !options::Target::from(Some(target)).is_server_side() {
+                if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target)).is_server_side() {
                     Output::err_generic(
                         "Cannot use client-side --target={} with --server-components",
-                        format_args!("{:?}", options::Target::from(Some(target))),
+                        format_args!("{:?}", <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))),
                     );
                     Global::crash();
                 } else {
@@ -2009,13 +2008,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     if let Some(log_level) = opts.log_level {
         // SAFETY: single-threaded startup; mirrors Zig `Log.default_log_level = …`
         unsafe {
-            logger::DEFAULT_LOG_LEVEL.write(match log_level {
-                api::MessageLevel::Debug => logger::Level::Debug,
-                api::MessageLevel::Err => logger::Level::Err,
-                api::MessageLevel::Warn => logger::Level::Warn,
-                _ => logger::Level::Err,
+            bun_ast::DEFAULT_LOG_LEVEL.write(match log_level {
+                api::MessageLevel::Debug => bun_ast::Level::Debug,
+                api::MessageLevel::Err => bun_ast::Level::Err,
+                api::MessageLevel::Warn => bun_ast::Level::Warn,
+                _ => bun_ast::Level::Err,
             });
-            (*ctx.log).level = logger::DEFAULT_LOG_LEVEL.read();
+            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.read();
         }
     }
 

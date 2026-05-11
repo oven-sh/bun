@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::FeatureFlags;
-use bun_logger::{Loc, Log};
+use bun_ast::{Loc, Log};
 use bun_string::{MutableString, ZigStringSlice};
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};

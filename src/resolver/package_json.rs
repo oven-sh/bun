@@ -5,15 +5,14 @@ use std::io::Write as _;
 
 use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap};
 use bun_core::Output;
-use bun_js_parser::ast as js_ast;
+use bun_ast as js_ast;
 use bun_js_parser::lexer as js_lexer;
-use bun_logger as logger;
 use bun_paths::{self as resolve_path, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
 use bun_string::strings;
 
-use bun_options_types::BundleEnums::ModuleType;
+use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
 
 use crate::fs;
@@ -180,14 +179,14 @@ pub type DependencyHashMap = ArrayHashMap<SemverString, Dependency /* , SemverSt
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
-    pub source: logger::Source,
+    pub source: bun_ast::Source,
     /// PORT NOTE: owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
     /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
     /// Zig (`package_json.zig:615`) used `bun.default_allocator` and never
     /// freed on success because the DirInfo cache is process-lifetime; here the
     /// `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    // TODO(port): lifetime — once `logger::Source::contents` becomes
+    // TODO(port): lifetime — once `bun_ast::Source::contents` becomes
     // `Cow<'static, [u8]>`, fold this into `source` and drop the re-borrow.
     pub source_contents: Box<[u8]>,
     pub main_fields: MainFieldMap,
@@ -246,7 +245,7 @@ impl Default for PackageJSON {
     fn default() -> Self {
         PackageJSON {
             name: Box::default(),
-            source: logger::Source::default(),
+            source: bun_ast::Source::default(),
             source_contents: Box::default(),
             main_fields: MainFieldMap::default(),
             module_type: ModuleType::default(),
@@ -425,7 +424,7 @@ impl SideEffects {
 // PORT NOTE: the former `JsonCachePackageJsonExt` shim trait is removed —
 // `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
 // exposes the inherent forwarder (tsconfig_json.rs).
-// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_interchange::json`.
+// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
 /// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
 /// immediately dupes the result. Thin extension trait that delegates to
@@ -465,7 +464,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     }
 }
 
-// TODO(b2-blocked): bun_bundler::options + bun_js_parser::Expr full API + bun_install + bun_schema
+// TODO(b2-blocked): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
 // — framework/define loaders stay gated until bun_bundler::options lands.
 
 impl PackageJSON {
@@ -840,8 +839,8 @@ impl PackageJSON {
 impl PackageJSON {
     pub fn parse_macros_json(
         macros: js_ast::Expr,
-        log: &mut logger::Log,
-        json_source: &logger::Source,
+        log: &mut bun_ast::Log,
+        json_source: &bun_ast::Source,
     ) -> MacroMap {
         let mut macro_map = MacroMap::default();
         let js_ast::ExprData::EObject(obj) = &macros.data else {
@@ -937,7 +936,7 @@ impl PackageJSON {
         // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
         // are accessed freely throughout `parse`).
         let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
-        let r_log: &mut logger::Log = unsafe { &mut *r.log() };
+        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
@@ -961,7 +960,7 @@ impl PackageJSON {
                     r_log
                         .add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Cannot read file \"{}\": {}",
                                 bstr::BStr::new(input_path),
@@ -991,11 +990,11 @@ impl PackageJSON {
             debug.add_note_fmt(format_args!("The file \"{}\" exists", bstr::BStr::new(package_json_path)));
         }
 
-        // PORT NOTE: `logger::Source.path` is the lightweight `logger::fs::Path` (no
+        // PORT NOTE: `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
-        // TODO(port): lifetime — `logger::Source::contents` is `&'static [u8]`; once
+        // TODO(port): lifetime — `bun_ast::Source::contents` is `&'static [u8]`; once
         // it becomes `Cow<'static, [u8]>` move `entry_contents` straight into
         // `json_source` and delete this re-borrow.
         //
@@ -1011,7 +1010,7 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe {
             core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
         };
-        let json_source = logger::Source::init_path_string(package_json_path, contents_static);
+        let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r_log, &json_source, true) {
             Ok(Some(v)) => v,
@@ -1040,7 +1039,7 @@ impl PackageJSON {
             version: Box::default(),
             // PORT NOTE: reshaped for borrowck — `json_source` stays a local until the
             // end so we can borrow it while mutating other `package_json` fields.
-            source: logger::Source::default(),
+            source: bun_ast::Source::default(),
             // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
             source_contents: Box::default(),
             module_type: ModuleType::Unknown,
@@ -1178,7 +1177,7 @@ impl PackageJSON {
                                 }
                                 _ => {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                    // PORT NOTE: `logger::fs::Path` has no `is_node_module`; inline the check.
+                                    // PORT NOTE: `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
                                     if !strings::contains(json_source.path.text, NODE_MODULES_PATH.as_bytes()) {
                                         r_log
                                             .add_warning(
@@ -1538,8 +1537,8 @@ impl PackageJSON {
         let _ = (include_scripts, package_id);
 
         // PORT NOTE: reshaped for borrowck — assign source last (see struct init above).
-        // `logger::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
-        package_json.source = logger::Source {
+        // `bun_ast::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
+        package_json.source = bun_ast::Source {
             path: json_source.path.clone(),
             contents: std::borrow::Cow::Borrowed(contents_static),
             contents_is_recycled: json_source.contents_is_recycled,
@@ -1572,16 +1571,16 @@ impl PackageJSON {
 
 pub struct ExportsMap {
     pub root: Entry,
-    pub exports_range: logger::Range,
-    pub property_key_loc: logger::Loc,
+    pub exports_range: bun_ast::Range,
+    pub property_key_loc: bun_ast::Loc,
 }
 
 impl ExportsMap {
     pub fn parse(
-        source: &logger::Source,
-        log: &mut logger::Log,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
         json: js_ast::Expr,
-        property_key_loc: logger::Loc,
+        property_key_loc: bun_ast::Loc,
     ) -> Option<ExportsMap> {
         let mut visitor = Visitor { source, log };
 
@@ -1600,13 +1599,13 @@ impl ExportsMap {
 }
 
 pub struct Visitor<'a> {
-    pub source: &'a logger::Source,
-    pub log: &'a mut logger::Log,
+    pub source: &'a bun_ast::Source,
+    pub log: &'a mut bun_ast::Log,
 }
 
 impl<'a> Visitor<'a> {
     pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let mut first_token: logger::Range = logger::Range::NONE;
+        let mut first_token: bun_ast::Range = bun_ast::Range::NONE;
 
         match &expr.data {
             js_ast::ExprData::ENull(_) => {
@@ -1631,7 +1630,7 @@ impl<'a> Visitor<'a> {
                 }
                 return Entry {
                     data: EntryData::Array(array.into_boxed_slice()),
-                    first_token: logger::Range { loc: expr.loc, len: 1 },
+                    first_token: bun_ast::Range { loc: expr.loc, len: 1 },
                 };
             }
             js_ast::ExprData::EObject(e_obj) => {
@@ -1652,7 +1651,7 @@ impl<'a> Visitor<'a> {
                         Some(s) => Box::from(s.data.slice()),
                         None => Box::from([].as_slice()),
                     };
-                    let key_range: logger::Range = self.source.range_of_string(prop_key.loc);
+                    let key_range: bun_ast::Range = self.source.range_of_string(prop_key.loc);
 
                     // If exports is an Object with both a key starting with "." and a key
                     // not starting with ".", throw an Invalid Package Configuration error.
@@ -1739,7 +1738,7 @@ impl<'a> Visitor<'a> {
 
 #[derive(Clone)]
 pub struct Entry {
-    pub first_token: logger::Range,
+    pub first_token: bun_ast::Range,
     pub data: EntryData,
 }
 
@@ -1777,7 +1776,7 @@ pub type EntryDataMapList = Vec<MapEntry>;
 #[derive(Clone)]
 pub struct MapEntry {
     pub key: Box<[u8]>, // TODO(port): lifetime — borrows source contents in Zig
-    pub key_range: logger::Range,
+    pub key_range: bun_ast::Range,
     pub value: Entry,
 }
 
@@ -1844,7 +1843,7 @@ impl Default for Resolution {
 #[derive(Clone, Default)]
 pub struct ResolutionDebug {
     // This is the range of the token to use for error messages
-    pub token: logger::Range,
+    pub token: bun_ast::Range,
     // If the status is "UndefinedNoConditionsMatch", this is the set of
     // conditions that didn't match. This information is used for error messages.
     pub unmatched_conditions: Box<[Box<[u8]>]>,
@@ -2133,7 +2132,7 @@ pub struct ReverseResolution {
     // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
     // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub subpath: Box<[u8]>,
-    pub token: logger::Range,
+    pub token: bun_ast::Range,
 }
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
@@ -2189,7 +2188,7 @@ impl<'a> ESModule<'a> {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
-                debug: ResolutionDebug { token: logger::Range::NONE, ..Default::default() },
+                debug: ResolutionDebug { token: bun_ast::Range::NONE, ..Default::default() },
                 ..Default::default()
             };
         }
@@ -2283,7 +2282,7 @@ impl<'a> ESModule<'a> {
         }
 
         if subpath == b"." {
-            let mut main_export = Entry { data: EntryData::Null, first_token: logger::Range::NONE };
+            let mut main_export = Entry { data: EntryData::Null, first_token: bun_ast::Range::NONE };
             let cond = match &exports.data {
                 EntryData::String(_) | EntryData::Array(_) => true,
                 EntryData::Map(_) => !exports.keys_start_with_dot(),

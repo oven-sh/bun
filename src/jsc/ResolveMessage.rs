@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
-use bun_logger as logger;
-use bun_logger::ImportKind;
+use bun_ast::ImportKind;
 use bun_string::strings;
 
 use crate::zig_string::ZigString;
@@ -9,7 +8,7 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as 
 
 #[crate::JsClass]
 pub struct ResolveMessage {
-    pub msg: logger::Msg,
+    pub msg: bun_ast::Msg,
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
     // allocations and free on Drop / finalize.
     //
@@ -22,13 +21,13 @@ pub struct ResolveMessage {
 
 impl Default for ResolveMessage {
     fn default() -> Self {
-        Self { msg: logger::Msg::default(), referrer: None, logged: false }
+        Self { msg: bun_ast::Msg::default(), referrer: None, logged: false }
     }
 }
 
 /// `ImportKind.label()` — the canonical table lives in
-/// `bun_options_types::import_record::ImportKind::label`, but
-/// `logger::MetadataResolve.import_kind` is the type-only `bun_logger::ImportKind`.
+/// `bun_ast::ImportKind::label`, but
+/// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.
 /// Replicate the table here verbatim.
 fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     match kind {
@@ -56,7 +55,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_code(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &this.msg.metadata {
-            logger::Metadata::Resolve(resolve) => {
+            bun_ast::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
                     let specifier = resolve.specifier.slice(&this.msg.data.text);
 
@@ -277,7 +276,7 @@ impl ResolveMessage {
     /// the macro-emitted `ResolveMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
-        msg: &logger::Msg,
+        msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
         let resolve_error = ResolveMessage {
@@ -306,7 +305,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
-            logger::Metadata::Resolve(resolve) => {
+            bun_ast::Metadata::Resolve(resolve) => {
                 ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
@@ -318,7 +317,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
-            logger::Metadata::Resolve(resolve) => {
+            bun_ast::Metadata::Resolve(resolve) => {
                 ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
             }
             _ => ZigString::init(b"").to_js(global),

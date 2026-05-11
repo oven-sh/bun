@@ -12,7 +12,7 @@
 //! `BunInstall`) were originally hand-ported in two places — here *and* in
 //! `bun_options_types::schema::api`. Downstream crates ended up holding values
 //! of one and passing them to functions typed against the other (e.g.
-//! `bun_options_types::Context::install` vs. `bun_ini::load_npmrc_config`),
+//! `bun_options_types::context::install` vs. `bun_ini::load_npmrc_config`),
 //! which type-errors despite identical field layout. The canonical definitions
 //! now live in `bun_options_types::schema::api` (the lower / shared crate);
 //! this crate re-exports them so existing `bun_api::*` paths keep compiling and

@@ -24,15 +24,14 @@ use bun_install::{
     PackageManager, WorkspacePackageJsonCacheEntry, INVALID_PACKAGE_ID,
 };
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
-use bun_logger as logger;
-// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_logger::js_ast`
-// types, NOT `bun_js_parser::ast`. `WorkspacePackageJsonCacheEntry.root` is the
+// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
+// types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
 // logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
 // helpers below must operate on that type. The earlier draft imported
-// `bun_js_parser::ast::Expr`, which is a distinct struct and would not unify
+// `bun_ast::Expr`, which is a distinct struct and would not unify
 // with `MapEntry.root`.
-use bun_logger::js_ast::{self, expr as js_expr, Expr, E};
-use bun_logger::Loc;
+use bun_ast::{self, self as js_ast, expr as js_expr, Expr, E};
+use bun_ast::Loc;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 use bun_str::strings;
@@ -196,8 +195,8 @@ impl UpdateInteractiveCommand {
         buffer_writer.append_newline = preserve_trailing_newline;
         let mut package_json_writer = BufferPrinter::init(buffer_writer);
 
-        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_logger::js_ast::Expr`;
-        // `js_printer::print_json` consumes the T4 `bun_js_parser::Expr`. Lift via
+        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_ast::Expr`;
+        // `js_printer::print_json` consumes the T4 `bun_ast::Expr`. Lift via
         // the existing `From<T2> for T4` deep-rebuild (same as
         // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
         // re-read — only `source.contents` is written back below.
@@ -358,7 +357,7 @@ impl UpdateInteractiveCommand {
                     continue;
                 };
                 // Get the original version to preserve prefix
-                let original_version = e_str.data;
+                let original_version = e_str.data.slice();
 
                 // Preserve the version prefix from the original
                 let version_with_prefix =
@@ -476,7 +475,7 @@ impl UpdateInteractiveCommand {
         // PORT NOTE: reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let ctx_log_ptr: *mut logger::Log = ctx.log;
+        let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
 
         match manager.load_lockfile_from_cwd::<true>() {
             LoadResult::NotFound => {
@@ -2269,7 +2268,7 @@ pub fn edit_catalog_definitions(
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
     // PORT NOTE: `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_logger::js_ast` `Expr` used
+    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
     // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
     // toggling the parser-tier disabler is a no-op for these allocations.
     let bump = Bump::new();
@@ -2311,7 +2310,7 @@ enum CatalogSource {
 fn find_catalog_object(
     package_json: &Expr,
     key: &[u8],
-) -> (Option<js_ast::StoreRef<E::Object>>, CatalogSource) {
+) -> (Option<bun_ast::StoreRef<E::Object>>, CatalogSource) {
     if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if workspaces_query.expr.is_object() {
             if let Some(q) = workspaces_query.expr.as_property(key) {
@@ -2364,7 +2363,7 @@ fn update_default_catalog(
         let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
         if let Some(existing_prop) = catalog_obj.get(package_name) {
             if let Some(e_str) = existing_prop.data.e_string() {
-                let original_version = e_str.data;
+                let original_version = e_str.data.slice();
                 version_with_prefix =
                     crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
             }
@@ -2440,7 +2439,7 @@ fn update_named_catalog(
 
         // Get or create the specific catalog
         let mut fresh_catalog = E::Object::default();
-        let existing_catalog: Option<js_ast::StoreRef<E::Object>> = catalogs_obj
+        let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
             .get(catalog_name)
             .and_then(|e| e.data.e_object());
         let catalog_obj: &mut E::Object = match existing_catalog {
@@ -2455,7 +2454,7 @@ fn update_named_catalog(
         let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
         if let Some(existing_prop) = catalog_obj.get(package_name) {
             if let Some(e_str) = existing_prop.data.e_string() {
-                let original_version = e_str.data;
+                let original_version = e_str.data.slice();
                 version_with_prefix =
                     crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
             }

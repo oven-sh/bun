@@ -1,19 +1,20 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ffi::c_void;
 
 use bun_core::Output;
 use bun_str::{self as strings, String as BunString, ZigString};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JsError};
-use bun_logger as logger;
 use bun_paths as resolve_path;
 use bun_resolver::{self as resolver, fs as Fs};
-use bun_bundler::options::{self, Loader, Target};
+use bun_ast::{Loader, Target};
+use bun_bundler::options;
 use bun_bundler::BundleV2;
-use bun_options_types::CompileTarget::CompileTarget;
+use bun_options_types::compile_target::CompileTarget;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_standalone_graph::StandaloneModuleGraph;
-use bun_js_parser::ast::Index;
+use bun_ast::Index;
 use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
@@ -1472,7 +1473,7 @@ pub mod js_bundler {
                 }
             };
             this.value = LoadValue::Success(LoadSuccess {
-                loader: options::Loader::from_api(loader),
+                loader: bun_ast::Loader::from_api(loader),
                 source_code: source_code.into(),
             });
         }
@@ -1663,9 +1664,9 @@ pub mod js_bundler {
     /// Runs on the JS thread, so allocations go through the global heap (Zig
     /// passes `bun.default_allocator`); the bundler arena is owned by another
     /// thread.
-    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
+    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
-        match bun_logger_jsc::msg_from_js(global, file.to_vec(), exception) {
+        match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
             Ok(msg) => msg,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(_) => {
@@ -1673,13 +1674,13 @@ pub mod js_bundler {
                 // exception; the secondary exception from string conversion is not
                 // useful to the user and should not be treated as unhandled.
                 let _ = global.clear_exception_except_termination();
-                logger::Msg {
-                    data: logger::Data {
+                bun_ast::Msg {
+                    data: bun_ast::Data {
                         text: std::borrow::Cow::Owned(
                             b"A bundler plugin threw a value that could not be converted to a string"
                                 .to_vec(),
                         ),
-                        location: Some(logger::Location {
+                        location: Some(bun_ast::Location {
                             file: std::borrow::Cow::Owned(file.to_vec()),
                             line: -1,
                             column: -1,
@@ -1734,7 +1735,7 @@ pub use js_bundler::Config;
 #[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
     pub blob: Blob,
-    pub loader: options::Loader,
+    pub loader: bun_ast::Loader,
     pub path: Box<[u8]>,
     pub hash: u64,
     pub output_kind: OutputKind,

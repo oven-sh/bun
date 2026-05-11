@@ -6,7 +6,7 @@ use std::io::Write as _;
 use bun_alloc::MaxHeapAllocator;
 use bun_core::fmt::quote;
 use bun_core::{err, Error};
-use bun_logger::Loc;
+use bun_ast::Loc;
 use bun_paths::{self as paths, PathBuffer};
 use bun_string::{strings, PathString, String as BunString};
 use bun_wyhash::hash;

@@ -13,16 +13,16 @@ use bun_io::posix_event_loop::get_vm_ctx;
 use bun_ptr::BackRef;
 use bun_alloc::Arena;
 use bun_bundler::analyze_transpiled_module;
-use bun_bundler::options::{self, Loader, ModuleType};
+use bun_ast::Loader;
+use bun_bundler::options::{self, ModuleType};
 use bun_bundler::transpiler::{
     self as transpiler, AlreadyBundled, ParseOptions, ParseResult, Transpiler,
 };
 use bun_collections::HiveArrayFallback;
 use bun_event_loop::{task_tag, TaskTag, Taskable};
-use bun_js_parser::ast::{self as js_ast, ASTMemoryAllocator, ExportsKind};
+use bun_ast::{self as js_ast, ASTMemoryAllocator, ExportsKind};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
-use bun_logger as logger;
-use bun_options_types::{ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_paths;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
@@ -51,7 +51,7 @@ use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, Resol
 // lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
 // JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
 // `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
-use bun_bundler::RuntimeTranspilerCache;
+use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
@@ -287,8 +287,8 @@ impl RuntimeTranspilerStore {
         let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));
         // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
-        // lifetime from raw-ptr deref coerces to `'static` for `logger::fs::Path`.
-        let owned_path = logger::fs::Path::init(unsafe { &*owned_text.cast_const() });
+        // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
+        let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -314,7 +314,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: referrer,
                 vm,
-                log: logger::Log::init(),
+                log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
@@ -356,10 +356,10 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // PORT NOTE: stored as the lower-tier `bun_logger::fs::Path` (the type
-    // `ParseOptions.path` / `logger::Source.path` use). The slices borrow the
+    // PORT NOTE: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
+    // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
-    pub path: logger::fs::Path,
+    pub path: bun_paths::fs::Path<'static>,
     pub non_threadsafe_input_specifier: String,
     pub non_threadsafe_referrer: String,
     pub loader: Loader,
@@ -372,7 +372,7 @@ pub struct TranspilerJob {
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
-    pub log: logger::Log,
+    pub log: bun_ast::Log,
     pub parse_error: Option<bun_core::Error>,
     pub resolved_source: ResolvedSource,
     pub work_task: WorkPoolTask,
@@ -479,7 +479,7 @@ impl TranspilerJob {
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
         let referrer = core::mem::replace(&mut self.non_threadsafe_referrer, String::empty());
-        let mut log = core::mem::replace(&mut self.log, logger::Log::init());
+        let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let mut resolved_source = self.resolved_source;
         let specifier = 'brk: {
             if self.parse_error.is_some() {
@@ -620,16 +620,16 @@ impl TranspilerJob {
 
         // PORT NOTE: Zig threaded the arena into `output_code_allocator`; the Rust port of
         // RuntimeTranspilerCache dropped the per-allocator fields (Box<[u8]> + global mimalloc).
-        // LAYERING: this is the canonical `bun_js_parser::RuntimeTranspilerCache`
+        // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
         // wired with the JSC vtable so the parser's `cache.get()` reaches the
         // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
         // `*mut CacheEntry` which is unboxed below.
         let mut cache = RuntimeTranspilerCache {
-            r#impl: Some(bun_js_parser::TranspilerCacheImplKind::Jsc),
+            r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
             ..Default::default()
         };
 
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
         let _log_clone_guard = scopeguard::guard(
             (
@@ -639,7 +639,7 @@ impl TranspilerJob {
             |(dst, src)| {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
-                    *dst = logger::Log::init();
+                    *dst = bun_ast::Log::init();
                     (*src).clone_to_with_recycled(&mut *dst, true);
                 }
             },
@@ -762,7 +762,7 @@ impl TranspilerJob {
         // `parse_options.virtual_source` (raw-ptr borrow). `MaybeUninit` mirrors
         // the `= undefined` exactly; the write is `Cow::Borrowed`/borrowed-path
         // only, so skipping `Drop` is sound.
-        let mut fallback_source = core::mem::MaybeUninit::<logger::Source>::uninit();
+        let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
         // Usually, we want to close the input file automatically.
         //
@@ -843,8 +843,8 @@ impl TranspilerJob {
 
         if is_node_override {
             if let Some(code) = node_fallbacks::contents_from_path(specifier) {
-                let fallback_path = logger::fs::Path::init_with_namespace(specifier, b"node");
-                let src = fallback_source.write(logger::Source {
+                let fallback_path = bun_paths::fs::Path::init_with_namespace(specifier, b"node");
+                let src = fallback_source.write(bun_ast::Source {
                     path: fallback_path,
                     contents: std::borrow::Cow::Borrowed(code),
                     ..Default::default()
@@ -852,7 +852,7 @@ impl TranspilerJob {
                 // SAFETY: `fallback_source` outlives `parse_options` (declared
                 // earlier in fn scope); raw-ptr borrow avoids tying
                 // `parse_options`'s `'static` source lifetime to this stack slot.
-                parse_options.virtual_source = Some(unsafe { &*std::ptr::from_ref::<logger::Source>(src) });
+                parse_options.virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(src) });
             }
         }
 

@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_collections::{ByteVecExt, MultiArrayList};
 use bun_core::{declare_scope, err, scoped_log};
-use bun_logger::Loc;
+use bun_ast::Loc;
 use bun_semver::String as SemverString;
 use bun_str::{self, ZigStringSlice};
 

@@ -442,12 +442,12 @@ impl File {
         SysResult::Ok(bytes)
     }
 
-    // TODO(b0-genuine): bun_logger::Source — `to_source_at` / `to_source` removed (T1→T2 upward).
+    // TODO(b0-genuine): bun_ast::Source — `to_source_at` / `to_source` removed (T1→T2 upward).
     // These move to `bun_logger` as extension-trait methods on `bun_sys::File` (move-in pass).
     // Body preserved here for the move-in agent:
     //
     //   pub fn to_source_at(dir_fd: impl Into<File>, path: &ZStr, opts: ToSourceOptions)
-    //       -> SysResult<bun_logger::Source>
+    //       -> SysResult<bun_ast::Source>
     //   {
     //       let mut bytes = match Self::read_from(dir_fd, path) {
     //           SysResult::Err(err) => return SysResult::Err(err),
@@ -458,9 +458,9 @@ impl File {
     //               bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
     //           }
     //       }
-    //       SysResult::Ok(bun_logger::Source::init_path_string(path.as_bytes(), bytes))
+    //       SysResult::Ok(bun_ast::Source::init_path_string(path.as_bytes(), bytes))
     //   }
-    //   pub fn to_source(path: &ZStr, opts: ToSourceOptions) -> SysResult<bun_logger::Source> {
+    //   pub fn to_source(path: &ZStr, opts: ToSourceOptions) -> SysResult<bun_ast::Source> {
     //       Self::to_source_at(Fd::cwd(), path, opts)
     //   }
 }

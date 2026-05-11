@@ -22,8 +22,8 @@ pub mod mal_prelude {
     pub use crate::ungate_support::js_meta::JSMetaColumns as _;
     pub use crate::ungate_support::entry_point::EntryPointColumns as _;
     pub use crate::ungate_support::CompileResultForSourceMapColumns as _;
-    pub use bun_js_parser::ast::bundled_ast::BundledAstColumns as _;
-    pub use bun_js_parser::ast::server_component_boundary::ServerComponentBoundaryColumns as _;
+    pub use crate::bundled_ast::BundledAstColumns as _;
+    pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
 
 pub mod IndexStringMap;
@@ -47,6 +47,8 @@ pub mod entry_points;
 
 pub mod AstBuilder;
 pub mod analyze_transpiled_module;
+pub mod bundled_ast;
+pub use bundled_ast::BundledAst;
 pub mod linker;
 pub mod defines;
 pub mod barrel_imports;
@@ -198,22 +200,17 @@ pub enum AdditionalFile {
     OutputFile(u32),
 }
 
-/// `bun.ast.Index` — source-index newtype. Lives in `bun_options_types` (lower
-/// tier) and is re-exported here because every `*.zig` in this crate aliases it
-/// as `pub const Index = bun.ast.Index`.
-pub use bun_options_types::BundleEnums::{Index, IndexInt};
+/// `bun.ast.Index` — source-index newtype. Re-exported here because every
+/// `*.zig` in this crate aliases it as `pub const Index = bun.ast.Index`.
+pub(crate) use bun_ast::{Index, IndexInt};
 
 // Re-export the real `options` module (un-gated B-2). `Loader`/`Target` were
-// MOVE_DOWN'd to `bun_options_types::BundleEnums` in B-3 — `options_impl`
+// MOVE_DOWN'd to `bun_options_types::bundle_enums` in B-3 — `options_impl`
 // re-exports the canonical defs, so there is exactly ONE nominal type for each
 // across bundler/resolver/js_parser. Bundler-only behaviour hangs off
 // `TargetExt`/`LoaderExt` extension traits in `options_impl`.
 pub mod options {
     pub use super::options_impl::*;
-    // Explicit re-export (redundant with the glob above post-B-3) kept so the
-    // public-API surface of `bun_bundler::options::{Loader,Target}` is stable
-    // even if `options_impl`'s internal re-exports churn.
-    pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, Target};
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub use super::OutputFile;
     pub use super::output_file::Value as OutputValue;
@@ -296,7 +293,7 @@ pub use cache::Set as Cache;
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). B-3: the
 /// struct is canonical in `bun_js_parser`; the bundler-tier `disabled`/
 /// `set_disabled` live on `RuntimeTranspilerCacheExt`.
-pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
+pub use cache::RuntimeTranspilerCacheExt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from
@@ -321,11 +318,11 @@ pub use bundle_v2::dispatch;
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
-        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_logger::Log;
+        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
         fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), bun_core::Error>;
-        fn handle_parse_task_failure(err: bun_core::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), bun_core::Error>;
+        fn handle_parse_task_failure(err: bun_core::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), bun_core::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>;
-        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>;
+        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), bun_core::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
@@ -342,13 +339,13 @@ bun_dispatch::link_interface! {
     pub VmLoaderCtx[Runtime] {
         fn origin_host() -> &'static [u8];
         fn origin_path() -> &'static [u8];
-        fn loaders() -> *const bun_collections::StringArrayHashMap<bun_options_types::Loader>;
-        fn eval_source() -> Option<*const bun_logger::Source>;
+        fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
+        fn eval_source() -> Option<*const bun_ast::Source>;
         fn main() -> &'static [u8];
         fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
-        fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_options_types::Loader>;
+        fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;
         fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
         fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
         fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];

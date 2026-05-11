@@ -24,7 +24,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
-use bun_logger as logger;
 use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
 use bun_paths::resolve_path::{self, platform};
 use bun_str::strings;
@@ -991,7 +990,7 @@ impl TarballStream {
             (*task).log
                 .add_error_fmt(
                     None,
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "{} extracting tarball for \"{}\"",
                         err.name(),
@@ -1008,7 +1007,7 @@ impl TarballStream {
                 (*task).log
                     .add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Integrity check failed<r> for tarball: {}",
                             bstr::BStr::new(tarball.name.slice()),

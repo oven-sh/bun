@@ -529,10 +529,6 @@ impl Dependency {
 // parsing, lockfile serialization) name the SAME bit-layout. The bit positions
 // are load-bearing — they round-trip through `bun.lock` and the npm manifest
 // cache; the Zig spec starts at `1 << 1` (bit 0 is never set).
-//
-// `Negatable::from_json` stays in `bun_install::npm` because it depends on the
-// `JsonExprView` trait (which abstracts over `bun_logger::js_ast::Expr` and
-// `bun_js_parser::Expr`), neither of which is reachable from this crate.
 
 /// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`] (Zig: `enum(uN)
 /// { none = 0, all = all_value, _ }` open-enum with associated bit consts).
@@ -1436,7 +1432,7 @@ pub trait AutoInstaller {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_logger::Log,
+        log: *mut bun_ast::Log,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
         &mut self,
@@ -1445,7 +1441,7 @@ pub trait AutoInstaller {
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_logger::Log,
+        log: *mut bun_ast::Log,
     ) -> Option<DependencyVersion>;
     /// Port of `dependency.zig` `Version.Tag.infer` — pure string
     /// classification, but the table lives in `bun_install`.

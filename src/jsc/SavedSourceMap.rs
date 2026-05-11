@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::{Ordinal, Output};
-use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
@@ -252,7 +251,7 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     fn on_source_map_chunk(
         &mut self,
         chunk: SourceMap::Chunk,
-        source: &logger::Source,
+        source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         self.put_mappings(source, chunk.buffer)
     }
@@ -296,7 +295,7 @@ impl Drop for SavedSourceMap {
 impl SavedSourceMap {
     pub fn put_mappings(
         &mut self,
-        source: &logger::Source,
+        source: &bun_ast::Source,
         mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

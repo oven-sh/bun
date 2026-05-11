@@ -35,12 +35,13 @@ impl ProcessAutoKiller {
         while let Some(entry) = self.processes.pop() {
             // SAFETY: every key in `processes` was ref()'d on insert and is live
             // until the matching deref() below.
-            let p = unsafe { &mut *entry.key };
-            if !p.has_exited() {
-                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
+            let p: *mut Process = entry.key;
+            // SAFETY: key is live until the trailing `deref`.
+            if unsafe { !(*p).has_exited() } {
+                bun_core::scoped_log!(AutoKiller, "process.kill {}", unsafe { (*p).pid });
+                count += unsafe { (*p).kill(SignalCode::DEFAULT.0) }.is_ok() as u32;
             }
-            p.deref();
+            unsafe { Process::deref(p) };
         }
         count
     }
@@ -48,7 +49,7 @@ impl ProcessAutoKiller {
     pub fn clear(&mut self) {
         for process in self.processes.keys() {
             // SAFETY: see kill_processes — key is live until deref().
-            unsafe { (**process).deref() };
+            unsafe { Process::deref(*process) };
         }
 
         if self.processes.capacity() > 256 {
@@ -80,7 +81,7 @@ impl ProcessAutoKiller {
             if self.processes.swap_remove(&process) {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
                 // is live until this deref() releases it.
-                unsafe { (*process).deref() };
+                unsafe { Process::deref(process) };
             }
         }
     }
@@ -95,7 +96,7 @@ impl Drop for ProcessAutoKiller {
     fn drop(&mut self) {
         for process in self.processes.keys() {
             // SAFETY: see kill_processes — key is live until deref().
-            unsafe { (**process).deref() };
+            unsafe { Process::deref(*process) };
         }
         // `self.processes` storage freed by its own Drop.
     }

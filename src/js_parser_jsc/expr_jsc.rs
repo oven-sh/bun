@@ -3,7 +3,7 @@
 //! only the JS-materialization lives here.
 
 use bun_collections::VecExt;
-use bun_js_parser::{E, Expr, ExprData, G, ToJSError};
+use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError};
 use bun_string::{strings, String as BunString};
 
@@ -124,8 +124,8 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
 /// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
 ///
 /// Stamps the body for both `EString` nominal types: the full T4
-/// `bun_js_parser::E::String` (used by `data_to_js` / macros) and the
-/// value-subset T2 `bun_logger::js_ast::E::EString` (used by the YAML / JSON5
+/// `bun_ast::E::String` (used by `data_to_js` / macros) and the
+/// value-subset T2 `bun_ast::E::EString` (used by the YAML / JSON5
 /// interchange parsers, which build the cycle-broken tree). The two are
 /// field-identical for everything `stringToJS` touches; the T4 type carries
 /// extra lexer-dependent methods that prevent unifying the structs themselves.
@@ -170,6 +170,6 @@ macro_rules! impl_string_to_js {
     };
 }
 impl_string_to_js!(string_to_js, E::String);
-impl_string_to_js!(value_string_to_js, bun_logger::js_ast::E::EString);
+impl_string_to_js!(value_string_to_js, bun_ast::E::EString);
 
 // ported from: src/js_parser_jsc/expr_jsc.zig

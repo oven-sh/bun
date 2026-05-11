@@ -3,7 +3,7 @@ use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
 use crate::SmallList;
 
-use bun_logger::Ref;
+use bun_ast::Ref;
 use bun_string::strings;
 use bun_wyhash::Wyhash;
 
@@ -384,7 +384,7 @@ impl IdentOrRef {
 
     pub fn as_str(
         self,
-        map: &bun_logger::symbol::Map,
+        map: &bun_ast::symbol::Map,
         local_names: Option<&css::LocalsResultsMap>,
     ) -> Option<&'static [u8]> {
         // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
@@ -402,13 +402,13 @@ impl IdentOrRef {
             .map(|p| unsafe { crate::arena_str(*p) })
     }
 
-    pub fn as_original_string(self, symbols: &bun_logger::symbol::List) -> &[u8] {
+    pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
-        symbols.at(r.inner_index() as usize).original_name
+        symbols.at(r.inner_index() as usize).original_name.slice()
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {

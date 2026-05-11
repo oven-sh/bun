@@ -4,7 +4,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::VecExt;
-use bun_options_types::ImportRecord;
+use bun_ast::ImportRecord;
 
 use crate::css_parser as css;
 use crate::sourcemap;
@@ -158,7 +158,7 @@ thread_local! {
 }
 
 impl<'a> Printer<'a> {
-    pub fn lookup_symbol(&self, ref_: bun_logger::Ref) -> &'a [u8] {
+    pub fn lookup_symbol(&self, ref_: bun_ast::Ref) -> &'a [u8] {
         let symbols = self.symbols;
 
         let final_ref = symbols.follow(ref_);
@@ -169,8 +169,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // `original_name` is `&'static [u8]` in bun_logger::Symbol; coerces to `'a`.
-        symbols.get_const(final_ref).unwrap().original_name
+        // `original_name` is `StoreStr` (arena-erased); `.slice()` yields `&'a [u8]`.
+        symbols.get_const(final_ref).unwrap().original_name.slice()
     }
 
     pub fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
@@ -520,8 +520,8 @@ impl<'a> Printer<'a> {
                 let Some(symbol) = self.symbols.get_const(ref_) else {
                     return Err(self.add_fmt_error());
                 };
-                // PORT NOTE: copy out the &'static [u8] before re-borrowing &mut self.
-                let name = symbol.original_name;
+                // PORT NOTE: copy out the arena slice before re-borrowing &mut self.
+                let name = symbol.original_name.slice();
                 return self.serialize_identifier(name);
             }
         }
@@ -814,6 +814,6 @@ const INDENTS_LEVELS: usize = 32;
 static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
 // bun.ast.Symbol.Map — lives in bun_logger.
-type SymbolMap = bun_logger::symbol::Map;
+type SymbolMap = bun_ast::symbol::Map;
 
 // ported from: src/css/printer.zig

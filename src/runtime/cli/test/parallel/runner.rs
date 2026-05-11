@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_options_types::Context::MacroOptions;
+use bun_options_types::context::MacroOptions;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_core::ZBox;
 use bun_str::PathString;
@@ -28,7 +28,7 @@ use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use crate::Command;
-use bun_options_types::CodeCoverageOptions::CodeCoverageOptions;
+use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
 // TODO(port): `format_bytes!` placeholder — needs a macro that writes fmt args
 // into a Vec<u8> (no UTF-8 validation). Define in bun_core or use

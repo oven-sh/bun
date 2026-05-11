@@ -2,7 +2,6 @@ use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
 use bun_core::Output;
-use bun_logger as logger;
 use bun_str::strings;
 
 // PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
@@ -452,7 +451,7 @@ impl Buffers {
 
 pub fn load(
     stream: &mut Stream,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,
 ) -> Result<Buffers, bun_core::Error> {
     let mut this = Buffers::default();

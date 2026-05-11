@@ -540,11 +540,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn receive_chunk(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        index: impl Into<bun_js_parser::ast::Index>,
+        index: impl Into<bun_ast::Index>,
         content: ReceiveChunkContent,
         is_ssr_graph: bool,
     ) -> Result<(), bun_core::Error> {
-        let index: bun_js_parser::ast::Index = index.into();
+        let index: bun_ast::Index = index.into();
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
         // SAFETY: `graph_safety_lock` is a sibling field; debug-assert only.
@@ -654,7 +654,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 // concatenation knows how many newlines to skip.
                                 let count = match &kind {
                                     Content::Js(c) | Content::Asset(c) => {
-                                        strings::count_char(c, b'\n') as u32
+                                        strings::count_char(&c[..], b'\n') as u32
                                     }
                                     _ => 0,
                                 };
@@ -801,9 +801,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         mode: ProcessMode,
-        bundle_graph_index: impl Into<bun_js_parser::ast::Index>,
+        bundle_graph_index: impl Into<bun_ast::Index>,
     ) -> Result<(), bun_core::Error> {
-        let bundle_graph_index: bun_js_parser::ast::Index = bundle_graph_index.into();
+        let bundle_graph_index: bun_ast::Index = bundle_graph_index.into();
         let file_index: FileIndex<SIDE> = ctx
             .get_cached_index(SIDE, bundle_graph_index)
             .unwrap::<SIDE>()
@@ -873,7 +873,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
-        index: bun_js_parser::ast::Index,
+        index: bun_ast::Index,
     ) -> Result<(), bun_core::Error> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
@@ -901,7 +901,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
-        bundler_index: bun_js_parser::ast::Index,
+        bundler_index: bun_ast::Index,
     ) -> Result<(), bun_core::Error> {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
@@ -909,7 +909,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Queue avoids stack overflow; tracing bits in `process_edge_attachment`
         // prevent infinite recursion.
         // PERF(port): was stackFallback(64*u32) — profile in Phase B.
-        let mut queue: Vec<bun_js_parser::ast::Index> = Vec::new();
+        let mut queue: Vec<bun_ast::Index> = Vec::new();
         queue.push(bundler_index);
 
         while let Some(idx) = queue.pop() {
@@ -938,13 +938,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
-        ir_flags: bun_options_types::ImportRecordFlags,
-        ir_source_index: bun_options_types::BundleEnums::Index,
+        ir_flags: bun_ast::ImportRecordFlags,
+        ir_source_index: bun_ast::Index,
         key: &[u8],
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, bun_core::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
-        if ir_flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
+        if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }
         if ir_source_index.is_runtime() {
@@ -1351,7 +1351,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn insert_css_file_on_server(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        index: bun_js_parser::ast::Index,
+        index: bun_ast::Index,
         abs_path: &[u8],
     ) -> Result<(), bun_core::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
@@ -1375,7 +1375,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn insert_failure(
         &mut self,
         key: InsertFailureKey<'_>,
-        log: &bun_logger::Log,
+        log: &bun_ast::Log,
         is_ssr_graph: bool,
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing) = match key {
@@ -1489,8 +1489,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Rebuild all dependencies.
         let target = match SIDE {
-            Side::Client => bun_options_types::Target::Browser,
-            Side::Server => bun_options_types::Target::Bun,
+            Side::Client => bun_ast::Target::Browser,
+            Side::Server => bun_ast::Target::Bun,
         };
         let mut it = self.first_dep[index.get() as usize];
         while let Some(edge_index) = it {

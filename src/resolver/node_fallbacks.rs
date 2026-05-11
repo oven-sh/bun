@@ -1,7 +1,6 @@
 use crate::fs;
 use crate::package_json::{PackageJSON, SideEffects};
-use bun_logger as logger;
-use bun_options_types::BundleEnums::ModuleType;
+use bun_options_types::bundle_enums::ModuleType;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
@@ -61,7 +60,7 @@ macro_rules! fallback_module_init {
                 module_type: ModuleType::Esm,
                 // PORT NOTE: Zig used `undefined` for main_fields/browser_map (never read on
                 // this code path); Default::default() is the closest safe equivalent.
-                source: logger::Source::init_path_string(_PKGJSON_PATH, b""),
+                source: bun_ast::Source::init_path_string(_PKGJSON_PATH, b""),
                 side_effects: SideEffects::False,
                 ..Default::default()
             },

@@ -100,9 +100,9 @@ impl SloppyGlobalGitConfig {
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
         // PERF(port): was stack-fallback alloc (4096) — profile in Phase B
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
-        let Ok(source) = bun_logger::to_source(
+        let Ok(source) = bun_ast::to_source(
             config_file_path,
-            bun_logger::ToSourceOptions { convert_bom: true },
+            bun_ast::ToSourceOptions { convert_bom: true },
         ) else {
             return SloppyGlobalGitConfig::default();
         };
@@ -283,7 +283,7 @@ pub trait RepositoryExt: Sized {
     fn try_https(url: &[u8]) -> Option<&[u8]>;
     fn download(
         env: &bun_dotenv::Map,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         cache_dir: bun_sys::Dir,
         task_id: crate::package_manager_task::Id,
         name: &[u8],
@@ -292,7 +292,7 @@ pub trait RepositoryExt: Sized {
     ) -> Result<bun_sys::Dir, Error>;
     fn find_commit(
         env: &mut bun_dotenv::Loader,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         repo_dir: bun_sys::Dir,
         name: &[u8],
         committish: &[u8],
@@ -300,7 +300,7 @@ pub trait RepositoryExt: Sized {
     ) -> Result<Vec<u8>, Error>;
     fn checkout(
         env: &bun_dotenv::Map,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         cache_dir: bun_sys::Dir,
         repo_dir: bun_sys::Dir,
         name: &[u8],
@@ -601,7 +601,7 @@ impl RepositoryExt for Repository {
 
     fn download(
         env: &bun_dotenv::Map,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         cache_dir: bun_sys::Dir,
         task_id: crate::package_manager_task::Id,
         name: &[u8],
@@ -642,7 +642,7 @@ impl RepositoryExt for Repository {
                 ) {
                     log.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
                     );
                     return Err(err);
@@ -675,7 +675,7 @@ impl RepositoryExt for Repository {
                     if err == err!("RepositoryNotFound") || attempt > 1 {
                         log.add_error_fmt(
                             None,
-                            bun_logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
                         );
                     }
@@ -689,7 +689,7 @@ impl RepositoryExt for Repository {
 
     fn find_commit(
         env: &mut bun_dotenv::Loader,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         repo_dir: bun_sys::Dir,
         name: &[u8],
         committish: &[u8],
@@ -734,7 +734,7 @@ impl RepositoryExt for Repository {
             Err(err) => {
                 log.add_error_fmt(
                     None,
-                    bun_logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "no commit matching \"{}\" found for \"{}\" (but repository exists)",
                         BStr::new(committish),
@@ -752,7 +752,7 @@ impl RepositoryExt for Repository {
 
     fn checkout(
         env: &bun_dotenv::Map,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         cache_dir: bun_sys::Dir,
         repo_dir: bun_sys::Dir,
         name: &[u8],
@@ -805,7 +805,7 @@ impl RepositoryExt for Repository {
                 ) {
                     log.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
                     );
                     return Err(err);
@@ -822,7 +822,7 @@ impl RepositoryExt for Repository {
                 ) {
                     log.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
                     );
                     return Err(err);
@@ -867,7 +867,7 @@ impl RepositoryExt for Repository {
 
                     log.add_error_fmt(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "\"package.json\" for \"{}\" failed to open: {}",
                             BStr::new(name),
@@ -885,7 +885,7 @@ impl RepositoryExt for Repository {
             Err(err) => {
                 log.add_error_fmt(
                     None,
-                    bun_logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "\"package.json\" for \"{}\" failed to resolve: {}",
                         BStr::new(name),

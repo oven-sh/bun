@@ -242,7 +242,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()>;
-    fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_bundler::options::Loader>;
+    fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader>;
     fn get_last_modified(&mut self, _: &JSGlobalObject) -> JSValue;
     fn get_size_for_bindings(&mut self) -> u64;
     fn get_stat(&mut self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
@@ -1963,20 +1963,20 @@ impl BlobExt for Blob {
         Ok(())
     }
 
-    fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_bundler::options::Loader> {
+    fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
         if let Some(filename) = self.get_file_name() {
             let current_path = bun_resolver::fs::Path::init(filename);
             return Some(
                 current_path
                     .loader(&jsc_vm.transpiler.options.loaders)
-                    .unwrap_or(bun_bundler::options::Loader::Tsx),
+                    .unwrap_or(bun_ast::Loader::Tsx),
             );
         } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
-            return Some(bun_bundler::options::Loader::from_mime_type(mime_type));
+            return Some(bun_ast::Loader::from_mime_type(mime_type));
         } else {
             // Be maximally permissive.
-            return Some(bun_bundler::options::Loader::Tsx);
+            return Some(bun_ast::Loader::Tsx);
         }
     }
 

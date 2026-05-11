@@ -37,12 +37,11 @@ pub mod bun_install_js_bindings {
             json_stringify, WriteStream, WriteStreamOptions,
         };
         use bun_install::lockfile::{LoadResult, Lockfile};
-        use bun_logger as logger;
         use bun_paths::resolve_path;
         use bun_string::{OwnedString, String as BunString};
         use bun_sys::FdExt as _;
 
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
 
         let args = frame.arguments_old::<1>();
         let args = args.slice();

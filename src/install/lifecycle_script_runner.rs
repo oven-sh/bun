@@ -28,7 +28,6 @@ use bun_io::Loop as AsyncLoop;
 bun_output::declare_scope!(Script, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_runtime::cli::run_command::replacePackageManagerRun → install
 // Shared by `bun run` and lifecycle scripts. `bun_install` is the lower crate
 // (bun_runtime depends on bun_install), so the canonical impl lives here and
 // `RunCommand::replace_package_manager_run` is a thin re-export.
@@ -623,7 +622,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
-                // MOVE_DOWN(b0): bun_jsc::EventLoopHandle → bun_event_loop::EventLoopHandle
                 loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
                 ..Default::default()
             },
@@ -1054,7 +1052,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // `spawn_next_script`; we held the only strong ref. `deref()` may free.
             unsafe {
                 (*process).close();
-                (*process).deref();
+                Process::deref(process);
             }
         }
 

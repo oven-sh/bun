@@ -1,8 +1,8 @@
 //! Port of `src/runtime/cli/bunfig.zig`.
 //!
 //! `Bunfig::parse` and the inner `Parser` route through the real
-//! `bun_interchange::{toml,json}` parsers (which produce the value-shaped
-//! `bun_logger::js_ast::Expr` tree) and write into `ctx.args`
+//! `bun_parsers::{toml,json}` parsers (which produce the value-shaped
+//! `bun_ast::Expr` tree) and write into `ctx.args`
 //! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
 //! of `ContextData`.
 
@@ -13,23 +13,23 @@ use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
 use bun_core::err;
-use bun_interchange::json as json_parser;
-use bun_interchange::toml::TOML;
-use bun_logger as logger;
-use bun_logger::js_ast::{expr::Data as ExprData, Expr, ExprTag, E};
+use bun_parsers::json as json_parser;
+use bun_parsers::toml::TOML;
+use bun_ast::{expr::Data as ExprData, Expr, ExprTag, E};
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::schema::api;
-use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
-use bun_options_types::Context::{MacroImportReplacementMap, MacroMap, MacroOptions};
-use bun_options_types::GlobalCache::GlobalCache;
-use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
+use bun_options_types::LoaderExt as _;
+use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
+use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::global_cache::GlobalCache;
+use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 
-use bun_options_types::CommandTag::Tag as CommandTag;
-use bun_options_types::Context::ContextData;
+use bun_options_types::command_tag::Tag as CommandTag;
+use bun_options_types::context::ContextData;
 
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
-pub use bun_options_types::OfflineMode::OfflineMode;
+pub use bun_options_types::offline_mode::OfflineMode;
 
 // TODO: replace api.TransformOptions with Bunfig
 pub struct Bunfig;
@@ -42,15 +42,15 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
 
 /// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
 ///
-/// Re-ported here against the value-shaped `bun_logger::js_ast::Expr` (the
+/// Re-ported here against the value-shaped `bun_ast::Expr` (the
 /// tree produced by the TOML/JSON parsers) and returning the
-/// `bun_options_types::Context::MacroMap` shape so the result slots directly
-/// into `ctx.debug.macros` without crossing the `bun_js_parser::ast::Expr` /
+/// `bun_options_types::context::MacroMap` shape so the result slots directly
+/// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
 /// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
 fn parse_macros_json(
     macros: &Expr,
-    log: &mut logger::Log,
-    json_source: &logger::Source,
+    log: &mut bun_ast::Log,
+    json_source: &bun_ast::Source,
     bump: &Bump,
 ) -> MacroMap {
     let mut macro_map = MacroMap::default();
@@ -146,8 +146,8 @@ fn num_to_u32(n: f64) -> u32 {
 
 pub struct Parser<'a> {
     json: Expr,
-    source: &'a logger::Source,
-    log: &'a mut logger::Log,
+    source: &'a bun_ast::Source,
+    log: &'a mut bun_ast::Log,
     // PORT NOTE: Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
     // and `ctx: *Command.Context` simultaneously. Rust forbids the overlapping
     // borrow, so `bunfig` writes route through `self.ctx.args` directly.
@@ -158,11 +158,11 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn add_error(&mut self, loc: logger::Loc, text: &'static [u8]) -> Result<(), bun_core::Error> {
+    fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> Result<(), bun_core::Error> {
         self.log
             .add_error_opts(
                 text,
-                logger::ErrorOpts {
+                bun_ast::ErrorOpts {
                     source: Some(self.source),
                     loc,
                     redact_sensitive_information: true,
@@ -174,13 +174,13 @@ impl<'a> Parser<'a> {
 
     fn add_error_format(
         &mut self,
-        loc: logger::Loc,
+        loc: bun_ast::Loc,
         args: core::fmt::Arguments<'_>,
     ) -> Result<(), bun_core::Error> {
         self.log
             .add_error_fmt_opts(
                 args,
-                logger::ErrorOpts {
+                bun_ast::ErrorOpts {
                     source: Some(self.source),
                     loc,
                     redact_sensitive_information: true,
@@ -350,7 +350,7 @@ impl<'a> Parser<'a> {
     }
 
     // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
-    // `bun_options_types::CommandTag::Tag` does not derive `ConstParamTy` (it
+    // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). The Zig original
     // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
@@ -1016,7 +1016,7 @@ impl<'a> Parser<'a> {
                     for item in items {
                         self.expect_string(item)?;
                         let ExprData::EString(s) = &item.data else {
-                            unreachable!()
+                            unreachable!("expect_string returned Ok for non-EString")
                         };
                         externals.push(estring_to_owned(s, self.bump));
                     }
@@ -1046,11 +1046,11 @@ impl<'a> Parser<'a> {
                 }
                 let value = item.value.as_ref().expect("infallible: prop has value");
                 self.expect_string(value)?;
-                let Some(loader) = bun_bundler::options::Loader::from_string(
+                let Some(loader) = bun_ast::Loader::from_string(
                     value.as_string(self.bump).expect("infallible: type checked"),
                 ) else {
                     self.add_error(value.loc, b"Invalid loader")?;
-                    unreachable!();
+                    continue;
                 };
                 loader_names.push(key.into());
                 loader_values.push(loader.to_api());
@@ -1068,16 +1068,16 @@ impl<'a> Parser<'a> {
 impl Bunfig {
     pub fn parse(
         cmd: CommandTag,
-        source: &logger::Source,
+        source: &bun_ast::Source,
         ctx: &mut ContextData,
     ) -> Result<(), bun_core::Error> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`
         // (Parser later needs `&mut ctx` alongside `&mut log`).
-        let log_ptr: *mut logger::Log = ctx.log;
+        let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
-        let log: &mut logger::Log = unsafe { &mut *log_ptr };
+        let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
         let bump = Bump::new();
@@ -1093,7 +1093,7 @@ impl Bunfig {
                     if log.errors + log.warnings == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
-                            logger::ErrorOpts {
+                            bun_ast::ErrorOpts {
                                 source: Some(source),
                                 redact_sensitive_information: true,
                                 ..Default::default()
@@ -1110,7 +1110,7 @@ impl Bunfig {
                     if log.errors + log.warnings == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
-                            logger::ErrorOpts {
+                            bun_ast::ErrorOpts {
                                 source: Some(source),
                                 redact_sensitive_information: true,
                                 ..Default::default()

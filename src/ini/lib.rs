@@ -13,7 +13,7 @@ use bun_collections::VecExt;
 use core::fmt;
 
 use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-use bun_logger::{self as logger, Loc, Log, Source};
+use bun_ast::{Loc, Log, Source};
 use bun_string::{strings, ZStr};
 
 type OOM<T> = Result<T, AllocError>;
@@ -166,7 +166,7 @@ impl ConfigItem {
             if !result.is_successful() {
                 log.add_error_fmt_opts(
                     format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
-                    logger::AddErrorOptions {
+                    bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
                         ..Default::default()
@@ -253,9 +253,9 @@ use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{Global, Output};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_js_parser::E::Rope;
-use bun_js_parser::{self as js_ast, E, Expr, ExprData};
-use bun_logger::{self as logger, IntoStr, Loc, Log, Source};
+use bun_ast::E::Rope;
+use bun_ast::{self as js_ast, E, Expr, ExprData};
+use bun_ast::{IntoStr, Loc, Log, Source};
 use bun_string::{strings, ZStr};
 use bun_url::URL;
 
@@ -328,7 +328,7 @@ impl<'bump> PrepareResult<'bump> {
 
 impl<'a> Parser<'a> {
     pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-        // TODO(b2-blocked): bun_logger::Source<'bump> — `Source::init_path_string`
+        // TODO(b2-blocked): bun_ast::Source<'bump> — `Source::init_path_string`
         // currently takes `Str = &'static [u8]`; once the lower tier threads a
         // lifetime through `Source`, pass `path`/`src` directly. They outlive
         // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
@@ -598,10 +598,10 @@ impl<'a> Parser<'a> {
                     };
                     offset += 1;
                 }
-                // `bun_interchange::json::parse_utf8_impl` returns the T2
-                // value-subset `bun_logger::js_ast::Expr`; lift it into the T4
-                // `bun_js_parser::Expr` (via the `From` impl in
-                // `bun_js_parser::ast::expr`) so the rest of this body works
+                // `bun_parsers::json::parse_utf8_impl` returns the T2
+                // value-subset `bun_ast::Expr`; lift it into the T4
+                // `bun_ast::Expr` (via the `From` impl in
+                // `bun_ast::expr`) so the rest of this body works
                 // against a single `ExprData`.
                 // Phase-A `Str = &'static [u8]` lifetime erasure (see
                 // PORTING.md §Allocators / `Parser::init` above). `val` is a
@@ -610,7 +610,7 @@ impl<'a> Parser<'a> {
                 let src = Source::init_path_string(self.source.path.text, val_s);
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
-                let json_val: Expr = match bun_interchange::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                let json_val: Expr = match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
                     Ok(v) => Expr::from(v),
                     Err(_) => {
                         // JSON parse failed (e.g., single-quoted string like '${VAR}')
@@ -1285,9 +1285,9 @@ pub fn load_npmrc_config(
     let mut configs: Vec<ConfigItem> = Vec::new();
 
     for &npmrc_path in npmrc_paths {
-        let source = match logger::source_from_file(
+        let source = match bun_ast::source_from_file(
             npmrc_path,
-            logger::ToSourceOpts { convert_bom: true },
+            bun_ast::ToSourceOpts { convert_bom: true },
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -1813,7 +1813,7 @@ use bun_install_types::NodeLinker::{
 };
 
 /// Port of `PnpmMatcher.fromExpr` (src/install/PnpmMatcher.zig) operating on
-/// `bun_js_parser::Expr` instead of the lower-tier `bun_logger::ast::Expr`.
+/// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
 ///
 /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
 /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
@@ -1847,7 +1847,7 @@ fn pnpm_matcher_from_expr(
                 Err(CreateMatcherError::InvalidRegExp) => {
                     log.add_error_fmt_opts(
                         format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                        logger::AddErrorOptions {
+                        bun_ast::AddErrorOptions {
                             loc: expr.loc,
                             redact_sensitive_information: true,
                             source: Some(source),
@@ -1872,7 +1872,7 @@ fn pnpm_matcher_from_expr(
                         Err(CreateMatcherError::InvalidRegExp) => {
                             log.add_error_fmt_opts(
                                 format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                                logger::AddErrorOptions {
+                                bun_ast::AddErrorOptions {
                                     loc: pattern_expr.loc,
                                     redact_sensitive_information: true,
                                     source: Some(source),
@@ -1888,7 +1888,7 @@ fn pnpm_matcher_from_expr(
                 } else {
                     log.add_error_opts(
                         b"Expected a string or an array of strings",
-                        logger::AddErrorOptions {
+                        bun_ast::AddErrorOptions {
                             loc: pattern_expr.loc,
                             redact_sensitive_information: true,
                             source: Some(source),
@@ -1902,7 +1902,7 @@ fn pnpm_matcher_from_expr(
         _ => {
             log.add_error_opts(
                 b"Expected a string or an array of strings",
-                logger::AddErrorOptions {
+                bun_ast::AddErrorOptions {
                     loc: expr.loc,
                     redact_sensitive_information: true,
                     source: Some(source),
@@ -1936,7 +1936,7 @@ fn handle_auth(
     if conf_item.value.is_empty() {
         log.add_error_opts(
             b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
-            logger::AddErrorOptions {
+            bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1951,7 +1951,7 @@ fn handle_auth(
     if !result.is_successful() {
         log.add_error_opts(
             b"invalid _auth value, expected valid base64",
-            logger::AddErrorOptions {
+            bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1964,7 +1964,7 @@ fn handle_auth(
     let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
         log.add_error_opts(
             b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-            logger::AddErrorOptions {
+            bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,
@@ -1977,7 +1977,7 @@ fn handle_auth(
     if colon_idx + 1 >= username_password.len() {
         log.add_error_opts(
             b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-            logger::AddErrorOptions {
+            bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: conf_item.loc,
                 redact_sensitive_information: true,

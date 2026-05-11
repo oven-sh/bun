@@ -4,7 +4,6 @@ use core::cell::Cell;
 use core::ffi::c_int;
 
 use bun_core::{self as bun, Global, Output};
-use bun_logger as logger;
 use bun_str::{strings, ZStr};
 use bun_clap as clap;
 use bun_options_types::schema::api;
@@ -24,15 +23,15 @@ pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<&'static [u8]>> =
 pub mod cli {
     use super::*;
 
-    pub use bun_options_types::CompileTarget::CompileTarget;
+    pub use bun_options_types::compile_target::CompileTarget;
 
     // Zig `var log_: logger.Log = undefined;` — process-global, init in start()
-    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<logger::Log>> =
+    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     pub fn start_transform(
         _: api::TransformOptions,
-        _: &mut logger::Log,
+        _: &mut bun_ast::Log,
     ) -> Result<(), bun_core::Error> {
         Ok(())
     }
@@ -42,7 +41,7 @@ pub mod cli {
         // Single-threaded process startup; no other reader yet — write-once.
         let _ = START_TIME.set(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(logger::Log::init()) };
+        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
 
         // SAFETY: just initialized above
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
@@ -406,7 +405,7 @@ pub mod command {
         unsafe { &mut *GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Relaxed) }
     }
 
-    pub use bun_options_types::Context::{
+    pub use bun_options_types::context::{
         Context, ContextData, DebugOptions, Debugger, HotReload, MacroOptions, RuntimeOptions,
         TestOptions,
     };
@@ -425,7 +424,7 @@ pub mod command {
     /// and reaches into Windows watcher hooks. Aliased onto `ContextData` in
     /// `options_types/Context.zig`.
     pub fn create_context_data<const COMMAND: Tag>(
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<Context<'_>, bun_core::Error> {
         // Single-threaded CLI startup; write-once.
         let _ = cli::CMD.set(COMMAND);
@@ -445,9 +444,9 @@ pub mod command {
         // Publish to the lower-tier accessor so crates below `bun_runtime`
         // (e.g. `bun_jsc`) can read parsed runtime options without a cycle.
         // SAFETY: single-threaded CLI startup; publishes the just-initialized ctx.
-        unsafe { bun_options_types::Context::set_global(ctx_ptr) };
+        unsafe { bun_options_types::context::set_global(ctx_ptr) };
 
-        if bun_options_types::CommandTag::USES_GLOBAL_OPTIONS[COMMAND] {
+        if bun_options_types::command_tag::USES_GLOBAL_OPTIONS[COMMAND] {
             // SAFETY: just initialized
             unsafe { (*ctx_ptr).args = arguments::parse(COMMAND, &mut *ctx_ptr)? };
         }
@@ -685,7 +684,7 @@ pub mod command {
     ///
     /// So do not add any path buffers or anything that is large in this
     /// function or that stack space is used up forever.
-    pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         if cfg!(debug_assertions) {
             if !bun_core::env_var::MI_VERBOSE::get().unwrap_or(false) {
                 bun_alloc::mimalloc::mi_option_set_enabled(bun_alloc::mimalloc::Option::verbose, false);
@@ -787,7 +786,7 @@ pub mod command {
                     };
                     GLOBAL_CLI_CTX.store(ctx_ptr, core::sync::atomic::Ordering::Release);
                     // SAFETY: single-threaded CLI startup; publishes the just-initialized ctx.
-        unsafe { bun_options_types::Context::set_global(ctx_ptr) };
+        unsafe { bun_options_types::context::set_global(ctx_ptr) };
 
                     // If no compile_exec_argv, skip executable name if present
                     offset_for_passthrough = 1.min(bun::argv().len());
@@ -797,7 +796,7 @@ pub mod command {
                 };
 
                 ctx.args.target = Some(api::Target::Bun);
-                use bun_options_types::GlobalCache::GlobalCache;
+                use bun_options_types::global_cache::GlobalCache;
                 if ctx.debug.global_cache == GlobalCache::auto {
                     ctx.debug.global_cache = GlobalCache::disable;
                 }
@@ -1063,7 +1062,7 @@ pub mod command {
         Ok(())
     }
 
-    pub use bun_options_types::CommandTag::Tag;
+    pub use bun_options_types::command_tag::Tag;
 
     pub fn tag_params<const CMD: Tag>() -> &'static [arguments::ParamType] {
         match CMD {
@@ -1446,7 +1445,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         )
     }
 
-    fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_getcompletes(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use run_command::Filter as CompletionKind;
         let ctx = init::<{ Tag::GetCompletionsCommand }>(log)?;
         // Clone positionals up front so the `&mut *ctx` reborrows passed to
@@ -1566,7 +1565,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         Ok(())
     }
 
-    fn bun_create(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
         static HARDCODED_NON_BUN_X_LIST: phf::Set<&'static [u8]> = phf::phf_set! {
@@ -1716,7 +1715,7 @@ To create a project with the official Next.js scaffolding tool, run
         Ok(())
     }
 
-    fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_info(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = bun_install::CommandLineArguments::parse(PmSubcommand::Info)?;
         let cli_json_output = cli.json_output;

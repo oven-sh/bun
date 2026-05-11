@@ -2,19 +2,17 @@
 
 use bun_collections::StringHashMap;
 use bun_core::Error;
-// `Expr` here is the JSON parser's AST node (`bun_logger::js_ast::Expr`, re-
-// exported via `crate::bun_json`). It is intentionally NOT `bun_js_parser::Expr`
+// `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
+// exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
 // `MapEntry.root` (e.g. `Package::parse_with_json`) take the lower-tier
 // `bun_json::Expr`, so storing the parser-crate type here would create a
 // cross-tier mismatch.
 use crate::bun_json::Expr;
-// LAYERING: `Indentation` lives in `bun_logger::js_printer` (T2, MOVE_DOWN from
-// the printer crate). `bun_js_printer::options::Indentation` re-exports the
-// same type, so consumers passing `MapEntry.indentation` into
+// LAYERING: `Indentation` lives in `bun_ast::js_printer` (T2, MOVE_DOWN from
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
-use bun_logger::js_printer::options::Indentation;
-use bun_logger::{Log, Source};
+use bun_ast::Indentation;
+use bun_ast::{Log, Source};
 use bun_paths::is_absolute;
 #[cfg(windows)]
 use bun_paths::PathBuffer;
@@ -55,17 +53,13 @@ impl Default for MapEntry {
 impl MapEntry {
     /// Re-parse `self.source.contents` into `self.root`.
     ///
-    /// PORT NOTE: Zig's `updatePackageJSONAndInstall` edits `current_package_json.root`
-    /// in place (single `js_ast.Expr` type), so the cached AST observed by
-    /// `FolderResolver` for workspace members reflects the pre-install edits.
-    /// In Rust the editor operates on a higher-tier `bun_js_parser::Expr` copy
-    /// (see PORT NOTE (layering) at the conversion site), leaving this T2
-    /// `root` stale. After writing the printed JSON back into `source.contents`
-    /// the caller invokes this to restore the Zig invariant `root == parse(source)`.
+    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
+    /// writes the printed JSON back into `source.contents`. The caller then
+    /// invokes this to restore the invariant `root == parse(source)`.
     pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone());
+        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
         self.json_arena = json_bump;
         Ok(())
     }
@@ -74,7 +68,7 @@ impl MapEntry {
 pub type Map = StringHashMap<MapEntry>;
 
 // PORT NOTE: Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:
-// js_lexer.JSONOptions`; the Rust port (`bun_interchange::json`) spells those
+// js_lexer.JSONOptions`; the Rust port (`bun_parsers::json`) spells those
 // out as 8 const-generic bools. The only field this module varies at runtime
 // is `guess_indentation` (because `GetJSONOptions` was demoted from comptime
 // to runtime), so dispatch on that one bool here and keep the rest fixed to
@@ -192,7 +186,7 @@ impl WorkspacePackageJSONCache {
 
         // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
         // cyclebreak; `bun_sys` cannot name `Source`).
-        let source = match bun_logger::to_source(&key, Default::default()) {
+        let source = match bun_ast::to_source(&key, Default::default()) {
             Ok(s) => s,
             Err(err) => {
                 return GetResult::ReadErr(err.into());
@@ -213,7 +207,7 @@ impl WorkspacePackageJSONCache {
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone()),
+            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source,
             indentation: parsed.indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
@@ -269,7 +263,7 @@ impl WorkspacePackageJSONCache {
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone()),
+            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source: source.clone(),
             indentation: parsed.indentation,
             path_storage: bun_core::ZBox::default(),

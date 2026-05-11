@@ -4,7 +4,6 @@ use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bun_core::{self as bun, Environment, Output};
-use bun_logger as logger;
 use bun_str::strings;
 use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
 use bun_http::{self as http, AsyncHTTP};
@@ -395,10 +394,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            logger::add_warning_pretty!(
+                            bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(name),
@@ -425,19 +424,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
-                            logger::add_error_pretty!(
+                            bun_ast::add_error_pretty!(
                                 manager.log_mut(),
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
                             );
                         } else {
-                            logger::add_warning_pretty!(
+                            bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
@@ -483,19 +482,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         );
                     } else {
-                        logger::add_warning_pretty!(
+                        bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -663,10 +662,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            logger::add_warning_pretty!(
+                            bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
@@ -738,10 +737,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
@@ -751,10 +750,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         );
                     } else {
-                        logger::add_warning_pretty!(
+                        bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
@@ -832,19 +831,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         );
                     } else {
-                        logger::add_warning_pretty!(
+                        bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -977,10 +976,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &(*req.network).url_buf },
                         );
                     } else {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "{} parsing package manifest for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
@@ -1097,10 +1096,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    logger::add_error_pretty!(
+                    bun_ast::add_error_pretty!(
                         manager.log_mut(),
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
                         bstr::BStr::new(alias),
@@ -1321,10 +1320,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
@@ -1440,10 +1439,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(repo),
                         );
                     } else {
-                        logger::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(alias.slice()),

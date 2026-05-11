@@ -1,5 +1,6 @@
 use crate::css_parser as css;
-use crate::css_parser::{CSSString, Printer, PrintErr, StyleContext, SymbolList, VendorPrefix};
+use bun_ast::symbol::List as SymbolList;
+use crate::css_parser::{CSSString, Printer, PrintErr, StyleContext, VendorPrefix};
 use crate::css_parser::targets::Targets;
 use crate::css_parser::compat::Feature;
 use crate::{CSSStringFns, IdentFns};
@@ -542,7 +543,7 @@ fn is_selector_unused(
         match component {
             Component::Class(ident) | Component::Id(ident) => {
                 // PORT NOTE: `IdentOrRef::as_original_string` is
-                // ``-gated (blocked_on bun_logger::symbol::List::at
+                // ``-gated (blocked_on bun_ast::symbol::List::at
                 // + Symbol.original_name). Inline the ident arm; the ref arm
                 // (CSS-modules symbol-table lookup) is unreachable until
                 // `Parser::add_symbol_for_name` un-gates (see

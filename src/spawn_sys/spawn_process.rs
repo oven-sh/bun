@@ -535,7 +535,7 @@ pub fn spawn_process_posix(
     argv: Argv,
     envp: Envp,
 ) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
-    use core::ffi::CStr;
+    
 
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;

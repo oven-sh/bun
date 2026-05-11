@@ -342,7 +342,7 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
 
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
-/// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct
+/// Runtime sibling of `bun_ast::StoreSlice<T>` for `*const [T]` struct
 /// fields. Same contract as [`BackRef`]: the slice memory is owned elsewhere
 /// (parent struct, leaked `Box`, interned string) and remains valid for the
 /// holder's full lifetime. Stores a fat raw pointer (`*const [T]`, `usize`

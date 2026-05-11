@@ -1,5 +1,4 @@
 use crate::{immutable as strings, WStr, ZStr};
-// MOVE_DOWN(b0): bun_sys::windows → bun_paths (path-prefix consts only).
 use bun_paths::windows;
 use bun_paths::resolve_path;
 use bun_paths::PathChar;

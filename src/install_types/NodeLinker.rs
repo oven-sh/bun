@@ -75,8 +75,7 @@ pub mod npm {
 use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
-use bun_logger as logger;
-use bun_logger::ast;
+use bun_ast as ast;
 use bun_string::{strings, String as BunString};
 use bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 
@@ -167,7 +166,7 @@ impl From<CreateMatcherError> for FromExprError {
 bun_core::named_error_set!(FromExprError);
 
 impl PnpmMatcher {
-    // B-2 UN-GATED: bun_logger::ast::ExprData now exposes the real value-shaped
+    // B-2 UN-GATED: bun_ast::ExprData now exposes the real value-shaped
     // enum (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
     // against the arena-taking `E::String::slice` / `Expr::as_string_cloned`
     // signatures — Zig's `allocator` param maps to a local `bun_alloc::Arena`
@@ -175,8 +174,8 @@ impl PnpmMatcher {
     // transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
         let mut buf: Vec<u8> = Vec::new();
         // Scratch arena for `E::String::slice` / `as_string_cloned` (Zig passed
@@ -202,7 +201,7 @@ impl PnpmMatcher {
                     Err(CreateMatcherError::InvalidRegExp) => {
                         log.add_error_fmt_opts(
                             format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            logger::AddErrorOptions {
+                            bun_ast::AddErrorOptions {
                                 loc: expr.loc,
                                 redact_sensitive_information: true,
                                 source: Some(source),
@@ -230,7 +229,7 @@ impl PnpmMatcher {
                                         "Invalid regex: {}",
                                         bstr::BStr::new(pattern)
                                     ),
-                                    logger::AddErrorOptions {
+                                    bun_ast::AddErrorOptions {
                                         loc: pattern_expr.loc,
                                         redact_sensitive_information: true,
                                         source: Some(source),
@@ -246,7 +245,7 @@ impl PnpmMatcher {
                     } else {
                         log.add_error_opts(
                             b"Expected a string",
-                            logger::AddErrorOptions {
+                            bun_ast::AddErrorOptions {
                                 loc: pattern_expr.loc,
                                 redact_sensitive_information: true,
                                 source: Some(source),
@@ -260,7 +259,7 @@ impl PnpmMatcher {
             _ => {
                 log.add_error_opts(
                     b"Expected a string or an array of strings",
-                    logger::AddErrorOptions {
+                    bun_ast::AddErrorOptions {
                         loc: expr.loc,
                         redact_sensitive_information: true,
                         source: Some(source),

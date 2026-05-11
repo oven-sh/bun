@@ -15,7 +15,7 @@
 
 use crate::defines;
 use crate as js_ast;
-use crate::ExprData;
+use bun_ast::ExprData;
 use std::sync::OnceLock;
 
 // Zig: `string = []const u8`; each entry is a property-access chain (`&[_]string{...}`).

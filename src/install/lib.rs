@@ -26,134 +26,11 @@ pub(crate) mod bun_schema {
     pub use bun_options_types::schema::api;
 }
 
-/// `bun_json` → JSON parser lives in `bun_interchange::json`; AST nodes
-/// (`Expr`, `ExprData`, `E*` variants) live in `bun_logger::js_ast`.
+/// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
+/// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    use bun_collections::VecExt;
-    pub use bun_interchange::json::*;
-    pub use bun_logger::js_ast::{Expr, ExprData, e as E, expr::Query, G::Property};
-
-    /// Phase-B accessor shim — Zig's `Expr.asString`/`asProperty`/`get` route
-    /// through `E.Object`/`E.String`; the T2 `Expr` type only exposes the raw
-    /// `data` enum, so add a thin extension trait here so install drafts don't
-    /// have to pattern-match at every call site. JSON parse_utf8 always
-    /// produces UTF-8 strings, so `as_string` can return the raw slice.
-    pub trait ExprAccessors {
-        fn as_string(&self) -> Option<&'static [u8]>;
-        fn as_property(&self, key: impl AsRef<[u8]>) -> Option<Query>;
-        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr>;
-    }
-    impl ExprAccessors for Expr {
-        #[inline]
-        fn as_string(&self) -> Option<&'static [u8]> {
-            if let ExprData::EString(s) = &self.data {
-                if s.is_utf8() {
-                    return Some(s.data);
-                }
-            }
-            None
-        }
-        #[inline]
-        fn as_property(&self, key: impl AsRef<[u8]>) -> Option<Query> {
-            if let ExprData::EObject(o) = &self.data { o.as_property(key.as_ref()) } else { None }
-        }
-        #[inline]
-        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr> {
-            // Zig `Expr.get(name)` (src/js_parser/ast/Expr.zig) is sugar over
-            // `asProperty(name).?.expr`. Route through the trait's own
-            // `as_property` so the `EObject` payload-shape question stays in
-            // one place.
-            ExprAccessors::as_property(self, key).map(|q| q.expr)
-        }
-    }
-
-    /// JSON-shape view over both the T2 `bun_logger::js_ast::Expr` and the T4
-    /// `bun_js_parser::Expr`. `Bin::parse_append` / `Negatable::from_json` are
-    /// generic over this so callers holding either tier's `Expr` (text-lockfile
-    /// JSON vs. YAML/package.json migration) call the *one* canonical body
-    /// instead of carrying a per-tier copy of the algorithm. Only the
-    /// EObject/EArray/EString shapes are surfaced — that is the full JSON
-    /// surface both routines touch.
-    pub trait JsonExprView: Sized {
-        type Prop;
-        /// `e_string` → its UTF-8 bytes (`E.String.data` is `&'static [u8]`
-        /// in both tiers — Store/arena-backed, lives until reset).
-        fn json_utf8_string(&self) -> Option<&'static [u8]>;
-        /// `e_object` → property slice.
-        fn json_object_props(&self) -> Option<&[Self::Prop]>;
-        /// `e_array` → item slice.
-        fn json_array_items(&self) -> Option<&[Self]>;
-        /// `prop.key.?.asString()`.
-        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]>;
-        /// `prop.value.?.asString()`.
-        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]>;
-    }
-
-    impl JsonExprView for Expr {
-        type Prop = Property;
-        #[inline]
-        fn json_utf8_string(&self) -> Option<&'static [u8]> {
-            match &self.data {
-                ExprData::EString(s) if s.is_utf8() => Some(s.data),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn json_object_props(&self) -> Option<&[Self::Prop]> {
-            match &self.data {
-                ExprData::EObject(o) => Some(o.properties.slice()),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn json_array_items(&self) -> Option<&[Self]> {
-            match &self.data {
-                ExprData::EArray(a) => Some(a.items.slice()),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]> {
-            prop.key.as_ref().and_then(Self::json_utf8_string)
-        }
-        #[inline]
-        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]> {
-            prop.value.as_ref().and_then(Self::json_utf8_string)
-        }
-    }
-
-    impl JsonExprView for bun_js_parser::Expr {
-        type Prop = bun_js_parser::G::Property;
-        #[inline]
-        fn json_utf8_string(&self) -> Option<&'static [u8]> {
-            match &self.data {
-                bun_js_parser::ExprData::EString(s) => Some(s.data.slice()),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn json_object_props(&self) -> Option<&[Self::Prop]> {
-            match &self.data {
-                bun_js_parser::ExprData::EObject(o) => Some(o.properties.slice()),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn json_array_items(&self) -> Option<&[Self]> {
-            match &self.data {
-                bun_js_parser::ExprData::EArray(a) => Some(a.items.slice()),
-                _ => None,
-            }
-        }
-        #[inline]
-        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]> {
-            prop.key.as_ref().and_then(Self::json_utf8_string)
-        }
-        #[inline]
-        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]> {
-            prop.value.as_ref().and_then(Self::json_utf8_string)
-        }
-    }
+    pub use bun_parsers::json::*;
+    pub use bun_ast::{Expr, ExprData, e as E, expr::Query, G::Property};
 }
 
 /// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
@@ -175,13 +52,13 @@ pub(crate) mod bun_progress {
 
 /// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
 /// hosts `Arguments::loadConfig` (MOVE_DOWN b0); this local shim only adds the
-/// legacy `Arguments` alias (= `bun_options_types::Context`) that
+/// legacy `Arguments` alias (= `bun_options_types::context`) that
 /// `hoisted_install` / `isolated_install` import for `Transpiler::init`
 /// plumbing. Kept as a local module so those callers don't need updating; the
 /// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
 /// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
-    pub use bun_options_types::Context as Arguments;
+    pub use bun_options_types::context as Arguments;
     pub use ::bun_bunfig::*;
 }
 
@@ -542,7 +419,6 @@ pub mod ci_info {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install
 // Only the `Shell` enum (variant detection) is consumed here — the embedded
 // completion script bodies stay in bun_cli (they pull in @embedFile assets).
 // ──────────────────────────────────────────────────────────────────────────
@@ -584,7 +460,6 @@ pub mod ShellCompletions {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_runtime::cli::RunCommand (subset) → install
 // Only the helpers the package manager needs: shell discovery, fake `node`
 // shim creation, and env bootstrap for lifecycle scripts. The interactive
 // `bun run` entrypoint stays in bun_cli.
@@ -931,7 +806,7 @@ impl RunCommand {
     /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
     /// (opaque to install — every caller discards it).
     pub fn configure_env_for_run(
-        ctx: &mut bun_options_types::Context::ContextData,
+        ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
@@ -1090,14 +965,14 @@ pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 pub fn initialize_store() {
     use bun_js_parser as js_ast;
     if INITIALIZED_STORE.with(|c| c.get()) {
-        js_ast::ast::expr::data::Store::reset();
-        js_ast::ast::stmt::data::Store::reset();
+        bun_ast::expr::data::Store::reset();
+        bun_ast::stmt::data::Store::reset();
         return;
     }
 
     INITIALIZED_STORE.with(|c| c.set(true));
-    js_ast::ast::expr::data::Store::create();
-    js_ast::ast::stmt::data::Store::create();
+    bun_ast::expr::data::Store::create();
+    bun_ast::stmt::data::Store::create();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
@@ -1109,7 +984,7 @@ pub fn initialize_mini_store() {
 
     struct MiniStore {
         heap: Arena,
-        memory_store: js_ast::ASTMemoryAllocator,
+        memory_store: bun_ast::ASTMemoryAllocator,
     }
 
     thread_local! {
@@ -1121,7 +996,7 @@ pub fn initialize_mini_store() {
             let heap = Arena::new();
             // Zig threads `heap.arena()` into the AST allocator; in Rust
             // the Bump (`Arena`) is passed by reference.
-            let memory_store = js_ast::ASTMemoryAllocator::new(&heap);
+            let memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
             let mini_store = bun_core::heap::into_raw(Box::new(MiniStore {
                 heap,
                 memory_store,

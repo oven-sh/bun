@@ -7,12 +7,12 @@ use bun_alloc::AllocError;
 use bun_alloc::Arena;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::fmt as bun_fmt;
-use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
-use bun_js_parser::ast::Symbol;
+use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+use bun_ast::Symbol;
 use bun_js_parser::js_lexer;
-use bun_js_parser::Ref;
-use bun_logger::{Loc, Log, Source};
-use bun_options_types::ImportRecord;
+use bun_ast::Ref;
+use bun_ast::{Loc, Log, Source};
+use bun_ast::ImportRecord;
 
 use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
@@ -46,7 +46,7 @@ pub fn generate_code_for_lazy_export(
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
-    let all_css_asts: &[bun_js_parser::ast::bundled_ast::CssCol] = this.graph.ast.items_css();
+    let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> =
         all_css_asts[source_index as usize].as_deref();
 
@@ -111,7 +111,7 @@ pub fn generate_code_for_lazy_export(
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [Vec<ImportRecord>],
                 // `BundledAst.css` SoA column.
-                all_css_asts: &'a [bun_js_parser::ast::bundled_ast::CssCol],
+                all_css_asts: &'a [crate::bundled_ast::CssCol],
                 all_sources: &'a [Source],
                 all_symbols: &'a [SymbolList],
                 source_index: IndexInt,
@@ -177,7 +177,7 @@ pub fn generate_code_for_lazy_export(
                     // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
-                        bun_logger::Range { loc: compose_loc, ..Default::default() },
+                        bun_ast::Range { loc: compose_loc, ..Default::default() },
                         format_args!(
                             "The composes property cannot be used with {}, because it is not a single class name.",
                             bun_fmt::quote(name),
@@ -186,7 +186,7 @@ pub fn generate_code_for_lazy_export(
                             "The definition of {} is here.",
                             bun_fmt::quote(name),
                         ),
-                        bun_logger::Range { loc, ..Default::default() },
+                        bun_ast::Range { loc, ..Default::default() },
                     );
                 }
 
@@ -364,7 +364,7 @@ pub fn generate_code_for_lazy_export(
                     // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
-                    let parts_slice = js_ast::StoreSlice::new_mut(
+                    let parts_slice = bun_ast::StoreSlice::new_mut(
                         arena.alloc_slice_fill_iter(template_parts.into_iter()),
                     );
                     value = Expr::init(
@@ -399,7 +399,7 @@ pub fn generate_code_for_lazy_export(
     let expr = Expr { data: *lazy, loc: stmt.loc };
 
     match exports_kind {
-        js_ast::ExportsKind::Cjs => {
+        bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
@@ -438,7 +438,7 @@ pub fn generate_code_for_lazy_export(
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
             // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
-            part.stmts = js_ast::StoreSlice::EMPTY;
+            part.stmts = bun_ast::StoreSlice::EMPTY;
 
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
@@ -499,7 +499,7 @@ pub fn generate_code_for_lazy_export(
                     ));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
                     let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                    parts[generated.1 as usize].stmts = js_ast::StoreSlice::new_mut(new_stmts);
+                    parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
                 }
             }
 
@@ -529,17 +529,17 @@ pub fn generate_code_for_lazy_export(
                 let new_stmts: &mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                     Stmt::alloc(
                         S::ExportDefault {
-                            default_name: js_ast::LocRef {
+                            default_name: bun_ast::LocRef {
                                 ref_: Some(generated.0),
                                 loc: stmt.loc,
                             },
-                            value: js_ast::StmtOrExpr::Expr(expr),
+                            value: bun_ast::StmtOrExpr::Expr(expr),
                         },
                         stmt.loc,
                     ),
                 ));
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                parts[generated.1 as usize].stmts = js_ast::StoreSlice::new_mut(new_stmts);
+                parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
             }
         }
     }

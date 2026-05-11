@@ -1,9 +1,8 @@
 use bun_collections::VecExt;
 use bun_collections::ArrayHashMap;
-use bun_interchange::json_parser;
+use bun_parsers::json_parser;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
-use bun_logger as logger;
 use bun_string::strings;
 use enumset::{EnumSet, EnumSetType};
 
@@ -26,7 +25,7 @@ pub enum JsonMode {
 }
 
 /// Port of `cache::Json` (cache.zig:283). Moved down from `bun_bundler::cache`
-/// so the resolver names it directly — `bun_interchange::json_parser` is
+/// so the resolver names it directly — `bun_parsers::json_parser` is
 /// lower-tier than the resolver, so no cycle exists.
 ///
 /// Zig's `Json` is stateless and threads `bun.default_allocator` through every
@@ -47,21 +46,21 @@ impl JsonCache {
     #[inline]
     fn parse(
         &mut self,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         func: fn(
-            &logger::Source,
-            &mut logger::Log,
+            &bun_ast::Source,
+            &mut bun_ast::Log,
             &bun_alloc::Arena,
-        ) -> Result<json_parser::Expr, bun_core::Error>,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        let mut temp_log = logger::Log::init();
+        ) -> Result<bun_ast::Expr, bun_core::Error>,
+    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+        let mut temp_log = bun_ast::Log::init();
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
         let result = match func(source, &mut temp_log, &self.bump) {
-            // Lift the T2 value-subset `bun_logger::js_ast::Expr` into the full
-            // `bun_js_parser::Expr` (src/js_parser/ast/Expr.rs `From` impl).
-            Ok(expr) => Some(js_ast::Expr::from(expr)),
+            // Lift the T2 value-subset `bun_ast::Expr` into the full
+            // `bun_ast::Expr` (src/js_parser/ast/Expr.rs `From` impl).
+            Ok(expr) => Some(bun_ast::Expr::from(expr)),
             Err(_) => None,
         };
         let _ = temp_log.append_to_maybe_recycled(log, source);
@@ -72,9 +71,9 @@ impl JsonCache {
     #[inline]
     pub fn parse_tsconfig(
         &mut self,
-        log: &mut logger::Log,
-        source: &logger::Source,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         self.parse(log, source, json_parser::parse_ts_config::<true>)
     }
 
@@ -82,10 +81,10 @@ impl JsonCache {
     #[inline]
     pub fn parse_package_json(
         &mut self,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         if force_utf8 {
             self.parse(log, source, json_parser::parse_ts_config::<true>)
         } else {
@@ -97,19 +96,19 @@ impl JsonCache {
     #[inline]
     pub fn parse_json(
         &mut self,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         mode: JsonMode,
         force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
         let f: fn(
-            &logger::Source,
-            &mut logger::Log,
+            &bun_ast::Source,
+            &mut bun_ast::Log,
             &bun_alloc::Arena,
-        ) -> Result<json_parser::Expr, bun_core::Error> = match (mode, force_utf8) {
+        ) -> Result<bun_ast::Expr, bun_core::Error> = match (mode, force_utf8) {
             (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
             (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
             (JsonMode::Json, true) => json_parser::parse::<true>,
@@ -275,7 +274,7 @@ impl TSConfigJSON {
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
     fn str_replacing_templates(
         input: Box<[u8]>,
-        source: &logger::Source,
+        source: &bun_ast::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
@@ -319,8 +318,8 @@ impl TSConfigJSON {
     // tsconfig parser forces UTF-8 (cache.zig:313 `force_utf8=true`), so every
     // `EString` is already a flat UTF-8 slice and we can copy at the boundary.
     pub fn parse(
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
@@ -331,7 +330,7 @@ impl TSConfigJSON {
         // these particular files. This is likely not a completely accurate
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
-        let json: js_ast::Expr = match json_cache.parse_tsconfig(log, source).ok().flatten() {
+        let json: bun_ast::Expr = match json_cache.parse_tsconfig(log, source).ok().flatten() {
             Some(e) => e,
             None => return Ok(None),
         };
@@ -497,7 +496,7 @@ impl TSConfigJSON {
 
             // Parse "paths"
             if let Some(paths_prop) = compiler_opts.expr.as_property(b"paths") {
-                if let js_ast::ExprData::EObject(paths) = &paths_prop.expr.data {
+                if let bun_ast::ExprData::EObject(paths) = &paths_prop.expr.data {
                     // PORT NOTE: Zig `defer { Features.tsconfig_paths += 1 }` hoisted to top of block;
                     // it runs on every exit path either way.
                     bun_analytics::features::tsconfig_paths
@@ -547,7 +546,7 @@ impl TSConfigJSON {
                         // Matching "folder1/file2" should first check "projectRoot/folder1/file2"
                         // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                         match &value_prop.data {
-                            js_ast::ExprData::EArray(e_array) => {
+                            bun_ast::ExprData::EArray(e_array) => {
                                 let array = e_array.items.slice();
 
                                 if !array.is_empty() {
@@ -612,9 +611,9 @@ impl TSConfigJSON {
 
     pub fn is_valid_tsconfig_path_pattern(
         text: &[u8],
-        log: &mut logger::Log,
-        source: &logger::Source,
-        loc: logger::Loc,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
     ) -> bool {
         let mut found_asterisk = false;
         for &c in text {
@@ -639,9 +638,9 @@ impl TSConfigJSON {
     }
 
     pub fn parse_member_expression_for_jsx(
-        log: &mut logger::Log,
-        source: &logger::Source,
-        loc: logger::Loc,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
         text: &[u8],
     ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
         // TODO(port): narrow error set
@@ -706,9 +705,9 @@ impl TSConfigJSON {
 
     pub fn is_valid_tsconfig_path_no_base_url_pattern(
         text: &[u8],
-        log: &mut logger::Log,
-        source: &logger::Source,
-        loc: logger::Loc,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
     ) -> bool {
         let c0: u8;
         let c1: u8;

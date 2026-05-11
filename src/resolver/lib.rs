@@ -43,7 +43,7 @@ pub use dir_info::DirInfoRef;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
 /// Re-export real `GlobalCache`.
-pub use bun_options_types::GlobalCache::GlobalCache;
+pub use bun_options_types::global_cache::GlobalCache;
 
 /// Expose the process-lifetime backing of a `PathString` as `&'static [u8]`.
 ///
@@ -67,7 +67,7 @@ pub(crate) fn path_string_static(ps: &bun_string::PathString) -> &'static [u8] {
 // `PathPair`, `DebugLogs`, `SideEffects`, etc. are defined there.
 pub use __phase_a_body::{
     Resolver, Result, ResultUnion, ResultFlags, PathPair, MatchResult, MatchResultUnion,
-    LoadResult, PendingResolution, PendingResolutionTag, SideEffects, SideEffectsData,
+    LoadResult, PendingResolution, PendingResolutionTag, SideEffectsData,
     DebugLogs, DebugMeta, FlushMode, Bufs, DirEntryResolveQueueItem, AnyResolveWatcher,
     BrowserMapPathKind, Dirname, RootPathPair,
 };
@@ -480,8 +480,8 @@ pub mod fs {
         fn package_name(&self) -> Option<&[u8]>;
         fn loader(
             &self,
-            loaders: &bun_options_types::BundleEnums::LoaderHashTable,
-        ) -> Option<bun_options_types::BundleEnums::Loader>;
+            loaders: &bun_ast::LoaderHashTable,
+        ) -> Option<bun_ast::Loader>;
     }
 
     impl<'a> PathResolverExt<'a> for Path<'a> {
@@ -586,9 +586,9 @@ pub mod fs {
         /// Port of `Path.loader` in `fs.zig`.
         fn loader(
             &self,
-            loaders: &bun_options_types::BundleEnums::LoaderHashTable,
-        ) -> Option<bun_options_types::BundleEnums::Loader> {
-            use bun_options_types::BundleEnums::Loader;
+            loaders: &bun_ast::LoaderHashTable,
+        ) -> Option<bun_ast::Loader> {
+            use bun_ast::Loader;
             if self.is_data_url() {
                 return Some(Loader::Dataurl);
             }
@@ -2513,7 +2513,7 @@ pub mod cache {
     }
 
     /// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
-    /// [`Contents`]); callers feed `entry.contents()` into `logger::Source`.
+    /// [`Contents`]); callers feed `entry.contents()` into `bun_ast::Source`.
     /// Ownership is **manual** (`deinit`), matching Zig — callers frequently
     /// hand the bytes off to a `Source` that outlives the `Entry`.
     pub struct Entry {
@@ -2865,7 +2865,7 @@ pub mod cache {
     #[derive(Default)]
     pub struct JavaScript {}
 
-    pub type JavaScriptResult = bun_js_parser::ast::Result;
+    pub type JavaScriptResult = bun_js_parser::Result;
 
     impl JavaScript {
         #[inline]
@@ -2930,7 +2930,7 @@ pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrai
 // as a raw `NonNull<Loader<'static>>`).
 unsafe extern "Rust" {
     fn __bun_resolver_init_package_manager(
-        log: *mut logger::Log,
+        log: *mut bun_ast::Log,
         install: *const (),
         env: *mut core::ffi::c_void,
     ) -> NonNull<dyn AutoInstaller>;
@@ -3143,7 +3143,8 @@ pub mod allocators {
 // projects it into this struct for `Resolver::init1`. These are NOT a re-decl
 // of the bundler type — the bundler depends on this crate and re-exports them.
 pub mod options {
-    pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, ModuleType, Target};
+    pub(crate) use bun_ast::{Loader, LoaderHashTable, Target};
+    pub use bun_options_types::bundle_enums::ModuleType;
     pub use crate::tsconfig_json::options::jsx;
 
     /// Port of `bundler/options.zig` `Packages`.
@@ -3258,10 +3259,10 @@ pub mod options {
         /// [`BundleOptions::ext_order_slice`].
         pub fn kind(
             &self,
-            kind: bun_options_types::ImportKind,
+            kind: bun_ast::ImportKind,
             is_node_modules: bool,
         ) -> ExtOrder {
-            use bun_options_types::ImportKind as K;
+            use bun_ast::ImportKind as K;
             match kind {
                 K::Url | K::AtConditional | K::At => ExtOrder::Css,
                 K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => {
@@ -3318,7 +3319,7 @@ pub mod options {
     }
 
     // B-3 UNIFIED: FORWARD_DECL dropped — canonical type moved down to
-    // `bun_options_types::BundleEnums::ForceNodeEnv`. Re-exported so the
+    // `bun_options_types::bundle_enums::ForceNodeEnv`. Re-exported so the
     // `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv` paths and the
     // field on the local `BundleOptions` subset stay source-compatible.
     pub use ::bun_options_types::ForceNodeEnv;
@@ -3344,7 +3345,7 @@ pub mod options {
         pub external: ExternalModules,
         pub extra_cjs_extensions: Box<[Box<[u8]>]>,
         pub framework: Option<Framework>,
-        pub global_cache: bun_options_types::GlobalCache::GlobalCache,
+        pub global_cache: bun_options_types::global_cache::GlobalCache,
         // Zig: `?*api.BunInstall` (options.zig:1753). Spec consumer
         // `PackageManagerOptions.zig:load` only reads through it, so `*const`
         // — the bundler projects this from `Option<&api::BunInstall>` and a
@@ -3487,9 +3488,8 @@ use ::bun_core::{Environment, FeatureFlags, Generation};
 use bun_string::{MutableString, PathString};
 use bun_threading::Mutex;
 use bun_dotenv::env_loader as DotEnv;
-use bun_logger as logger;
-use bun_logger::Msg;
-use ::bun_options_types::import_record as ast;
+use bun_ast::Msg;
+use ::bun_ast::import_record as ast;
 use self::bun_paths as ResolvePath;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
@@ -3503,7 +3503,7 @@ use crate::tsconfig_json::TSConfigJSON;
 pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
 pub use crate::dir_info::DirInfoRef;
-pub use ::bun_options_types::GlobalCache::GlobalCache;
+pub use ::bun_options_types::global_cache::GlobalCache;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
@@ -3573,8 +3573,8 @@ type DifferentCase = crate::fs::DifferentCase<'static>;
 use crate::dir_info::HashMapExt as _;
 
 pub struct SideEffectsData {
-    pub source: Option<NonNull<logger::Source>>, // TODO(port): lifetime — never instantiated
-    pub range: logger::Range,
+    pub source: Option<NonNull<bun_ast::Source>>, // TODO(port): lifetime — never instantiated
+    pub range: bun_ast::Range,
 
     // If true, "sideEffects" was an array. If false, "sideEffects" was false.
     pub is_side_effects_array_in_json: bool,
@@ -3717,11 +3717,11 @@ impl PathPair {
     }
 }
 
-// Re-export of `bun_options_types::SideEffects`.
+// Re-export of `bun_ast::SideEffects`.
 // Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
 // — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
-pub use bun_options_types::SideEffects;
+use bun_ast::SideEffects;
 
 pub struct Result {
     pub path_pair: PathPair,
@@ -3877,7 +3877,7 @@ impl Result {
 }
 
 pub struct DebugMeta {
-    pub notes: Vec<logger::Data>,
+    pub notes: Vec<bun_ast::Data>,
     pub suggestion_text: &'static [u8],
     pub suggestion_message: &'static [u8],
     pub suggestion_range: SuggestionRange,
@@ -3901,19 +3901,19 @@ impl DebugMeta {
 
     pub fn log_error_msg(
         &mut self,
-        log: &mut logger::Log,
-        source: Option<&logger::Source>,
-        r: logger::Range,
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+        r: bun_ast::Range,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if source.is_some() && !self.suggestion_message.is_empty() {
             let suggestion_range = if self.suggestion_range == SuggestionRange::End {
-                logger::Range { loc: logger::Loc { start: r.end_i() as i32 - 1 }, ..Default::default() }
+                bun_ast::Range { loc: bun_ast::Loc { start: r.end_i() as i32 - 1 }, ..Default::default() }
             } else {
                 r
             };
-            let data = logger::range_data(source, suggestion_range, self.suggestion_message);
+            let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
             // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
             // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
             // `logErrorMsg` is uncalled in the Zig source so the field access is never
@@ -3925,8 +3925,8 @@ impl DebugMeta {
         let mut msg_text = Vec::new();
         write!(&mut msg_text, "{}", args).ok();
         log.add_msg(Msg {
-            kind: logger::Kind::Err,
-            data: logger::range_data(source, r, msg_text),
+            kind: bun_ast::Kind::Err,
+            data: bun_ast::range_data(source, r, msg_text),
             notes: core::mem::take(&mut self.notes).into_boxed_slice(),
             ..Default::default()
         });
@@ -3982,7 +3982,7 @@ impl Clone for DirEntryResolveQueueItem {
 pub struct DebugLogs {
     pub what: Vec<u8>,
     pub indent: MutableString,
-    pub notes: Vec<logger::Data>,
+    pub notes: Vec<bun_ast::Data>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4028,7 +4028,7 @@ impl DebugLogs {
         };
 
         self.notes
-            .push(logger::range_data(None, logger::Range::NONE, final_text));
+            .push(bun_ast::range_data(None, bun_ast::Range::NONE, final_text));
     }
 
     #[cold]
@@ -4203,7 +4203,7 @@ pub struct Resolver<'a> {
     // aliased unique refs across threads (instant UB). Model as `*mut` and
     // deref through the `fs()` / `log()` accessors below.
     pub fs: *mut Fs::FileSystem,
-    pub log: *mut logger::Log,
+    pub log: *mut bun_ast::Log,
     // allocator dropped — global mimalloc
     /// PORT NOTE: Zig stores `[]const []const u8` aliasing into
     /// `r.opts.extension_order` and saves/restores it across nested resolves.
@@ -4316,8 +4316,8 @@ pub struct Resolver<'a> {
 /// `Resolver::log` pointer on drop — port of the Zig
 /// `defer resolver.log = orig_log` save/restore pattern.
 pub struct ResolverLogScope {
-    slot: *mut *mut logger::Log,
-    prev: *mut logger::Log,
+    slot: *mut *mut bun_ast::Log,
+    prev: *mut bun_ast::Log,
 }
 
 impl Drop for ResolverLogScope {
@@ -4348,7 +4348,7 @@ impl<'a> Resolver<'a> {
     /// must uphold that the borrowed data outlives `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
-        log: *mut logger::Log,
+        log: *mut bun_ast::Log,
         opts: options::BundleOptions,
     ) -> Resolver<'a> {
         Resolver {
@@ -4468,7 +4468,7 @@ impl<'a> Resolver<'a> {
     /// at each use site; do not bind the projected `&mut Log` across another
     /// `log()` deref.
     #[inline(always)]
-    pub fn log(&self) -> *mut logger::Log {
+    pub fn log(&self) -> *mut bun_ast::Log {
         self.log
     }
 
@@ -4486,7 +4486,7 @@ impl<'a> Resolver<'a> {
     /// and `log` must remain valid for that same duration (declare the guard
     /// *after* the temporary `Log` so it drops first).
     #[inline]
-    pub unsafe fn scoped_log(self_: *mut Self, log: *mut logger::Log) -> ResolverLogScope {
+    pub unsafe fn scoped_log(self_: *mut Self, log: *mut bun_ast::Log) -> ResolverLogScope {
         // SAFETY: caller contract — `self_` is live; `addr_of_mut!` projects
         // the field place without an intermediate `&mut Resolver`.
         let slot = unsafe { core::ptr::addr_of_mut!((*self_).log) };
@@ -4499,7 +4499,7 @@ impl<'a> Resolver<'a> {
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
-    pub fn log_ref(&self) -> &logger::Log {
+    pub fn log_ref(&self) -> &bun_ast::Log {
         // SAFETY: BACKREF — `self.log` is never null (set in `init1` /
         // `scoped_log`, owner-allocated, outlives the Resolver). Resolver
         // mutex serializes mutation; a Shared `&` here pushes no Unique tag
@@ -4521,7 +4521,7 @@ impl<'a> Resolver<'a> {
     /// `self.caches.json`) cannot route through `&mut self` and continue to
     /// narrow-retag via the raw [`log()`](Self::log) accessor.
     #[inline(always)]
-    pub fn log_mut(&mut self) -> &mut logger::Log {
+    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
         // SAFETY: BACKREF — `self.log` is never null (set in `init1` /
         // `scoped_log`); the pointee (owner-allocated `Log`, or a stack `Log`
         // pinned by a live `ResolverLogScope`) outlives every borrow returned
@@ -4626,7 +4626,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn init1(
-        log: *mut logger::Log,
+        log: *mut bun_ast::Log,
         _fs: *mut Fs::FileSystem,
         opts: options::BundleOptions,
     ) -> Self {
@@ -4731,29 +4731,29 @@ impl<'a> Resolver<'a> {
             // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
             // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
             if flush_mode == FlushMode::Fail {
-                if logger::Kind::Debug.should_print(log.level) {
+                if bun_ast::Kind::Debug.should_print(log.level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
-                        kind: logger::Kind::Debug,
-                        data: logger::range_data(
+                        kind: bun_ast::Kind::Debug,
+                        data: bun_ast::range_data(
                             None,
-                            logger::Range { loc: logger::Loc::default(), ..Default::default() },
+                            bun_ast::Range { loc: bun_ast::Loc::default(), ..Default::default() },
                             what,
                         ),
                         notes,
                         ..Default::default()
                     });
                 }
-            } else if (log.level as u32) <= (logger::Level::Verbose as u32) {
-                if logger::Kind::Verbose.should_print(log.level) {
+            } else if (log.level as u32) <= (bun_ast::Level::Verbose as u32) {
+                if bun_ast::Kind::Verbose.should_print(log.level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
-                        kind: logger::Kind::Verbose,
-                        data: logger::range_data(
+                        kind: bun_ast::Kind::Verbose,
+                        data: bun_ast::range_data(
                             None,
-                            logger::Range { loc: logger::Loc::EMPTY, ..Default::default() },
+                            bun_ast::Range { loc: bun_ast::Loc::EMPTY, ..Default::default() },
                             what,
                         ),
                         notes,
@@ -4787,7 +4787,6 @@ impl<'a> Resolver<'a> {
         let _crash_guard = ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
 
         #[cfg(debug_assertions)]
-        // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
             bun_core::Output::debug(&format_args!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
@@ -4828,7 +4827,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.log_ref().level == logger::Level::Verbose {
+        if self.log_ref().level == bun_ast::Level::Verbose {
             if self.debug_logs.is_some() {
                 // deinit → drop
                 self.debug_logs = None;
@@ -6247,7 +6246,7 @@ impl<'a> Resolver<'a> {
                                     self.extension_order = prev_extension_order;
                                     if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                                     return MatchResultUnion::Success(MatchResult {
-                                        // PORT NOTE: PackageJSON.source.path is bun_logger::fs::Path; convert
+                                        // PORT NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
                                         // to the resolver's interned crate::fs::Path<'static> via its text.
                                         path_pair: PathPair { primary: Path::init(package_json.source.path.text), secondary: None },
                                         dirname_fd: pkg_dir_info.get_file_descriptor(),
@@ -6255,7 +6254,7 @@ impl<'a> Resolver<'a> {
                                         // Spec resolver.zig:1930 — `Path.isNodeModule()` checks
                                         // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
                                         // separator-bounded directory component on `name.dir` (not a
-                                        // bare substring of the full text). `bun_logger::fs::Path`
+                                        // bare substring of the full text). `bun_paths::fs::Path<'static>`
                                         // doesn't carry that method, so re-derive via the resolver's
                                         // `Path` (already done one line up for `path_pair.primary`).
                                         is_node_module: Path::init(package_json.source.path.text).is_node_module(),
@@ -6682,7 +6681,7 @@ impl<'a> Resolver<'a> {
                 // TODO: handle this error better
                 let _ = self.log_mut().add_error_fmt(
                     None,
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
                 );
                 return Err(err.into());
@@ -7130,11 +7129,11 @@ impl<'a> Resolver<'a> {
         // never frees (tsconfig is interned into the permanent DirInfo cache).
         // PORTING.md §Forbidden bars `mem::forget`/`from_raw_parts` to mint
         // `&'static`; route through the process-lifetime arena instead.
-        // TODO(port): once `logger::Source.contents` becomes `Cow<'static,[u8]>`
+        // TODO(port): once `bun_ast::Source.contents` becomes `Cow<'static,[u8]>`
         // / `Box<[u8]>`, the arena indirection here can be dropped.
         let contents_static: &'static [u8] = intern_tsconfig_contents(entry_contents);
 
-        let source = logger::Source::init_path_string(key_path, contents_static);
+        let source = bun_ast::Source::init_path_string(key_path, contents_static);
         let file_dir = source.path.source_dir();
 
         // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,
@@ -7542,7 +7541,7 @@ impl<'a> Resolver<'a> {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
                                         None,
-                                        logger::Loc::default(),
+                                        bun_ast::Loc::default(),
                                         format_args!(
                                             "Cannot read directory \"{}\": {}",
                                             bstr::BStr::new(pretty),
@@ -8546,7 +8545,7 @@ impl<'a> Resolver<'a> {
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Cannot read directory \"{}\": {}",
                             bstr::BStr::new(dir_path),
@@ -9065,9 +9064,9 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                            let _ = self.log_mut().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
+                            let _ = self.log_mut().add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
-                            let _ = self.log_mut().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
+                            let _ = self.log_mut().add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
                         }
                         None
                     }
@@ -9093,7 +9092,7 @@ impl<'a> Resolver<'a> {
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v.map(bun_core::heap::into_raw),
                             Err(err) => {
-                                let _ = self.log_mut().add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
+                                let _ = self.log_mut().add_debug_fmt(None, bun_ast::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
                                     bstr::BStr::new(err.name()),
                                     bun_core::fmt::quote(abs_path)

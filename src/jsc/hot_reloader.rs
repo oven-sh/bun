@@ -56,10 +56,10 @@ impl ImportWatcher {
     pub fn add_file_by_path_slow(
         &mut self,
         file_path: &[u8],
-        loader: bun_bundler::options::Loader,
+        loader: bun_ast::Loader,
     ) -> bool {
         // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8;
-        // wrap the bun_options_types::Loader discriminant.
+        // wrap the bun_ast::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
                 w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
@@ -74,7 +74,7 @@ impl ImportWatcher {
         fd: Fd,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        loader: bun_bundler::options::Loader,
+        loader: bun_ast::Loader,
         dir_fd: Fd,
         // PORT NOTE: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
@@ -133,7 +133,7 @@ impl HotReloaderCtx for VirtualMachine {
         VirtualMachine::bust_dir_cache(self, path)
     }
 
-    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable {
+    fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
         &self.transpiler.options.loaders
     }
 
@@ -143,7 +143,7 @@ impl HotReloaderCtx for VirtualMachine {
         // true for Verbose/Debug/Info — i.e. "verbose enough to print info".
         // SAFETY: `log` is set in `VirtualMachine::init` and never cleared.
         self.log
-            .map(|l| unsafe { l.as_ref() }.level.at_least(bun_logger::Level::Info))
+            .map(|l| unsafe { l.as_ref() }.level.at_least(bun_ast::Level::Info))
             .unwrap_or(false)
     }
 
@@ -238,7 +238,7 @@ pub trait HotReloaderCtx {
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
 
     /// Zig: `this.ctx.getLoaders()` — `&transpiler.options.loaders`.
-    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable;
+    fn get_loaders(&self) -> &bun_ast::LoaderHashTable;
 
     /// Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false`.
     fn log_level_at_least_info(&self) -> bool {
@@ -1091,14 +1091,14 @@ where
                                 let loader = self.ctx.get_loaders()
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
-                                    .unwrap_or(bun_bundler::options::Loader::File);
+                                    .unwrap_or(bun_ast::Loader::File);
                                 // PORT NOTE: Zig declares `prev_entry_id` per-iteration and
                                 // reassigns it just before `break`; the write is dead there
                                 // too (hot_reloader.zig:535/563). Keep the shape for
                                 // fidelity; the post-assignment `_ = prev_entry_id` below
                                 // documents the intentional dead store.
                                 let mut prev_entry_id: usize = usize::MAX;
-                                if loader != bun_bundler::options::Loader::File {
+                                if loader != bun_ast::Loader::File {
                                     // Zig leaves these `undefined` / overwritten; both arms
                                     // of `'brk` assign before any read.
                                     let path_string: bun_string::PathString;
@@ -1283,7 +1283,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         bun_bundler::BundleV2::bust_dir_cache(self, path)
     }
 
-    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable {
+    fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
         &self.transpiler.options.loaders
     }
 

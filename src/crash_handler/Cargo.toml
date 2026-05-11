@@ -25,6 +25,7 @@ bun_dispatch.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
 bun_options_types.workspace = true
+bun_ast.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_string.workspace = true

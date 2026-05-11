@@ -15,9 +15,8 @@ use bun_wyhash::hash;
 use bun_str::{strings, ZStr};
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_sys as sys;
-use bun_logger as logger;
 use bun_js_parser as js_ast;
-use bun_interchange::json as JSON;
+use bun_parsers::json as JSON;
 use bun_http::{self as HTTP, headers};
 use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
 #[allow(unused_imports)]
@@ -73,8 +72,8 @@ fn argv_contains(target: &[u8]) -> bool {
 
 pub fn initialize_store() {
     bun_core::run_once! {{
-        js_ast::Expr::data_store_create();
-        js_ast::Stmt::data_store_create();
+        bun_ast::Expr::data_store_create();
+        bun_ast::Stmt::data_store_create();
     }}
 }
 
@@ -330,9 +329,9 @@ impl UpgradeCommand {
             _ => return Err(bun_core::err!("HTTPError")),
         }
 
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // defer if SILENT log.deinit() — Drop handles this
-        let source = logger::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
+        let source = bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         initialize_store();
         // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
         // CLI path so use the process-lifetime CLI arena (Zig used the global
@@ -425,7 +424,7 @@ impl UpgradeCommand {
                 break 'get_asset;
             };
             // PORT NOTE: Zig `Expr.asArray()` returns an iterator; the T2
-            // `bun_logger::js_ast::Expr` only exposes the raw `EArray` payload,
+            // `bun_ast::Expr` only exposes the raw `EArray` payload,
             // so unwrap it and iterate `items` directly.
             let Some(assets) = assets_.expr.data.e_array() else {
                 break 'get_asset;
@@ -488,7 +487,7 @@ impl UpgradeCommand {
                         }
 
                         if let Some(size_) = asset.as_property(b"size") {
-                            if let logger::js_ast::ExprData::ENumber(n) = &size_.expr.data {
+                            if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size = u32::try_from(
                                     ((n.value.ceil()) as i32).max(0),
                                 )

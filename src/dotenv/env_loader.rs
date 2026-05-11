@@ -6,7 +6,6 @@ use std::sync::OnceLock;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
 use bun_string::{strings, ZStr};
 use bun_sys;
@@ -118,17 +117,17 @@ pub struct Loader<'a> {
     pub map: &'a mut Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
 
-    pub env_local: Option<logger::Source>,
-    pub env_development: Option<logger::Source>,
-    pub env_production: Option<logger::Source>,
-    pub env_test: Option<logger::Source>,
-    pub env_development_local: Option<logger::Source>,
-    pub env_production_local: Option<logger::Source>,
-    pub env_test_local: Option<logger::Source>,
-    pub env: Option<logger::Source>,
+    pub env_local: Option<bun_ast::Source>,
+    pub env_development: Option<bun_ast::Source>,
+    pub env_production: Option<bun_ast::Source>,
+    pub env_test: Option<bun_ast::Source>,
+    pub env_development_local: Option<bun_ast::Source>,
+    pub env_production_local: Option<bun_ast::Source>,
+    pub env_test_local: Option<bun_ast::Source>,
+    pub env: Option<bun_ast::Source>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub custom_files_loaded: StringArrayHashMap<logger::Source>,
+    pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
     pub quiet: bool,
 
@@ -848,7 +847,7 @@ impl<'a> Loader<'a> {
 
     /// Helper: maps a comptime `.env*` filename to its `Option<Source>` field.
     /// Replaces Zig `@field(this, base)`.
-    fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<logger::Source> {
+    fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<bun_ast::Source> {
         match base {
             b".env.local" => &mut self.env_local,
             b".env.development" => &mut self.env_development,
@@ -885,7 +884,7 @@ impl<'a> Loader<'a> {
                     E::EISDIR | E::ENOENT => {
                         // prevent retrying
                         *self.default_file_slot(base) =
-                            Some(logger::Source::init_path_string(base, b""));
+                            Some(bun_ast::Source::init_path_string(base, b""));
                         return Ok(());
                     }
                     E::EBUSY | E::EACCES => {
@@ -898,7 +897,7 @@ impl<'a> Loader<'a> {
                         }
                         // prevent retrying
                         *self.default_file_slot(base) =
-                            Some(logger::Source::init_path_string(base, b""));
+                            Some(bun_ast::Source::init_path_string(base, b""));
                         return Ok(());
                     }
                     _ => return Err(err.into()),
@@ -928,12 +927,12 @@ impl<'a> Loader<'a> {
         }
 
         // TODO(port): Zig retained the file buffer in `Source.contents`; here we
-        // drop it after parsing because `bun_logger::Source.contents` is
+        // drop it after parsing because `bun_ast::Source.contents` is
         // `&'static [u8]` and §Forbidden bans `Box::leak`. The stored `Source`
         // is only ever checked for `.is_some()` / its path printed, so dropping
         // the bytes is observationally identical. Revisit once `bun_logger`
         // grows an owning `contents` (Phase-B `Str` rework).
-        *self.default_file_slot(base) = Some(logger::Source::init_path_string(base, b""));
+        *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
         Ok(())
     }
 
@@ -954,7 +953,7 @@ impl<'a> Loader<'a> {
                 // map key already carries `file_path` (boxed), and the value is never
                 // read for its path/contents — only `.contains()` and key iteration —
                 // so an empty placeholder is observationally identical.
-                self.custom_files_loaded.put(file_path, logger::Source::default())?;
+                self.custom_files_loaded.put(file_path, bun_ast::Source::default())?;
                 return Ok(());
             }
         };
@@ -982,7 +981,7 @@ impl<'a> Loader<'a> {
 
         // TODO(port): see `load_env_file` — `Source.contents` not retained
         // pending the `bun_logger` owning-`Str` rework.
-        self.custom_files_loaded.put(file_path, logger::Source::default())?;
+        self.custom_files_loaded.put(file_path, bun_ast::Source::default())?;
         Ok(())
     }
 }
@@ -1337,7 +1336,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
-        source: &logger::Source,
+        source: &bun_ast::Source,
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
@@ -1346,7 +1345,7 @@ impl<'a> Parser<'a> {
 
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
-    /// `logger::Source` (whose `contents` field is currently `&'static [u8]`).
+    /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
     // PORT NOTE: Zig built a `logger.Source` and passed `&source` — the only
     // field `Parser` reads is `.contents`, so this is observationally identical.
     pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(

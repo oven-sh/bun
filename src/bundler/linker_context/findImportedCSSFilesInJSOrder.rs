@@ -1,11 +1,11 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_options_types::ImportRecord;
+use bun_ast::ImportRecord;
 
 use bun_collections::DynamicBitSet as BitSet;
 use crate::options::Loader;
-use crate::part::List as PartList;
+use bun_ast::PartList;
 use crate::{Index, LinkerContext, Part};
 
 /// JavaScript modules are traversed in depth-first postorder. This is the

@@ -132,7 +132,7 @@ impl PartialOrd for StableRef {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImportTracker {
     pub source_index: Index,
-    pub name_loc: bun_logger::Loc,
+    pub name_loc: bun_ast::Loc,
     pub import_ref: Ref,
 }
 
@@ -301,15 +301,15 @@ impl Default for CompileResult {
 /// predictable, and unique `.pretty` attribute to a Path. DevServer relies on
 /// pretty paths for identifying modules, so they must be unique.
 ///
-/// PORT NOTE: signature uses `bun_logger::fs::Path` (= `bun_paths::fs::Path<'static>`,
-/// the type stored on `Logger::Source.path`). `dupe_alloc_fix_pretty` interns into
+/// PORT NOTE: signature uses `bun_paths::fs::Path<'static>` (= `bun_paths::fs::Path<'static>`,
+/// the type stored on `bun_ast::Source.path`). `dupe_alloc_fix_pretty` interns into
 /// `FilenameStore` (process-static), so the `'static` return is satisfied.
 pub fn generic_path_with_pretty_initialized(
-    path: bun_logger::fs::Path,
+    path: bun_paths::fs::Path<'static>,
     target: options::Target,
     top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
-) -> Result<bun_logger::fs::Path, bun_core::Error> {
+) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
     use bun_io::Write as _;
     use bun_fs::PathResolverExt as _;
 
@@ -333,7 +333,7 @@ pub fn generic_path_with_pretty_initialized(
             bun_paths::resolve_path::platform::Loose,
             false,
         >(&mut **buf2, top_level_dir, path.text);
-        // D090: `bun_logger::fs::Path` and `bun_fs::Path` are the same type;
+        // D090: `bun_paths::fs::Path<'static>` and `bun_fs::Path` are the same type;
         // covariance lets `path_clone` widen to `Path<'_>` for the temp `pretty`.
         let mut path_clone: bun_fs::Path<'_> = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -465,7 +465,7 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub fn name_for_symbol(&mut self, ref_: bun_js_parser::Ref) -> &[u8] {
+        pub fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
@@ -550,8 +550,8 @@ pub enum WrapKind {
     Esm,
 }
 
-pub use bun_js_parser::UseDirective;
-pub use bun_js_parser::ServerComponentBoundary;
+pub(crate) use bun_ast::UseDirective;
+pub(crate) use bun_ast::ServerComponentBoundary;
 pub use crate::options_impl::PathTemplate;
 
 /// `bundle_v2.zig:MangledProps`.
@@ -565,8 +565,7 @@ pub use bun_js_printer::MangledProps;
 // body these collapse to re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.logger` — alias used by Phase-A drafts as `crate::Logger::Source`.
-pub use bun_logger as Logger;
+/// `bun.logger` — alias used by Phase-A drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
 ///
@@ -577,25 +576,9 @@ pub use bun_logger as Logger;
 /// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
 /// which carries a lifetime parameter yet. Pin to `'static` until Phase B
 /// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
-pub type JSAst = bun_js_parser::BundledAst<'static>;
-pub use bun_js_parser::{Part, Ref, Symbol};
+pub type JSAst = crate::BundledAst<'static>;
+pub(crate) use bun_ast::{Part, Ref, Symbol};
 
-/// Lowercase-module aliases mirroring Zig's `Index.Int` / `Part.List` /
-/// `ImportRecord.List` nesting so draft bodies that wrote `index::Int` /
-/// `part::List` / `import_record::List` resolve.
-pub mod index {
-    pub use crate::IndexInt as Int;
-    pub use crate::Index;
-}
-pub mod part {
-    pub use bun_js_parser::Dependency;
-    pub use bun_js_parser::PartList as List;
-    /// `Part.SymbolUse` (Symbol.zig:Use).
-    pub use bun_js_parser::ast::symbol::Use as SymbolUse;
-}
-pub mod import_record {
-    pub use bun_options_types::import_record::List;
-}
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
 /// below) a namespace for `Kind`. Rust keeps types and modules in separate
@@ -676,7 +659,7 @@ pub mod entry_point {
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
     use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
-    use bun_js_parser::{Dependency, Ref};
+    use bun_ast::{Dependency, Ref};
 
     use crate::{ImportTracker, Index, WrapKind};
 
@@ -698,7 +681,7 @@ pub mod js_meta {
 
     pub type RefImportData = ArrayHashMap<Ref, ImportData>;
     pub type ResolvedExports = StringArrayHashMap<ExportData>;
-    pub type TopLevelSymbolToParts = bun_js_parser::ast::ast::TopLevelSymbolToParts;
+    pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
     /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Field-style access
     /// (`flags.is_async_or_has_async_dependency = true`) is what the Phase-A
@@ -776,3 +759,15 @@ pub use entry_point::EntryPointColumns;
 /// `wait_for_parse`. Re-export the LinkerContext alias so `bundle_v2.rs` and
 /// `ParseTask.rs` agree on the spelling.
 pub use crate::linker_context_mod::EventLoop;
+
+// crate-private aliases mirroring Zig's `Index.Int` / `Part.List` /
+// `ImportRecord.List` nesting.
+pub(crate) mod index {
+    pub(crate) use bun_ast::{Index, IndexInt as Int};
+}
+pub(crate) mod part {
+    pub(crate) use bun_ast::{Dependency, PartList as List, symbol::Use as SymbolUse};
+}
+pub(crate) mod import_record {
+    pub(crate) use bun_ast::import_record::List;
+}

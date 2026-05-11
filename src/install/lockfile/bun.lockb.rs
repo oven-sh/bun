@@ -21,7 +21,7 @@ use super::PatchedDep;
 use bun_install::{
     PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
 };
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_semver::{self as semver, String as SemverString};
 use bun_str::strings;
 

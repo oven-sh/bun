@@ -2,11 +2,11 @@ use bun_collections::VecExt;
 use std::sync::LazyLock;
 
 use bun_collections::ArrayHashMap;
-// PORT NOTE: `Expr` here is the T2 `bun_logger::js_ast::Expr` (re-exported via
-// `crate::bun_json`), not the T4 `bun_js_parser::Expr`. The sole caller
+// PORT NOTE: `Expr` here is the T2 `bun_ast::Expr` (re-exported via
+// `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
 // (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
 // so binding to the lower-tier type avoids a cross-tier mismatch.
-use bun_logger::js_ast;
+use bun_ast as js_ast;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;

@@ -113,8 +113,16 @@ pub trait VecExt<T>: Sized {
     fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
     where
         T: Clone;
-    fn expand_to_capacity(&mut self);
-    fn writable_slice(&mut self, additional: usize) -> &mut [T];
+    /// # Safety
+    /// Exposes `self[len..capacity]` as initialized. Every element must be
+    /// overwritten before any read (including Drop). Prefer
+    /// [`unused_capacity_slice`] for `T` with validity invariants.
+    unsafe fn expand_to_capacity(&mut self);
+    /// # Safety
+    /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
+    /// must fully initialize the slice before any read/drop. Prefer
+    /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
+    unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
 
     // ── ownership transfer ────────────────────────────────────────────────
     fn move_to_list(&mut self) -> Vec<T>;
@@ -152,7 +160,7 @@ pub trait VecExt<T>: Sized {
 // `PropertyList`). `A: Default` lets every constructor produce the right
 // allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
 // with `Default`, so `A::default()` is free.
-impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
+impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn init_capacity(n: usize) -> Self {
         Vec::with_capacity_in(n, A::default())
@@ -174,8 +182,17 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
-        // Element-wise move into `A`'s heap. For `A = Global` this is a
-        // redundant copy; for `A = AstAlloc` it is the required heap migration.
+        // Mirror of the `move_to_list` fast-path: when `A == Global` this is a
+        // pointer adopt (Zig `moveFromList`, baby_list.zig:46), not a realloc.
+        // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
+        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
+            // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
+            // layout, allocator, and drop semantics.
+            let mut list = core::mem::ManuallyDrop::new(list);
+            return unsafe {
+                Vec::from_raw_parts_in(list.as_mut_ptr(), list.len(), list.capacity(), A::default())
+            };
+        }
         let mut v = Vec::with_capacity_in(list.len(), A::default());
         v.extend(list);
         v
@@ -351,15 +368,15 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.splice(start..start + len, new_items.iter().cloned());
     }
     #[inline]
-    fn expand_to_capacity(&mut self) {
-        // SAFETY: matches Zig semantics — exposes uninit tail as initialized.
-        // Callers immediately overwrite every element.
+    unsafe fn expand_to_capacity(&mut self) {
+        // SAFETY: caller contract — every element in `[len, cap)` is written
+        // before being observed.
         unsafe { self.set_len(self.capacity()) };
     }
-    fn writable_slice(&mut self, additional: usize) -> &mut [T] {
+    unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T] {
         self.reserve(additional);
         let prev = self.len();
-        // SAFETY: capacity reserved; tail is treated as write-only by callers.
+        // SAFETY: caller contract — slice is fully written before any read.
         unsafe { self.set_len(prev + additional) };
         &mut self[prev..]
     }
@@ -367,6 +384,19 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
         let taken = core::mem::replace(self, Vec::new_in(A::default()));
+        // Fast path: `Vec<T, Global>` → `Vec<T>` is a pointer move, not a
+        // realloc+memcpy. Restores zero-copy behavior on the HTTP streaming
+        // paths (`RequestContext::response_buf`, `ByteStream`); the copying
+        // path is still required for `AstAlloc` etc. where the buffer must
+        // migrate heaps.
+        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
+            // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
+            // same layout, allocator, and drop semantics.
+            let mut taken = core::mem::ManuallyDrop::new(taken);
+            return unsafe {
+                Vec::from_raw_parts(taken.as_mut_ptr(), taken.len(), taken.capacity())
+            };
+        }
         let mut out = Vec::with_capacity(taken.len());
         out.extend(taken);
         out

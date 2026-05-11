@@ -15,9 +15,8 @@ use crate::{
 use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
 use bun_core::perf;
-use bun_js_parser::ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
-use bun_logger as Logger;
-use bun_options_types::{ImportRecord, ImportRecordTag, ImportRecordFlags};
+use bun_ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
+use bun_ast::{ImportRecord, ImportRecordTag, ImportRecordFlags};
 use bun_sourcemap as SourceMap;
 use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}};
 
@@ -49,8 +48,8 @@ pub fn post_process_js_chunk(
     let c: &mut LinkerContext = ctx.c();
     debug_assert!(matches!(chunk.content, crate::chunk::Content::Javascript(_)));
 
-    js_ast::expr::data::Store::create();
-    js_ast::stmt::data::Store::create();
+    bun_ast::expr::data::Store::create();
+    bun_ast::stmt::data::Store::create();
     // Side arena for `AstAlloc` — linker thread builds wrapper/runtime AST
     // nodes here outside any `ASTMemoryAllocator` scope; without this their
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
@@ -68,7 +67,7 @@ pub fn post_process_js_chunk(
     let mut cross_chunk_suffix: PrintResult;
 
     let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value as usize].get() as usize;
+        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
     let runtime_scope: &mut Scope =
         &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
     let runtime_members = &mut runtime_scope.members;
@@ -129,7 +128,7 @@ pub fn post_process_js_chunk(
                 kind: import_record.import_kind,
                 // SAFETY: chunk_index is in-bounds (produced by the linker for this chunks slice).
                 path: bun_paths::fs::Path::init(unsafe { &(*ctx.chunks)[import_record.chunk_index as usize] }.unique_key),
-                range: Logger::Range::NONE,
+                range: bun_ast::Range::NONE,
                 // Remaining fields take their Zig defaults (no Default impl):
                 tag: ImportRecordTag::None,
                 loader: None,
@@ -157,9 +156,9 @@ pub fn post_process_js_chunk(
         // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
         let prefix_stmts =
-            js_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
+            bun_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
         let suffix_stmts =
-            js_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
+            bun_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -224,7 +223,7 @@ pub fn post_process_js_chunk(
         {
             let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get() as usize].contains(js_ast::bundled_ast::Flags::HAS_IMPORT_META) {
+                if all_ast_flags[part_range.source_index.get() as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META) {
                     mi.flags.contains_import_meta = true;
                     break;
                 }
@@ -380,7 +379,7 @@ pub fn post_process_js_chunk(
         }
 
         break 'brk CompileResult::Javascript {
-            source_index: Index::INVALID.value,
+            source_index: Index::INVALID.value(),
             result: PrintResult::Result(js_printer::PrintResultSuccess {
                 code: Box::default(),
                 source_map: None,
@@ -497,7 +496,7 @@ pub fn post_process_js_chunk(
     if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
         let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
 
-        if flags.contains(js_ast::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
+        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
             j.push_static(b"\"use strict\";\n");
             line_offset.advance(b"\"use strict\";\n");
             newline_before_comment = true;
@@ -509,7 +508,7 @@ pub fn post_process_js_chunk(
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
-            if source_index != Index::RUNTIME.value {
+            if source_index != Index::RUNTIME.value() {
                 break;
             }
             line_offset.advance(compile_result.code());
@@ -572,11 +571,11 @@ pub fn post_process_js_chunk(
             false
         });
 
-    let sources: &[Logger::Source] = c.parse_graph().input_files.items_source();
+    let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
-        let is_runtime = source_index == Index::RUNTIME.value;
+        let is_runtime = source_index == Index::RUNTIME.value();
 
         // TODO: extracated legal comments
 
@@ -801,7 +800,7 @@ fn add_binding_vars_to_module_info(
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
     r: &mut js_printer::renamer::Renamer<'_, '_>,
-    symbols: &js_ast::symbol::Map,
+    symbols: &bun_ast::symbol::Map,
 ) {
     match binding.data {
         B::B::BIdentifier(b) => {
@@ -856,19 +855,19 @@ pub fn generate_entry_point_tail_js<'a>(
                     stmts.push(Stmt::alloc(
                         // "export default require_foo();"
                         S::ExportDefault {
-                            default_name: js_ast::LocRef {
-                                loc: Logger::Loc::EMPTY,
+                            default_name: bun_ast::LocRef {
+                                loc: bun_ast::Loc::EMPTY,
                                 ref_: Some(ast.wrapper_ref),
                             },
                             value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(ast.wrapper_ref, Logger::Loc::EMPTY),
+                                    target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
                                     ..Default::default()
                                 },
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             )),
                         },
-                        Logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ));
                 }
                 _ => {
@@ -883,18 +882,18 @@ pub fn generate_entry_point_tail_js<'a>(
                                                 E::Call {
                                                     target: Expr::init_identifier(
                                                         ast.wrapper_ref,
-                                                        Logger::Loc::EMPTY,
+                                                        bun_ast::Loc::EMPTY,
                                                     ),
                                                     ..Default::default()
                                                 },
-                                                Logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                             ),
                                         },
-                                        Logger::Loc::EMPTY,
+                                        bun_ast::Loc::EMPTY,
                                     ),
                                     ..Default::default()
                                 },
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ));
                         } else {
                             // "init_foo();"
@@ -904,15 +903,15 @@ pub fn generate_entry_point_tail_js<'a>(
                                         E::Call {
                                             target: Expr::init_identifier(
                                                 ast.wrapper_ref,
-                                                Logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                             ),
                                             ..Default::default()
                                         },
-                                        Logger::Loc::EMPTY,
+                                        bun_ast::Loc::EMPTY,
                                     ),
                                     ..Default::default()
                                 },
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ));
                         }
                     }
@@ -932,7 +931,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         // export statement that's not top-level. Instead, we will export the CommonJS
                         // exports as a default export later on.
                         // PERF(port): was arena-backed ArrayList(ClauseItem) — profile in Phase B
-                        let mut items: Vec<js_ast::ClauseItem> = Vec::new();
+                        let mut items: Vec<bun_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
                             &c.graph.meta.items_cjs_export_copies()[source_index as usize];
 
@@ -1010,29 +1009,29 @@ pub fn generate_entry_point_tail_js<'a>(
                                                 binding: Binding::alloc(
                                                     temp_arena,
                                                     B::Identifier { r#ref: temp_ref },
-                                                    Logger::Loc::EMPTY,
+                                                    bun_ast::Loc::EMPTY,
                                                 ),
                                                 value: Some(Expr::init(
                                                     E::ImportIdentifier {
                                                         ref_: resolved_export_data.import_ref,
                                                         ..Default::default()
                                                     },
-                                                    Logger::Loc::EMPTY,
+                                                    bun_ast::Loc::EMPTY,
                                                 )),
                                             }],
                                         ),
                                         ..Default::default()
                                     },
-                                    Logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                 ));
 
-                                items.push(js_ast::ClauseItem {
-                                    name: js_ast::LocRef {
+                                items.push(bun_ast::ClauseItem {
+                                    name: bun_ast::LocRef {
                                         ref_: Some(temp_ref),
-                                        loc: Logger::Loc::EMPTY,
+                                        loc: bun_ast::Loc::EMPTY,
                                     },
-                                    alias: js_ast::StoreStr::new(alias),
-                                    alias_loc: Logger::Loc::EMPTY,
+                                    alias: bun_ast::StoreStr::new(alias),
+                                    alias_loc: bun_ast::Loc::EMPTY,
                                     ..Default::default()
                                 });
                             } else {
@@ -1059,12 +1058,12 @@ pub fn generate_entry_point_tail_js<'a>(
                                 //     foo
                                 //   };
                                 //
-                                items.push(js_ast::ClauseItem {
-                                    name: js_ast::LocRef {
+                                items.push(bun_ast::ClauseItem {
+                                    name: bun_ast::LocRef {
                                         ref_: Some(resolved_export_data.import_ref),
                                         loc: resolved_export_data.name_loc,
                                     },
-                                    alias: js_ast::StoreStr::new(alias),
+                                    alias: bun_ast::StoreStr::new(alias),
                                     alias_loc: resolved_export_data.name_loc,
                                     ..Default::default()
                                 });
@@ -1075,14 +1074,14 @@ pub fn generate_entry_point_tail_js<'a>(
                         // collected Vec into the linker arena (Zig used
                         // `c.arena().alloc`). The arena slice is also iterated
                         // below for the synthetic-default-export path.
-                        let items: &mut [js_ast::ClauseItem] =
+                        let items: &mut [bun_ast::ClauseItem] =
                             arena.alloc_slice_fill_iter(items.into_iter());
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
-                                items: js_ast::StoreSlice::new_mut(items),
+                                items: bun_ast::StoreSlice::new_mut(items),
                                 is_single_line: false,
                             },
-                            Logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ));
 
                         if flags.needs_synthetic_default_export && !had_default_export {
@@ -1106,7 +1105,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                             export_item.name.loc,
                                         )),
                                     },
-                                    Logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                 );
                                 // PERF(port): was appendAssumeCapacity
                                 VecExt::append(&mut properties, G::Property {
@@ -1123,8 +1122,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                         E::Function {
                                             func: G::Fn {
                                                 body: G::FnBody {
-                                                    loc: Logger::Loc::EMPTY,
-                                                    stmts: js_ast::StoreSlice::new_mut(fn_body),
+                                                    loc: bun_ast::Loc::EMPTY,
+                                                    stmts: bun_ast::StoreSlice::new_mut(fn_body),
                                                 },
                                                 ..Default::default()
                                             },
@@ -1132,25 +1131,25 @@ pub fn generate_entry_point_tail_js<'a>(
                                         export_item.alias_loc,
                                     )),
                                     kind: G::PropertyKind::Get,
-                                    flags: js_ast::Flags::Property::IsMethod.into(),
+                                    flags: bun_ast::Flags::Property::IsMethod.into(),
                                     ..Default::default()
                                 });
                             }
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
-                                    default_name: js_ast::LocRef {
+                                    default_name: bun_ast::LocRef {
                                         ref_: Some(Ref::NONE),
-                                        loc: Logger::Loc::EMPTY,
+                                        loc: bun_ast::Loc::EMPTY,
                                     },
                                     value: StmtOrExpr::Expr(Expr::init(
                                         E::Object {
                                             properties,
                                             ..Default::default()
                                         },
-                                        Logger::Loc::EMPTY,
+                                        bun_ast::Loc::EMPTY,
                                     )),
                                 },
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ));
                         }
                     }
@@ -1173,19 +1172,19 @@ pub fn generate_entry_point_tail_js<'a>(
                     stmts.push(Stmt::assign(
                         Expr::init(
                             E::Dot {
-                                target: Expr::init_identifier(c.unbound_module_ref, Logger::Loc::EMPTY),
+                                target: Expr::init_identifier(c.unbound_module_ref, bun_ast::Loc::EMPTY),
                                 name: b"exports".into(),
-                                name_loc: Logger::Loc::EMPTY,
+                                name_loc: bun_ast::Loc::EMPTY,
                                 ..Default::default()
                             },
-                            Logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                         Expr::init(
                             E::Call {
-                                target: Expr::init_identifier(ast.wrapper_ref, Logger::Loc::EMPTY),
+                                target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
                                 ..Default::default()
                             },
-                            Logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                     ));
                 }
@@ -1195,14 +1194,14 @@ pub fn generate_entry_point_tail_js<'a>(
                         S::SExpr {
                             value: Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(ast.wrapper_ref, Logger::Loc::EMPTY),
+                                    target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
                                     ..Default::default()
                                 },
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ),
                             ..Default::default()
                         },
-                        Logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ));
                 }
                 _ => {}
@@ -1287,7 +1286,7 @@ pub fn generate_entry_point_tail_js<'a>(
             print_options,
             import_records,
             &[Part {
-                stmts: js_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
+                stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()
             }],
             r,

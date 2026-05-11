@@ -5,16 +5,15 @@ use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_install::{Lockfile, PackageManager, PackageNameHash};
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
-use bun_logger as logger;
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::string::Builder as SemverBuilder;
 use bun_semver::String as SemverString;
 use bun_str::strings;
 
 use super::{package::Package, StringBuilder};
-// LAYERING NOTE: package.json is parsed by `bun_interchange::json` which
-// produces the T2 value-shaped `bun_logger::js_ast::Expr` (aliased as
-// `crate::bun_json::Expr`), NOT the full T4 `bun_js_parser::Expr`. JSON parse
+// LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
+// produces the T2 value-shaped `bun_ast::Expr` (aliased as
+// `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` is the allocator-free port of
 // Zig's `asString(lockfile.allocator)`.
 use crate::bun_json::{Expr, ExprData};
@@ -97,7 +96,7 @@ impl OverrideMap {
                 builder.count(entry.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal().expect("infallible: is_string checked"));
                 match &entry.value.as_ref().expect("infallible: prop has value").data {
                     ExprData::EString(s) => {
-                        builder.count(s.data);
+                        builder.count(&s.data);
                     }
                     ExprData::EObject(_) => {
                         if let Some(dot) = entry.value.as_ref().expect("infallible: prop has value").as_property(b".") {
@@ -127,8 +126,8 @@ impl OverrideMap {
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
-        log: &mut logger::Log,
-        json_source: &logger::Source,
+        log: &mut bun_ast::Log,
+        json_source: &bun_ast::Source,
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
@@ -148,8 +147,8 @@ impl OverrideMap {
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
-        source: &logger::Source,
-        log: &mut logger::Log,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
@@ -227,8 +226,8 @@ impl OverrideMap {
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
-        source: &logger::Source,
-        log: &mut logger::Log,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
@@ -269,7 +268,7 @@ impl OverrideMap {
                 continue;
             }
 
-            let version_str = value_str.data;
+            let version_str = value_str.data.slice();
             if version_str.starts_with(b"patch:") {
                 // TODO(dylan-conway): apply .patch files to packages
                 log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"resolutions\""));
@@ -307,9 +306,9 @@ pub fn parse_override_value(
     lockfile_dependencies: &[Dependency],
     package_manager: &mut PackageManager,
     root_package: &Package,
-    source: &logger::Source,
-    loc: logger::Loc,
-    log: &mut logger::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+    log: &mut bun_ast::Log,
     key: &[u8],
     value: &[u8],
     builder: &mut StringBuilder,

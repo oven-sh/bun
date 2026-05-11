@@ -39,9 +39,9 @@ use bun_core::fmt as bfmt;
 use bun_string::string_joiner::StringJoiner;
 use bun_string::strings;
 
-use bun_js_parser::ExportsKind;
-use bun_options_types::import_record::Flags as ImportRecordFlags;
-use bun_options_types::ImportKind;
+use bun_ast::ExportsKind;
+use bun_ast::ImportRecordFlags as ImportRecordFlags;
+use bun_ast::ImportKind;
 
 use crate::chunk::Content as ChunkContent;
 use crate::options::Loader;
@@ -434,7 +434,7 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
 //
 // PORT NOTE: Zig's `generateMarkdown` re-parses the metafile JSON via
 // `std.json.parseFromSlice(std.json.Value, …)` — a generic dynamic-tree parse.
-// The Rust crates available here (`bun_interchange::json`) only expose an
+// The Rust crates available here (`bun_parsers::json`) only expose an
 // AST-expr parser, so a small self-contained Value/parser is provided below
 // covering exactly the subset the metafile format uses.
 // ──────────────────────────────────────────────────────────────────────────

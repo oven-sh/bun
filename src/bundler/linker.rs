@@ -6,8 +6,8 @@ use std::io::Write as _;
 
 use bun_collections::VecExt;
 use bun_collections::HashMap;
-use bun_logger::Log;
-use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_ast::Log;
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_paths::{self, SEP};
 // PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -118,7 +118,7 @@ fn relative_paths_list_ptr() -> *mut ImportPathsList {
 // Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
 // `&'static [u8]` for `import_record.path.text` (the table stores `&'static
 // ZStr`). `BundleTarget` and `bun_resolve_builtins::Target` are the same
-// `bun_options_types::BundleEnums::Target`; ditto `ImportRecordTag` /
+// `bun_ast::Target`; ditto `ImportRecordTag` /
 // `import_record::Tag`, so no bridge is needed.
 mod hardcoded_module {
     use super::*;
@@ -568,7 +568,7 @@ impl Linker {
         log: &mut Log,
         target: BundleTarget,
         import_record: &mut ImportRecord,
-        source: &bun_logger::Source,
+        source: &bun_ast::Source,
     ) -> Result<bool, bun_core::Error> {
         if import_record
             .flags

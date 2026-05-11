@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
 use bun_str::ZigStringSlice;
 use bun_js_parser as js_ast;
-use bun_options_types::CodeCoverageOptions::{CodeCoverageOptions, Reporter, Reporters};
+use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
 use bun_paths::{self as bun_path, PathBuffer};
 use bun_paths::resolve_path;
 use bun_resolver::fs::FileSystem;
@@ -108,7 +108,7 @@ use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
 use crate::test_runner::bun_test as bun_test_mod;
 
 /// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
-pub use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
+pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -1678,7 +1678,7 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_str::St
     let loader_by_ext = VirtualMachine::get().as_mut().transpiler.options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
-    if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_bundler::options::Loader::File) {
+    if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
         return false;
     }
 
@@ -1807,7 +1807,7 @@ impl TestCommand {
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::Context); cast back to a typed `NonNull` —
+                // options_types::context); cast back to a typed `NonNull` —
                 // kept raw so `matches()` can write through it without
                 // laundering shared-ref provenance.
                 filter_regex: ctx
@@ -1884,8 +1884,8 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        js_ast::ast::expr::data::Store::create();
-        js_ast::ast::stmt::data::Store::create();
+        bun_ast::expr::data::Store::create();
+        bun_ast::stmt::data::Store::create();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
@@ -2615,8 +2615,8 @@ impl TestCommand {
         // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
         let vm_log = vm.log;
         scopeguard::defer! {
-            js_ast::Expr::data_store_reset();
-            js_ast::Stmt::data_store_reset();
+            bun_ast::Expr::data_store_reset();
+            bun_ast::Stmt::data_store_reset();
 
             if let Some(log_ptr) = vm_log {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.

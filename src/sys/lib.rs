@@ -1268,45 +1268,45 @@ mod nocancel {
         // x86-64-macOS and the Linux syscall path tolerate the non-variadic
         // form; arm64-macOS does not.
         #[link_name = "open$NOCANCEL"]
-        pub fn open(path: *const libc::c_char, flags: c_int, ...) -> c_int;
+        pub(crate) fn open(path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "openat$NOCANCEL"]
-        pub fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, ...) -> c_int;
+        pub(crate) fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "read$NOCANCEL"]
-        pub fn read(fd: c_int, buf: *mut libc::c_void, count: usize) -> isize;
+        pub(crate) fn read(fd: c_int, buf: *mut libc::c_void, count: usize) -> isize;
         #[link_name = "write$NOCANCEL"]
-        pub fn write(fd: c_int, buf: *const libc::c_void, count: usize) -> isize;
+        pub(crate) fn write(fd: c_int, buf: *const libc::c_void, count: usize) -> isize;
         #[link_name = "pread$NOCANCEL"]
-        pub fn pread(fd: c_int, buf: *mut libc::c_void, count: usize, off: libc::off_t) -> isize;
+        pub(crate) fn pread(fd: c_int, buf: *mut libc::c_void, count: usize, off: libc::off_t) -> isize;
         #[link_name = "pwrite$NOCANCEL"]
-        pub fn pwrite(fd: c_int, buf: *const libc::c_void, count: usize, off: libc::off_t) -> isize;
+        pub(crate) fn pwrite(fd: c_int, buf: *const libc::c_void, count: usize, off: libc::off_t) -> isize;
         #[link_name = "pwritev$NOCANCEL"]
-        pub fn pwritev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
+        pub(crate) fn pwritev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
         #[link_name = "preadv$NOCANCEL"]
-        pub fn preadv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
+        pub(crate) fn preadv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
         #[link_name = "readv$NOCANCEL"]
-        pub fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
+        pub(crate) fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
         #[link_name = "writev$NOCANCEL"]
-        pub fn writev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
+        pub(crate) fn writev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> isize;
         #[link_name = "recvfrom$NOCANCEL"]
-        pub fn recvfrom(fd: c_int, buf: *mut libc::c_void, len: usize, flags: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> isize;
+        pub(crate) fn recvfrom(fd: c_int, buf: *mut libc::c_void, len: usize, flags: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> isize;
         #[link_name = "sendto$NOCANCEL"]
-        pub fn sendto(fd: c_int, buf: *const libc::c_void, len: usize, flags: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> isize;
+        pub(crate) fn sendto(fd: c_int, buf: *const libc::c_void, len: usize, flags: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> isize;
         #[link_name = "poll$NOCANCEL"]
-        pub fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
         #[link_name = "ppoll$NOCANCEL"]
-        pub fn ppoll(fds: *mut libc::pollfd, nfds: libc::nfds_t, ts: *const libc::timespec, sigmask: *const libc::sigset_t) -> c_int;
+        pub(crate) fn ppoll(fds: *mut libc::pollfd, nfds: libc::nfds_t, ts: *const libc::timespec, sigmask: *const libc::sigset_t) -> c_int;
         // darwin.zig:12-17 + fd.zig:273 — remaining `$NOCANCEL` variants Bun
         // links against (close via Zig's std.c on Darwin).
         #[link_name = "close$NOCANCEL"]
-        pub fn close(fd: c_int) -> c_int;
+        pub(crate) fn close(fd: c_int) -> c_int;
         #[link_name = "fcntl$NOCANCEL"]
-        pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+        pub(crate) fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
         #[link_name = "connect$NOCANCEL"]
-        pub fn connect(sockfd: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> c_int;
+        pub(crate) fn connect(sockfd: c_int, addr: *const libc::sockaddr, alen: libc::socklen_t) -> c_int;
         #[link_name = "accept$NOCANCEL"]
-        pub fn accept(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> c_int;
+        pub(crate) fn accept(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> c_int;
         #[link_name = "accept4$NOCANCEL"]
-        pub fn accept4(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t, flags: libc::c_uint) -> c_int;
+        pub(crate) fn accept4(sockfd: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t, flags: libc::c_uint) -> c_int;
     }
 }
 

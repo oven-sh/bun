@@ -2,11 +2,11 @@ use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::FeatureFlags;
-use bun_js_parser::ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
-use bun_js_parser::ast::{B, E, G, S};
-use bun_js_parser::ast::BundledAst as JSAst;
-use bun_logger::{self as logger, Loc};
-use bun_options_types::import_record::Flags as ImportRecordFlags;
+use bun_ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
+use bun_ast::{B, E, G, S};
+use crate::BundledAst as JSAst;
+use bun_ast::{Loc};
+use bun_ast::ImportRecordFlags as ImportRecordFlags;
 
 use crate::chunk::Chunk;
 use crate::ungate_support::WrapKind;
@@ -43,7 +43,7 @@ pub fn convert_stmts_for_chunk(
     c: &mut LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
-    part_stmts: &[js_ast::Stmt],
+    part_stmts: &[bun_ast::Stmt],
     chunk: &mut Chunk,
     bump: &Bump,
     wrap: WrapKind,
@@ -88,7 +88,7 @@ pub fn convert_stmts_for_chunk(
         let mut stmt = *stmt_;
         'process_stmt: {
             match stmt.data {
-                js_ast::StmtData::SImport(s) => {
+                bun_ast::StmtData::SImport(s) => {
                     // "import * as ns from 'path'"
                     // "import {foo} from 'path'"
                     if c.should_remove_import_export_stmt(
@@ -108,7 +108,7 @@ pub fn convert_stmts_for_chunk(
                         continue 'stmt_loop;
                     }
                 }
-                js_ast::StmtData::SExportStar(s) => {
+                bun_ast::StmtData::SExportStar(s) => {
                     // "export * as ns from 'path'"
                     if let Some(alias) = &s.alias {
                         if c.should_remove_import_export_stmt(
@@ -209,7 +209,7 @@ pub fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: js_ast::ExprNodeList::from_owned_slice(
+                                                args: bun_ast::ExprNodeList::from_owned_slice(
                                                     args.into_boxed_slice(),
                                                 ),
                                                 ..Default::default()
@@ -328,7 +328,7 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SExportFrom(s) => {
+                bun_ast::StmtData::SExportFrom(s) => {
                     // "export {foo} from 'path'"
                     if c.should_remove_import_export_stmt(
                         stmts,
@@ -344,11 +344,11 @@ pub fn convert_stmts_for_chunk(
                     if should_strip_exports {
                         // Turn this statement into "import {foo} from 'path'"
                         // TODO: is this allocation necessary?
-                        let src_items: &[js_ast::ClauseItem] = s.items.slice();
+                        let src_items: &[bun_ast::ClauseItem] = s.items.slice();
                         let items = bump
-                            .alloc_slice_fill_default::<js_ast::ClauseItem>(src_items.len());
+                            .alloc_slice_fill_default::<bun_ast::ClauseItem>(src_items.len());
                         for (src, dest) in src_items.iter().zip(items.iter_mut()) {
-                            *dest = js_ast::ClauseItem {
+                            *dest = bun_ast::ClauseItem {
                                 alias: src.original_name,
                                 alias_loc: src.alias_loc,
                                 name: src.name,
@@ -375,7 +375,7 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SExportClause(_) => {
+                bun_ast::StmtData::SExportClause(_) => {
                     // "export {foo}"
 
                     if should_strip_exports {
@@ -390,7 +390,7 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SFunction(s) => {
+                bun_ast::StmtData::SFunction(s) => {
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.func.flags.contains(G::FnFlags::IsExport) {
                         // Be c areful to not modify the original statement
@@ -405,7 +405,7 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SClass(s) => {
+                bun_ast::StmtData::SClass(s) => {
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
@@ -420,7 +420,7 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SLocal(s) => {
+                bun_ast::StmtData::SLocal(s) => {
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
@@ -462,14 +462,14 @@ pub fn convert_stmts_for_chunk(
                     }
                 }
 
-                js_ast::StmtData::SExportDefault(s) => {
+                bun_ast::StmtData::SExportDefault(s) => {
                     // "export default foo"
 
                     if should_strip_exports {
                         match &s.value {
-                            js_ast::StmtOrExpr::Stmt(stmt2) => {
+                            bun_ast::StmtOrExpr::Stmt(stmt2) => {
                                 match stmt2.data {
-                                    js_ast::StmtData::SExpr(s2) => {
+                                    bun_ast::StmtData::SExpr(s2) => {
                                         // "export default foo;" => "var default = foo;"
                                         stmt = Stmt::alloc(
                                             S::Local {
@@ -490,7 +490,7 @@ pub fn convert_stmts_for_chunk(
                                             stmt.loc,
                                         );
                                     }
-                                    js_ast::StmtData::SFunction(s2) => {
+                                    bun_ast::StmtData::SFunction(s2) => {
                                         // "export default function() {}" => "function default() {}"
                                         // "export default function foo() {}" => "function foo() {}"
 
@@ -505,7 +505,7 @@ pub fn convert_stmts_for_chunk(
                                         stmt.data.s_function_mut().unwrap().func.name = Some(s.default_name);
                                     }
 
-                                    js_ast::StmtData::SClass(s2) => {
+                                    bun_ast::StmtData::SClass(s2) => {
                                         // "export default class {}" => "class default {}"
                                         // "export default class foo {}" => "class foo {}"
 
@@ -534,7 +534,7 @@ pub fn convert_stmts_for_chunk(
                                     ),
                                 }
                             }
-                            js_ast::StmtOrExpr::Expr(e) => {
+                            bun_ast::StmtOrExpr::Expr(e) => {
                                 stmt = Stmt::alloc(
                                     S::Local {
                                         decls: G::DeclList::from_slice(

@@ -64,7 +64,7 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values.push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                 Ok(v) => v,
                 Err(e) if e == err!("InvalidLoader") => {
-                    // TODO(b2-blocked): bun_bundler::options::Loader (strum::VariantNames derive)
+                    // TODO(b2-blocked): bun_ast::Loader (strum::VariantNames derive)
                     // — `bun_fmt::enum_tag_list::<Loader, false>()` requires the derive; print
                     // a placeholder list until lower-tier crate adds it.
                     pretty_errorln!(

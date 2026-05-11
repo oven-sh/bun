@@ -1,6 +1,5 @@
 use bun_core::Output;
 
-// D173: canonical enum + `from_env` live in bun_install (MOVE_DOWN(b0)); re-export
 // here so existing `crate::cli::shell_completions::Shell` paths keep working.
 pub use bun_install::ShellCompletions::Shell;
 

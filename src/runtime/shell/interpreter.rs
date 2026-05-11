@@ -331,7 +331,7 @@ pub struct Interpreter {
 
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
-    pub command_ctx: *mut bun_options_types::Context::ContextData,
+    pub command_ctx: *mut bun_options_types::context::ContextData,
 }
 
 #[repr(transparent)]
@@ -477,7 +477,7 @@ impl Interpreter {
     /// `command_ctx`); held as a raw pointer because the interpreter outlives
     /// any single `&mut ContextData` borrow.
     pub fn init(
-        ctx: *mut bun_options_types::Context::ContextData,
+        ctx: *mut bun_options_types::context::ContextData,
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
         jsobjs: Vec<crate::jsc::JSValue>,
@@ -662,7 +662,7 @@ impl Interpreter {
     /// ("Failed to run <basename>" vs "Failed to run script <name>") and in
     /// not bumping `standalone_shell` analytics.
     pub fn init_and_run_from_file(
-        ctx: &mut bun_options_types::Context::ContextData,
+        ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
         path: &[u8],
         src: &[u8],
@@ -681,7 +681,7 @@ impl Interpreter {
     /// directly (matching Zig); the `Result` only carries lexer/parser
     /// errors that escaped without a diagnostic (Zig `return err`).
     pub fn init_and_run_from_source(
-        ctx: &mut bun_options_types::Context::ContextData,
+        ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
         path_for_errors: &[u8],
         src: &[u8],
@@ -695,7 +695,7 @@ impl Interpreter {
     /// the parse-error diagnostic — the only two behavioural deltas between
     /// the two Zig spec functions.
     fn init_and_run_impl(
-        ctx: &mut bun_options_types::Context::ContextData,
+        ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
         label: &[u8],
         src: &[u8],
@@ -1546,7 +1546,7 @@ impl Interpreter {
         out: &mut Vec<u8>,
         original_int: u8,
         event_loop: EventLoopHandle,
-        command_ctx: *mut bun_options_types::Context::ContextData,
+        command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
     ) {
         let mut int = original_int;

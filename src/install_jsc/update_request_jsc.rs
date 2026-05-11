@@ -5,7 +5,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_install::package_manager::update_request::{self, UpdateRequest};
     use bun_install::Subcommand;
-    use bun_logger::Log;
+    use bun_ast::Log;
 
     // PERF(port): was arena bulk-free — profile in Phase B
     // PERF(port): was stack-fallback — profile in Phase B

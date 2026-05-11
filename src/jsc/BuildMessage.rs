@@ -1,13 +1,12 @@
 use std::io::Write as _;
 
-use bun_logger as logger;
 
 use crate::zig_string::ZigString;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 pub struct BuildMessage {
-    pub msg: logger::Msg,
+    pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
     // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc.
     pub logged: bool,
@@ -15,7 +14,7 @@ pub struct BuildMessage {
 
 impl Default for BuildMessage {
     fn default() -> Self {
-        Self { msg: logger::Msg::default(), logged: false }
+        Self { msg: bun_ast::Msg::default(), logged: false }
     }
 }
 
@@ -36,7 +35,7 @@ impl BuildMessage {
                 u32::try_from(i).expect("int cast"),
                 BuildMessage::create(
                     global,
-                    logger::Msg { data: cloned, kind: logger::Kind::Note, ..Default::default() },
+                    bun_ast::Msg { data: cloned, kind: bun_ast::Kind::Note, ..Default::default() },
                 )?,
             )?;
         }
@@ -78,7 +77,7 @@ impl BuildMessage {
     /// `BuildMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
-        msg: logger::Msg,
+        msg: bun_ast::Msg,
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
         let build_error = BuildMessage {
@@ -135,7 +134,7 @@ impl BuildMessage {
         Ok(object)
     }
 
-    pub fn generate_position_object(msg: &logger::Msg, global: &JSGlobalObject) -> JSValue {
+    pub fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
         let Some(location) = &msg.data.location else { return JSValue::NULL };
         let object = JSValue::create_empty_object(global, 7);
 

@@ -8,6 +8,7 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
@@ -24,7 +25,6 @@ use bun_bundler::transpiler::Transpiler;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::event_loop::EventLoop;
-use bun_logger as logger;
 use bun_options_types::schema::api;
 use bun_core::env::OperatingSystem;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
@@ -60,7 +60,7 @@ pub struct JSBundleCompletionTask {
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub env: *mut bun_dotenv::Loader<'static>,
-    pub log: logger::Log,
+    pub log: bun_ast::Log,
     pub cancelled: bool,
 
     pub html_build_task: Option<*mut html_bundle::Route>,
@@ -121,7 +121,7 @@ pub fn create_and_schedule_completion_task(
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
         env,
-        log: logger::Log::init(),
+        log: bun_ast::Log::init(),
         cancelled: false,
         html_build_task: None,
         result: BundleV2Result::Pending,
@@ -203,7 +203,7 @@ impl JSBundleCompletionTask {
             Err(e) => return promise.reject(global_this, Err(e)),
         };
         build_result.put(global_this, b"success", JSValue::FALSE);
-        match bun_logger_jsc::log_to_js_array(&self.log, global_this) {
+        match bun_ast_jsc::log_to_js_array(&self.log, global_this) {
             Ok(v) => build_result.put(global_this, b"logs", v),
             Err(e) => return promise.reject(global_this, Err(e)),
         };
@@ -212,7 +212,7 @@ impl JSBundleCompletionTask {
             // SAFETY: `plugin` is a live FFI handle for the duration of this task.
             let plugin = unsafe { &mut *plugin.as_ptr() };
             let rejection = if throw_on_error {
-                bun_logger_jsc::log_to_js_aggregate_error(
+                bun_ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
                     BunString::static_(b"Bundle failed"),
@@ -231,7 +231,7 @@ impl JSBundleCompletionTask {
 
         if !did_handle_callbacks {
             if throw_on_error {
-                let aggregate_error = bun_logger_jsc::log_to_js_aggregate_error(
+                let aggregate_error = bun_ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
                     BunString::static_(b"Bundle failed"),
@@ -579,7 +579,7 @@ impl JSBundleCompletionTask {
                 this.log
                     .add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!("{}", bstr::BStr::new(err.slice())),
                     );
                 // `this.result.value.deinit()` — owned fields drop with the
@@ -677,7 +677,7 @@ impl JSBundleCompletionTask {
                 let build_output = JSValue::create_empty_object(global_this, 4);
                 build_output.put(global_this, b"outputs", output_files_js);
                 build_output.put(global_this, b"success", JSValue::TRUE);
-                match bun_logger_jsc::log_to_js_array(&this.log, global_this) {
+                match bun_ast_jsc::log_to_js_array(&this.log, global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
                     Err(e) => return Ok(promise.reject(global_this, Err(e))?),
                 };
@@ -904,6 +904,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
             Some(a) => options::AllowUnresolved::from_strings(
                 a.keys().to_vec().into_boxed_slice(),
+                |p, s| bun_glob::r#match(p, s).matches(),
             ),
             None => options::AllowUnresolved::All,
         };
@@ -913,7 +914,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.compile_to_standalone_html = 'brk: {
-            if config.compile.is_none() || config.target != options::Target::Browser {
+            if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
             }
             // Only activate standalone HTML when all entrypoints are HTML files
@@ -982,7 +983,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;
     }
-    fn set_log(&mut self, log: logger::Log) {
+    fn set_log(&mut self, log: bun_ast::Log) {
         self.log = log;
     }
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>) {
@@ -1048,7 +1049,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             ..Default::default()
         };
 
-        let log: *mut logger::Log = &raw mut self.log;
+        let log: *mut bun_ast::Log = &raw mut self.log;
         // SAFETY: `self.env` is the per-VM dotenv loader stashed at
         // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
         // its arena lifetime, but `Transpiler::init` only stores the pointer).

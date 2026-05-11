@@ -2,7 +2,7 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_string::{OwnedString, String as BunString};
 
 use crate::JsResult;
@@ -94,10 +94,10 @@ pub fn testing_impl(
 ) -> JsResult<JSValue> {
     use bun_css::{
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
-        PrinterOptions, SrcIndex, StyleSheet,
+        PrinterOptions, StyleSheet,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
-    use bun_options_types::ImportRecord;
+    use bun_ast::ImportRecord;
 
     let arena = Arena::new();
     // PERF(port): was arena bulk-free — CSS parser allocates into this bump
@@ -161,7 +161,7 @@ pub fn testing_impl(
         source.slice(),
         parser_options,
         Some(&mut import_records),
-        SrcIndex::INVALID,
+        bun_ast::Index::INVALID,
     ) {
         Ok(ret) => {
             let (mut stylesheet, extra) = ret;
@@ -176,7 +176,7 @@ pub fn testing_impl(
                 }
             }
 
-            let symbols = bun_logger::symbol::Map::init_list(Default::default());
+            let symbols = bun_ast::symbol::Map::init_list(Default::default());
             let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
                 alloc,
@@ -288,10 +288,10 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_css::{
-        ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, SrcIndex, StyleAttribute,
+        ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
     };
     use bun_jsc::{LogJsc as _, StringJsc as _};
-    use bun_options_types::ImportRecord;
+    use bun_ast::ImportRecord;
 
     let arena = Arena::new();
     // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
@@ -336,7 +336,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         source.slice(),
         parser_options,
         &mut import_records,
-        SrcIndex::INVALID,
+        bun_ast::Index::INVALID,
     ) {
         Ok(stylesheet_) => {
             let mut stylesheet = stylesheet_;

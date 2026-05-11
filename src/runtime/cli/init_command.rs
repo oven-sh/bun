@@ -6,10 +6,9 @@ use bun_collections::IntegerBitSet;
 use bun_collections::bit_set::Range as BitRange;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, Environment, Error, Global, Output};
 use bun_js_parser as js_ast;
-use bun_js_parser::ast::StoreRef;
+use bun_ast::StoreRef;
 use bun_js_printer as js_printer;
-use bun_interchange::json;
-use bun_logger as logger;
+use bun_parsers::json;
 use bun_paths::{self, path_buffer_pool, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_str::{strings, MutableString, ZStr};
@@ -480,19 +479,19 @@ impl InitCommand {
         let mut did_load_package_json = false;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
-                let source = logger::Source::init_path_string(
+                let source = bun_ast::Source::init_path_string(
                     b"package.json",
                     package_json_contents.list.as_slice(),
                 );
-                let mut log = logger::Log::init();
-                // PORT NOTE: bun_interchange::json builds the T2
-                // (bun_logger::js_ast) value tree to avoid a T2->T4 dep
+                let mut log = bun_ast::Log::init();
+                // PORT NOTE: bun_parsers::json builds the T2
+                // (bun_ast::js_ast) value tree to avoid a T2->T4 dep
                 // cycle; lift to the full T4 (bun_js_parser) tree here so
                 // the rest of exec can use E::Object::{put,put_string,
                 // get_or_put_object,...} which only exist at T4.
-                let package_json_expr: js_ast::Expr =
+                let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => js_ast::Expr::from(e),
+                        Ok(e) => bun_ast::Expr::from(e),
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;
@@ -565,7 +564,7 @@ impl InitCommand {
                         continue;
                     }
                     let ext = bun_paths::extension(file.name.slice_u8());
-                    let Some(loader) = options::Loader::from_string(ext) else {
+                    let Some(loader) = bun_ast::Loader::from_string(ext) else {
                         continue;
                     };
                     if loader.is_java_script_like() {
@@ -580,9 +579,9 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = js_ast::Expr::init(
-                js_ast::E::Object::default(),
-                logger::Loc::EMPTY,
+            fields.object = bun_ast::Expr::init(
+                bun_ast::E::Object::default(),
+                bun_ast::Loc::EMPTY,
             )
             .data
             .e_object();
@@ -697,7 +696,7 @@ impl InitCommand {
                 object.put(
                     &bump,
                     b"private",
-                    js_ast::Expr::init(js_ast::E::Boolean { value: true }, logger::Loc::EMPTY),
+                    bun_ast::Expr::init(bun_ast::E::Boolean { value: true }, bun_ast::Loc::EMPTY),
                 )?;
             }
         }
@@ -760,7 +759,7 @@ impl InitCommand {
 
             if needs_dependencies {
                 let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    js_ast::Expr::init(js_ast::E::Object::default(), logger::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
@@ -776,7 +775,7 @@ impl InitCommand {
 
             if needs_dev_dependencies {
                 let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    js_ast::Expr::init(js_ast::E::Object::default(), logger::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
@@ -791,7 +790,7 @@ impl InitCommand {
 
             if needs_typescript_dependency {
                 let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    js_ast::Expr::init(js_ast::E::Object::default(), logger::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 peer_dependencies
                     .data
@@ -821,11 +820,11 @@ impl InitCommand {
 
             let print_result = js_printer::print_json(
                 &mut package_json_writer,
-                js_ast::Expr {
-                    data: js_ast::ExprData::EObject(fields.object.unwrap()),
-                    loc: logger::Loc::EMPTY,
+                bun_ast::Expr {
+                    data: bun_ast::ExprData::EObject(fields.object.unwrap()),
+                    loc: bun_ast::Loc::EMPTY,
                 },
-                &logger::Source::init_empty_file(b"package.json"),
+                &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
                     indent: Default::default(),
                     mangled_props: None,
@@ -898,7 +897,7 @@ impl InitCommand {
                         let loader = options::DEFAULT_LOADERS
                             .get(extname)
                             .copied()
-                            .unwrap_or(options::Loader::Ts);
+                            .unwrap_or(bun_ast::Loader::Ts);
                         let filename: &[u8] = if loader.is_type_script() {
                             b"tsconfig.json"
                         } else {
@@ -1142,8 +1141,8 @@ impl Assets {
 pub struct PackageJSONFields {
     pub name: Vec<u8>,
     pub type_: &'static [u8],
-    /// ARENA: allocated from `js_ast::Expr` Store via `initialize_store()`; no deinit.
-    pub object: Option<StoreRef<js_ast::E::Object>>,
+    /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
+    pub object: Option<StoreRef<bun_ast::E::Object>>,
     // TODO(port): Zig type was `[:0]const u8`; we drop the NUL sentinel and
     // re-terminate at FFI boundaries.
     pub entry_point: Vec<u8>,
@@ -1357,14 +1356,14 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = js_ast::E::object::Rope;
+        type Rope = bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
         // never frees; allocate in the process-lifetime CLI arena instead.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: js_ast::Expr::init(
-                js_ast::E::String::init(b"scripts"),
-                logger::Loc::EMPTY,
+            head: bun_ast::Expr::init(
+                bun_ast::E::String::init(b"scripts"),
+                bun_ast::Loc::EMPTY,
             ),
             next: core::ptr::null_mut(),
         });

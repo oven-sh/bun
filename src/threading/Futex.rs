@@ -176,7 +176,7 @@ mod darwin_impl {
     use super::*;
     use bun_sys::darwin as c;
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
         // https://github.com/apple/darwin-xnu/commit/d4061fb0260b3ed486147341b72468f836ed6c8f#diff-08f993cc40af475663274687b7c326cc6c3031e0db3ac8de7b24624610616be6
         //
@@ -252,7 +252,7 @@ mod darwin_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
         let flags = c::UL {
             op: c::ULOp::COMPARE_AND_WAIT,
             no_errno: true,

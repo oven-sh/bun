@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_collections::VecExt;
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
-use bun_logger::Loc;
+use bun_ast::Loc;
 use bun_sourcemap::{
     self as sourcemap, internal_source_map, line_offset_table, LineOffsetTable,
     LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
@@ -884,11 +884,11 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     v
 }
 
-// move-out: TYPE_ONLY → bun_options_types::CodeCoverageOptions::Fraction.
+// move-out: TYPE_ONLY → bun_options_types::code_coverage_options::Fraction.
 // Lifted into options_types so the CLI tier can hold `CodeCoverageOptions.fractions`
 // without depending on tier-6 sourcemap_jsc; re-exported here so coverage report
 // writers and the test runner share one definition.
-pub use bun_options_types::CodeCoverageOptions::Fraction;
+pub use bun_options_types::code_coverage_options::Fraction;
 
 #[derive(Clone, Copy, Default)]
 pub struct Block {

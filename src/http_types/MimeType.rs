@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use bun_string::strings;
 
-// PORT NOTE (cyclebreak): `by_loader` needs `bun_options_types::Loader`, but
+// PORT NOTE (cyclebreak): `by_loader` needs `bun_ast::Loader`, but
 // adding that dep creates a cargo cycle
 // (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
 // enum is `#[repr(u8)]` with stable discriminants (pinned by
@@ -511,7 +511,7 @@ impl MimeType {
 
 // TODO: improve this
 // PORT NOTE (cyclebreak): takes the `#[repr(u8)]` discriminant of
-// `bun_options_types::Loader` to avoid a same-tier cargo cycle (see
+// `bun_ast::Loader` to avoid a same-tier cargo cycle (see
 // `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
 pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
     use loader_disc as L;

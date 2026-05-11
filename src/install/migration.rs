@@ -1,13 +1,12 @@
 use bun_collections::VecExt;
 use bun_collections::{StringHashMap, StringArrayHashMap};
 use bun_core::{err, zstr, Error, Global, Output};
-use bun_logger as logger;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString, SlicedString};
 use bun_semver::query::token::Wildcard;
 use bun_str::strings;
 use bun_sys::{self, Fd, File, O};
-use bun_logger::js_ast::{E, Expr, ExprData};
+use bun_ast::{E, Expr, ExprData};
 
 use crate::dependency::{self, Dependency, DependencyExt as _, TagExt as _, Behavior, Tag as DepTag, Value as DepValue, Version as DepVersion};
 use crate::install::{self as Install, PackageID, PackageManager, ExternalStringList};
@@ -35,7 +34,7 @@ pub fn detect_and_load_other_lockfile<'a>(
     this: &'a mut Lockfile,
     dir: Fd,
     manager: &mut PackageManager,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
 ) -> LoadResult<'a> {
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
@@ -237,7 +236,7 @@ const DEPENDENCY_KEYS: [DepKey; 4] = [
 pub fn migrate_npm_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     data: &[u8],
     abs_path: &[u8],
 ) -> Result<LoadResult<'a>, Error> {
@@ -248,8 +247,8 @@ pub fn migrate_npm_lockfile<'a>(
     Install::initialize_store();
 
     let arena = bun_alloc::Arena::new();
-    let json_src = logger::Source::init_path_string(abs_path, data);
-    let json = bun_interchange::json::parse_utf8(&json_src, log, &arena)
+    let json_src = bun_ast::Source::init_path_string(abs_path, data);
+    let json = bun_parsers::json::parse_utf8(&json_src, log, &arena)
         .map_err(|_| err!("InvalidNPMLockfile"))?;
 
     if !matches!(json.data, ExprData::EObject(_)) {
@@ -520,7 +519,9 @@ pub fn migrate_npm_lockfile<'a>(
     for entry in packages_properties.iter() {
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
-        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else { unreachable!() };
+        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else {
+            unreachable!("npm lockfile: non-object Expr from JSON parser")
+        };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
@@ -614,7 +615,9 @@ pub fn migrate_npm_lockfile<'a>(
         let bin_value = if let Some(bin) = pkg.get(b"bin") {
             'bin: {
                 // we already check these conditions during counting
-                let ExprData::EObject(bin_obj) = &bin.data else { unreachable!() };
+                let ExprData::EObject(bin_obj) = &bin.data else {
+                    unreachable!("npm lockfile: non-object Expr from JSON parser")
+                };
                 debug_assert!(bin_obj.properties.len_u32() > 0);
 
                 // in npm lockfile, the bin is always an object, even if it is only a single one
@@ -689,7 +692,7 @@ pub fn migrate_npm_lockfile<'a>(
                         let ExprData::EString(s) = &item.data else {
                             return Err(err!("InvalidNPMLockfile"));
                         };
-                        arch.apply(s.data);
+                        arch.apply(&s.data);
                     }
                     break 'arch arch.combine();
                 }
@@ -710,7 +713,7 @@ pub fn migrate_npm_lockfile<'a>(
                         let ExprData::EString(s) = &item.data else {
                             return Err(err!("InvalidNPMLockfile"));
                         };
-                        os.apply(s.data);
+                        os.apply(&s.data);
                     }
                     break 'arch os.combine();
                 }
@@ -835,7 +838,9 @@ pub fn migrate_npm_lockfile<'a>(
     'pkg_loop: for entry in packages_properties.iter() {
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
-        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else { unreachable!() };
+        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else {
+            unreachable!("npm lockfile: non-object Expr from JSON parser")
+        };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 

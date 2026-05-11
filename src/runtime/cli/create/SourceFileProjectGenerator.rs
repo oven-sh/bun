@@ -13,7 +13,7 @@ use crate::api::bun::process::SignalCodeExt as _;
 use bun_collections::StringSet;
 use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
-use bun_logger::Source as LoggerSource;
+use bun_ast::Source as LoggerSource;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::fs::FileSystem;
@@ -546,7 +546,7 @@ pub fn generate_files(
 // Check if any source files contain Tailwind classes
 fn has_any_tailwind_classes_in_source_files(
     bundler: &BundleV2,
-    reachable_files: &[bun_bundler::Index],
+    reachable_files: &[bun_ast::Index],
 ) -> bool {
     let input_files = bundler.graph.input_files.slice();
     let sources = input_files.items_source();
@@ -561,7 +561,7 @@ fn has_any_tailwind_classes_in_source_files(
 
     for file in reachable_files {
         match loaders[file.get() as usize] {
-            bun_bundler::options::Loader::Tsx | bun_bundler::options::Loader::Jsx => {
+            bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let source: &LoggerSource = &sources[file.get() as usize];
                 let mut source_code: &[u8] = &source.contents;
 
@@ -591,7 +591,7 @@ fn has_any_tailwind_classes_in_source_files(
                     }
                 }
             }
-            bun_bundler::options::Loader::Html => {
+            bun_ast::Loader::Html => {
                 let source: &LoggerSource = &sources[file.get() as usize];
                 let source_code: &[u8] = &source.contents;
 
@@ -640,7 +640,7 @@ fn has_any_tailwind_classes_in_source_files(
 // Get list of shadcn components used in source files
 fn get_shadcn_components(
     bundler: &BundleV2,
-    reachable_files: &[bun_bundler::Index],
+    reachable_files: &[bun_ast::Index],
 ) -> Result<StringSet, bun_alloc::AllocError> {
     let input_files = bundler.graph.input_files.slice();
     let loaders = input_files.items_loader();
@@ -648,7 +648,7 @@ fn get_shadcn_components(
     let mut icons = StringSet::new();
     for file in reachable_files {
         match loaders[file.get() as usize] {
-            bun_bundler::options::Loader::Tsx | bun_bundler::options::Loader::Jsx => {
+            bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let import_records = &all[file.get() as usize];
                 for import_record in import_records.slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
@@ -681,7 +681,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
         let loader = loaders[entry_point_id.get() as usize];
         if matches!(
             loader,
-            bun_bundler::options::Loader::Jsx | bun_bundler::options::Loader::Tsx
+            bun_ast::Loader::Jsx | bun_ast::Loader::Tsx
         ) {
             let source: &LoggerSource = &sources[entry_point_id.get() as usize];
             let exports = &resolved_exports[entry_point_id.get() as usize];

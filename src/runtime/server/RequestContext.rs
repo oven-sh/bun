@@ -225,7 +225,6 @@ use std::io::Write as _;
 use bun_core::Output;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_collections::{ByteVecExt, VecExt};
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
@@ -371,13 +370,13 @@ mod shim {
     }
 }
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
-// live in `bun_options_types::schema::api` + `bun_js_parser::runtime`; both are
+// live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
 // still being filled in by concurrent ports. The DEBUG_MODE error-page paths
 // that use them stay ``-gated below.
 
 use bun_options_types::schema::api as Api;
 
-use bun_js_parser::runtime_full::Fallback;
+use bun_js_parser::parser::Runtime::Fallback;
 
 /// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
 /// `bun_jsc::schema_api::JsException` (carries `stack`, used by
@@ -883,14 +882,14 @@ where
     }
 
     // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
-    // (bun_options_types::schema::api / bun_js_parser::runtime) — debug-only HTML
+    // (bun_options_types::schema::api / bun_ast::runtime) — debug-only HTML
     // error page. Production hits `render_production_error` instead.
     
     pub fn render_default_error(
         &mut self,
         // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
         // PERF(port): was arena bulk-free — profile in Phase B
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
         fmt: core::fmt::Arguments<'_>, // TODO(port): Zig `comptime fmt: string, args: anytype`
@@ -920,7 +919,7 @@ where
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
                 build: {
-                    // `log.to_api()` returns `bun_logger::api::Log`; the schema
+                    // `log.to_api()` returns `bun_ast::api::Log`; the schema
                     // crate has its own `api::Log` (msgs omitted). Map fields.
                     let api_log = log.to_api();
                     Api::Log { warnings: api_log.warnings, errors: api_log.errors }

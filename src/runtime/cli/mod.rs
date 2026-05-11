@@ -13,7 +13,6 @@ use core::cell::Cell;
 
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
-use bun_logger as logger;
 use bun_str::strings;
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
@@ -231,7 +230,6 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
-// MOVE_DOWN(b0): bunfig parser moved to `bun_bunfig` so `bun_install` can load
 // bunfig.toml without a tier-6 dependency. Re-export under the original path so
 // existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
 pub use bun_bunfig::bunfig;
@@ -445,10 +443,10 @@ pub fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
 pub mod cli {
     use super::*;
 
-    pub use bun_options_types::CompileTarget::CompileTarget;
+    pub use bun_options_types::compile_target::CompileTarget;
 
     // Zig `var log_: logger.Log = undefined;` — process-global, init in start().
-    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<logger::Log>> =
+    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     pub fn start() {
@@ -463,7 +461,7 @@ pub mod cli {
         let _ = START_TIME.set(now);
         bun_core::set_start_time(now);
         // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(logger::Log::init()) };
+        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
 
         // TODO(b2-blocked): MainPanicHandler wiring. Full body in cli_body.rs.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
@@ -691,18 +689,18 @@ pub mod command {
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
     }
 
-    pub use bun_options_types::CommandTag::Tag;
-    pub use bun_options_types::CommandTag::{
+    pub use bun_options_types::command_tag::Tag;
+    pub use bun_options_types::command_tag::{
         ALWAYS_LOADS_CONFIG, LOADS_CONFIG, USES_GLOBAL_OPTIONS,
     };
-    pub use bun_options_types::Context::{
+    pub use bun_options_types::context::{
         Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
     };
 
     // Zig: `var context_data: ContextData = undefined;` — process-lifetime
     // storage, written exactly once in `create_context_data` during
     // single-threaded startup. The pointer to it is published via
-    // `bun_options_types::Context::set_global` (single source of truth).
+    // `bun_options_types::context::set_global` (single source of truth).
     static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -713,7 +711,7 @@ pub mod command {
     /// `&mut ContextData` is live (single-threaded CLI dispatch).
     #[inline]
     pub unsafe fn global_ctx() -> *mut ContextData {
-        bun_options_types::Context::global_ptr()
+        bun_options_types::context::global_ptr()
     }
 
     /// Zig: `pub fn get() Context` — process-global CLI context handle.
@@ -721,7 +719,7 @@ pub mod command {
     pub fn get() -> Context<'static> {
         // SAFETY: only called after `create_context_data` published the ctx
         // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *bun_options_types::Context::global_ptr() }
+        unsafe { &mut *bun_options_types::context::global_ptr() }
     }
 
     pub fn is_bun_x(argv0: &[u8]) -> bool {
@@ -858,7 +856,7 @@ pub mod command {
     /// `Context::set_global`. Shared by `create_context_data` and the
     /// standalone-graph fast path in `start()` (Zig: the bare
     /// `context_data = .{...}; global_cli_ctx = &context_data;` sequence).
-    fn write_context_no_parse(log: &mut logger::Log) -> &'static mut ContextData {
+    fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
         // SAFETY: single-threaded CLI startup; first and only write to
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
@@ -866,12 +864,12 @@ pub mod command {
         unsafe {
             (*CONTEXT_DATA.get()).write(ContextData {
                 args: bun_options_types::schema::api::TransformOptions::default(),
-                log: std::ptr::from_mut::<logger::Log>(log),
+                log: std::ptr::from_mut::<bun_ast::Log>(log),
                 start_time: crate::cli::start_time(),
                 ..Default::default()
             });
             let ctx = (*CONTEXT_DATA.get()).assume_init_mut();
-            bun_options_types::Context::set_global(ctx);
+            bun_options_types::context::set_global(ctx);
             ctx
         }
     }
@@ -889,7 +887,7 @@ pub mod command {
     #[track_caller]
     pub fn create_context_data(
         cmd: Tag,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<&'static mut ContextData, bun_core::Error> {
         // Single-threaded CLI startup; `CMD` is read by crash-reporter and
         // debug logging only. Write-once — ignore the (impossible) second-set Err.
@@ -924,7 +922,7 @@ pub mod command {
     /// Full subcommand dispatch. Body gated: every arm calls into a sibling
     /// `*_command.rs` that is itself still gated, plus `bun_bun_js::Run`,
     /// `StandaloneModuleGraph`, etc.
-    pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -1010,7 +1008,7 @@ pub mod command {
                 };
 
                 ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
-                use bun_options_types::GlobalCache::GlobalCache;
+                use bun_options_types::global_cache::GlobalCache;
                 if ctx.debug.global_cache == GlobalCache::auto {
                     ctx.debug.global_cache = GlobalCache::disable;
                 }
@@ -1271,7 +1269,7 @@ pub mod command {
         b"build", b"completions", b"help",
     ];
 
-    fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_getcompletes(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
@@ -1360,7 +1358,7 @@ pub mod command {
         Ok(())
     }
 
-    fn bun_create(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_str::ZStr;
@@ -1513,7 +1511,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 
-    fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    fn bun_info(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 

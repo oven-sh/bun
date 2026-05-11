@@ -438,7 +438,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // SAFETY: `vm.log` is set during VM init and live for the VM lifetime.
     let mut verbose: http::HTTPVerboseLevel = if vm
         .log
-        .map(|p| unsafe { p.as_ref() }.level.at_least(bun_logger::Level::Debug))
+        .map(|p| unsafe { p.as_ref() }.level.at_least(bun_ast::Level::Debug))
         .unwrap_or(false)
     {
         http::HTTPVerboseLevel::Headers

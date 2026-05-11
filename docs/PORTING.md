@@ -399,16 +399,16 @@ Never write these. The verify gate flags them as `logic-bug`.
 Rust enforces thread-safety at compile time via `Send`/`Sync` auto-traits.
 Most Zig locks were defensive or init-once; they disappear.
 
-| Zig                                                                                               | Rust                                                                                                                     |                                                                                                          |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `lock: Lock` + `has_loaded: bool` + data (lazy init)                                              | `static X: OnceLock<T>` (or `LazyLock<T>` if init is `const fn`-ish)                                                     | std handles double-checked locking                                                                       |
-| `lock: Lock` around a refcount                                                                    | `Arc<T>`                                                                                                                 | Arc's count is atomic                                                                                    |
-| `lock: Lock` + single-producer→consumer queue                                                     | `crossbeam::channel::{bounded,unbounded}` or `crossbeam::queue::SegQueue`                                                | lock-free                                                                                                |
-| `lock: Lock` protecting data that only the JS thread touches                                      | **delete the lock**; type is `!Sync` (contains `JSValue`/`*mut JSGlobalObject` which are `!Sync`), sharing won't compile | compiler proves it                                                                                       |
+| Zig                                                                                                 | Rust                                                                                                                     |                                                                                                          |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `lock: Lock` + `has_loaded: bool` + data (lazy init)                                                | `static X: OnceLock<T>` (or `LazyLock<T>` if init is `const fn`-ish)                                                     | std handles double-checked locking                                                                       |
+| `lock: Lock` around a refcount                                                                      | `Arc<T>`                                                                                                                 | Arc's count is atomic                                                                                    |
+| `lock: Lock` + single-producer→consumer queue                                                       | `crossbeam::channel::{bounded,unbounded}` or `crossbeam::queue::SegQueue`                                                | lock-free                                                                                                |
+| `lock: Lock` protecting data that only the JS thread touches                                        | **delete the lock**; type is `!Sync` (contains `JSValue`/`*mut JSGlobalObject` which are `!Sync`), sharing won't compile | compiler proves it                                                                                       |
 | `lock: Lock` + genuinely cross-thread mutable state (HTTP↔main, watcher↔main, worker-pool tables) | `parking_lot::Mutex<T>` (owns T) or `RwLock<T>`                                                                          | the ~20% that stay                                                                                       |
-| `Futex`/`Condition` wait                                                                          | `parking_lot::Condvar` + `Mutex`                                                                                         |                                                                                                          |
-| `std.atomic.Value(T)`                                                                             | `core::sync::atomic::Atomic*`                                                                                            | same orderings (`.monotonic`→`Relaxed`, `.acquire`→`Acquire`, `.release`→`Release`, `.seq_cst`→`SeqCst`) |
-| `bun.threading.Once`                                                                              | `std::sync::Once`                                                                                                        |                                                                                                          |
+| `Futex`/`Condition` wait                                                                            | `parking_lot::Condvar` + `Mutex`                                                                                         |                                                                                                          |
+| `std.atomic.Value(T)`                                                                               | `core::sync::atomic::Atomic*`                                                                                            | same orderings (`.monotonic`→`Relaxed`, `.acquire`→`Acquire`, `.release`→`Release`, `.seq_cst`→`SeqCst`) |
+| `bun.threading.Once`                                                                                | `std::sync::Once`                                                                                                        |                                                                                                          |
 
 **Never** `std::sync::Mutex` (poisoning is noise here); always `parking_lot`.
 **Never** put a lock _next to_ the data — `Mutex<T>` _owns_ T. If the Zig had
@@ -751,19 +751,3 @@ is the primitive. Callers stay in raw-ptr land.
 - Runtime-registered `AtomicPtr<fn>` / `OnceLock<fn>` hook with one consumer — fix the layering.
 - `*mut c_void` field that's downcast to one concrete type at every read site — fix the layering.
 - `let x = unsafe { &mut *Singleton::get() }; ...calls something...; x.use()` — re-get after the call or pass `*mut`.
-
-## SIMD (`@Vector` → `std::simd`)
-
-Zig's `@Vector(N, T)` maps to nightly `std::simd::Simd<T, N>` (we are on
-nightly). Add `#![feature(portable_simd)]` to the crate root. This is the
-preferred path for Rust-side hot loops; do NOT FFI to Highway from Rust
-(Highway is for the C++ side).
-
-```rust
-use std::simd::Simd;
-let v: Simd<i32, 64> = Simd::from_array(arr);
-```
-
-For `@Vector` reductions (`@reduce`), use `std::simd::prelude::*` and
-`.reduce_sum()` / `.reduce_or()` / etc. For lane-wise compare + mask, use
-`SimdPartialEq` → `Mask<_, N>`.

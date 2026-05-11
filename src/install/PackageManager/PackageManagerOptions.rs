@@ -1,6 +1,5 @@
 use bun_str::{strings, ZStr};
 use bun_core::{env_var, Output};
-use bun_logger as logger;
 use bun_paths::{self as Path, PathBuffer};
 use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
@@ -364,7 +363,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 impl Options {
     pub fn load(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
         maybe_cli: Option<CommandLineArguments>,
         // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —

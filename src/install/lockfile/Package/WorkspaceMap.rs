@@ -1,12 +1,11 @@
 use bun_collections::VecExt;
 use bun_collections::StringArrayHashMap;
-use bun_logger as logger;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP_STR};
 use bun_str::{strings, ZStr};
 use bun_glob as glob;
-use bun_logger::js_ast;
+use bun_ast as js_ast;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bstr::BStr;
 
@@ -25,7 +24,7 @@ type Map = StringArrayHashMap<Entry>;
 pub struct Entry {
     pub name: Box<[u8]>,
     pub version: Option<Box<[u8]>>,
-    pub name_loc: logger::Loc,
+    pub name_loc: bun_ast::Loc,
 }
 
 impl WorkspaceMap {
@@ -84,7 +83,7 @@ impl WorkspaceMap {
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &ZStr,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
 ) -> Result<Entry, bun_core::Error> {
     let workspace_json = json_cache
         .get_with_path(
@@ -136,10 +135,10 @@ impl WorkspaceMap {
     pub fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         arr: &js_ast::E::Array,
-        source: &logger::Source,
-        loc: logger::Loc,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
     ) -> Result<u32, bun_core::Error> {
         let workspace_names = self;
@@ -437,7 +436,7 @@ impl WorkspaceMap {
                             } else if err == bun_core::err!("MissingPackageName") {
                                 let _ = log.add_error_fmt(
                                     Some(source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         // TODO(port): comptime concat with sep_str — using runtime sep
                                         "Missing \"name\" from package.json in {}{}{}",
@@ -449,7 +448,7 @@ impl WorkspaceMap {
                             } else {
                                 let _ = log.add_error_fmt(
                                     Some(source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                         err.name(),

@@ -17,7 +17,6 @@ use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena �
 use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, FeatureFlags, output as Output};
-use bun_logger as Logger;
 use bun_sys::Fd;
 use bun_threading::{thread_pool as ThreadPoolLib, Mutex};
 
@@ -411,7 +410,7 @@ impl ThreadPool {
                 thread: ThreadPoolLib::Thread::current(),
                 data: None,
                 quit: false,
-                ast_memory_store: ManuallyDrop::new(js_ast::ASTMemoryAllocator::default()),
+                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
@@ -452,7 +451,7 @@ pub struct Worker {
     pub data: Option<WorkerData>,
     pub quit: bool,
 
-    pub ast_memory_store: ManuallyDrop<js_ast::ASTMemoryAllocator>,
+    pub ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
     pub has_created: bool,
     /// `ThreadPoolLib.Thread.current` — null when called off a pool thread.
     pub thread: *mut ThreadPoolLib::Thread,
@@ -481,9 +480,9 @@ impl Worker {
 }
 
 pub struct WorkerData {
-    // TODO(port): lifetime — TSV class ARENA (`&'arena mut Logger::Log`); kept
+    // TODO(port): lifetime — TSV class ARENA (`&'arena mut bun_ast::Log`); kept
     // raw because the arena is the sibling field `Worker.heap`.
-    pub log: *mut Logger::Log,
+    pub log: *mut bun_ast::Log,
     pub estimated_input_lines_of_code: usize,
     // PORT NOTE: lifetime erased to `'static` — the inner `&'a Arena` borrows
     // `Worker.heap`, which Rust can't express on a sibling field. Zig used
@@ -624,11 +623,11 @@ impl Worker {
         // passed fallback (see ASTMemoryAllocator::new doc).
         // SAFETY: arena points to the just-initialized self.heap.
         *self.ast_memory_store =
-            js_ast::ASTMemoryAllocator::new(unsafe { &*arena });
+            bun_ast::ASTMemoryAllocator::new(unsafe { &*arena });
         self.ast_memory_store.reset();
 
         // SAFETY: arena points to self.heap which outlives self.data.
-        let log: *mut Logger::Log = unsafe { (*arena).alloc(Logger::Log::init()) };
+        let log: *mut bun_ast::Log = unsafe { (*arena).alloc(bun_ast::Log::init()) };
         self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
         // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
@@ -658,7 +657,7 @@ impl Worker {
     /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
     /// be called once it is at its final address.
     fn initialize_transpiler(
-        log: *mut Logger::Log,
+        log: *mut bun_ast::Log,
         from: &Transpiler<'_>,
         arena: &'static ThreadLocalArena,
     ) -> Transpiler<'static> {
@@ -702,7 +701,7 @@ impl Worker {
     }
 }
 
-pub use bun_js_parser::Ref;
-pub use bun_js_parser::Index;
+use bun_ast::Ref;
+use bun_ast::Index;
 
 // ported from: src/bundler/ThreadPool.zig

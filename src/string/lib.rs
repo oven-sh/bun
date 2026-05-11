@@ -2216,7 +2216,7 @@ pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as u
 // move-in: printer (MOVE_DOWN ← src/js_printer/js_printer.zig)
 //
 // Self-contained string-quoting helpers used by `strings::format_escapes`,
-// `bun_sourcemap::Chunk` (JSON serialization), and `bun_js_parser::ast::Expr`.
+// `bun_sourcemap::Chunk` (JSON serialization), and `bun_ast::Expr`.
 // Breaking the `bun_js_printer → bun_sourcemap` cycle by hosting the
 // pure-string `quoteForJSON` here.
 // ──────────────────────────────────────────────────────────────────────────

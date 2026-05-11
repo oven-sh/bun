@@ -6,11 +6,11 @@ use bun_bundler::options;
 use bun_bundler::transpiler;
 use crate::cli::command::{Context, HotReload};
 use bun_core::{fmt as bun_fmt, Global, Output};
-use bun_js_parser::runtime::Runtime;
+use bun_js_parser::parser::Runtime;
 #[allow(unused_imports)]
-use bun_options_types::CompileTarget;
+use bun_options_types::compile_target;
 use bun_core::env::OperatingSystem;
-use bun_options_types::Context::MacroOptions;
+use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{resolve_path, PathBuffer};
 use bun_str::strings;
@@ -55,7 +55,7 @@ impl BuildCommand {
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
-        let log_ref: &mut bun_logger::Log = unsafe { &mut *log };
+        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -186,7 +186,10 @@ impl BuildCommand {
 
         this_transpiler.options.allow_unresolved =
             if let Some(a) = ctx.bundler_options.allow_unresolved.as_ref() {
-                options::AllowUnresolved::from_strings(a.clone().into_boxed_slice())
+                options::AllowUnresolved::from_strings(
+                    a.clone().into_boxed_slice(),
+                    |p, s| bun_glob::r#match(p, s).matches(),
+                )
             } else {
                 options::AllowUnresolved::All
             };
@@ -410,7 +413,7 @@ impl BuildCommand {
             }
             MacroOptions::Map(macros) => {
                 // PORT NOTE: `MacroOptions::Map` carries the
-                // `bun_options_types::Context::MacroMap` redeclaration; the
+                // `bun_options_types::context::MacroMap` redeclaration; the
                 // bundler-side `options.macro_remap` is the resolver crate's
                 // `StringArrayHashMap` shape. Re-key into that shape here.
                 use bun_resolver::package_json::{
@@ -439,7 +442,7 @@ impl BuildCommand {
             // and the divergent fields are set explicitly below. `client_transpiler`
             // is currently unused after this block (matching the Zig), so a
             // perfect field-wise copy is not load-bearing.
-            ct.options.target = options::Target::Browser;
+            ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
             // TODO(port): narrow error set
@@ -1135,7 +1138,7 @@ fn print_summary(
         let output_size = {
             let mut total_size: u64 = 0;
             for f in output_files.iter() {
-                if f.loader == options::Loader::Js {
+                if f.loader == bun_ast::Loader::Js {
                     total_size += f.size_without_sourcemap as u64;
                 }
             }

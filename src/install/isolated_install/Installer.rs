@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
@@ -660,7 +660,7 @@ impl TaskError {
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
             TaskError::Patching(_log) => {
-                // TODO(port): `bun_logger::Log` is non-Clone; the only caller of
+                // TODO(port): `bun_ast::Log` is non-Clone; the only caller of
                 // `TaskError::clone()` is `Yield::failure` which never receives a
                 // `Patching` payload (Patching is only constructed on the main
                 // thread via `on_package_extracted`, never passed through the

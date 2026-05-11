@@ -1,7 +1,6 @@
 use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
-use bun_logger as logger;
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 use bun_string::string_joiner::{StringJoiner, Watcher};
 
@@ -57,7 +56,7 @@ pub fn post_process_css_chunk(
         MultiArrayList::default();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
-    let sources: &[logger::Source] = c.parse_graph().input_files.items_source();
+    let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
 

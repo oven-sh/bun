@@ -13,22 +13,23 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::AllocError as OOM;
 use bun_collections::VecExt;
 use bun_core::Output;
-use bun_logger as logger;
-use bun_logger::{Loc, Log, Range, Source};
-use bun_options_types::{import_record, ImportKind, ImportRecord};
+use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{import_record, ImportKind, ImportRecord};
 use bun_string::{strings, MutableString};
 
-use bun_js_parser as js_ast;
-use bun_js_parser::ast::ast::{NamedExports, NamedImports, TopLevelSymbolToParts};
-use bun_js_parser::ast::base::{RefInt, RefTag};
-use bun_js_parser::ast::expr::IntoExprData;
-use bun_js_parser::ast::scope::Kind as ScopeKind;
-use bun_js_parser::ast::stmt::StatementData;
-use bun_js_parser::ast::symbol::{self, Kind as SymbolKind};
-use bun_js_parser::ast::{E, G, S};
-use bun_js_parser::{
-    self as js_parser, Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, Expr, ExportsKind,
-    LocRef, NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol, B,
+use bun_ast as js_ast;
+use bun_ast::ast_result::{NamedExports, NamedImports, TopLevelSymbolToParts};
+use bun_ast::base::{RefInt, RefTag};
+use bun_ast::expr::IntoExprData;
+use bun_ast::scope::Kind as ScopeKind;
+use bun_ast::stmt::StatementData;
+use bun_ast::symbol::{self, Kind as SymbolKind};
+use bun_ast::{E, G, S};
+use bun_js_parser as js_parser;
+use bun_ast::b::B;
+use bun_ast::{
+    Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, Expr, ExportsKind,
+    LocRef, NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 
 use crate::options;
@@ -69,8 +70,8 @@ pub mod parser_features {
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // stub for ImportScanner duck typing — Zig: `comptime options: js_parser.Parser.Options = .{ .jsx = .{}, .bundle = true }`
     // TODO(b2-ast-E): expose as trait assoc const once `ImportScannerHost` exists
-    pub fn options(&self) -> js_parser::ast::parser_entry::Options<'static> {
-        js_parser::ast::parser_entry::Options {
+    pub fn options(&self) -> js_parser::parse::parse_entry::Options<'static> {
+        js_parser::parse::parse_entry::Options {
             jsx: Default::default(),
             bundle: true,
             ..Default::default()
@@ -156,7 +157,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
-            original_name: js_ast::StoreStr::new(identifier),
+            original_name: bun_ast::StoreStr::new(identifier),
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
@@ -225,7 +226,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             if self.hot_reloading {
                 self.get_symbol(ref_).namespace_alias = Some(G::NamespaceAlias {
                     namespace_ref,
-                    alias: js_ast::StoreStr::new(import_id),
+                    alias: bun_ast::StoreStr::new(import_id),
                     import_record_index: record,
                     ..Default::default()
                 });
@@ -239,8 +240,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     loc: Loc::EMPTY,
                     ref_: Some(ref_),
                 },
-                original_name: js_ast::StoreStr::new(import_id),
-                alias: js_ast::StoreStr::new(import_id),
+                original_name: bun_ast::StoreStr::new(import_id),
+                alias: bun_ast::StoreStr::new(import_id),
                 alias_loc: Loc::EMPTY,
             };
         }
@@ -248,7 +249,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.append_stmt(S::Import {
             namespace_ref,
             import_record_index: record,
-            items: js_ast::StoreSlice::new_mut(clauses),
+            items: bun_ast::StoreSlice::new_mut(clauses),
             is_single_line: N < 1,
             ..Default::default()
         })?;
@@ -285,7 +286,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
     // every other field stores arena data via raw pointers / `StoreSlice`, so
     // nothing borrows `&mut self` past this call.
-    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<js_ast::BundledAst<'static>, OOM> {
+    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<crate::BundledAst<'static>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
@@ -301,7 +302,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         parts.append_assume_capacity(Part::default());
         parts.append_assume_capacity(Part {
             // overwritten below with the arena-backed copy (`stmts_in_bump`)
-            stmts: js_ast::StoreSlice::EMPTY,
+            stmts: bun_ast::StoreSlice::EMPTY,
             can_be_removed_if_unused: false,
 
             // pretend that every symbol was used
@@ -375,7 +376,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let in_stmts = core::mem::take(&mut self.stmts);
             for stmt in in_stmts.iter() {
                 match stmt.data {
-                    js_ast::StmtData::SImport(st) => {
+                    bun_ast::StmtData::SImport(st) => {
                         // ImportScanner: track the record + named_imports for
                         // each clause item so the linker can bind symbols.
                         self.import_records_for_current_part.push(st.import_record_index);
@@ -383,7 +384,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             let ref_ = item.name.ref_.expect("infallible: ref bound");
                             self.named_imports.put(
                                 ref_,
-                                js_ast::NamedImport {
+                                bun_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: Some(item.alias_loc),
                                     namespace_ref: Some(st.namespace_ref),
@@ -399,7 +400,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // import per record), so just forward the stmt.
                         hmr_stmts.push(*stmt);
                     }
-                    js_ast::StmtData::SLocal(mut st) if st.is_export => {
+                    bun_ast::StmtData::SLocal(mut st) if st.is_export => {
                         // convertStmt: strip `export`, then visitBindingToExport
                         // for each decl. AstBuilder only emits `B.Identifier`
                         // bindings with `kind != .import` and
@@ -426,7 +427,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         }
                         hmr_stmts.push(*stmt);
                     }
-                    js_ast::StmtData::SExportDefault(st) => {
+                    bun_ast::StmtData::SExportDefault(st) => {
                         // ImportScanner: recordExport("default", default_name.ref)
                         let default_ref =
                             st.default_name.ref_.expect("infallible: ref bound");
@@ -463,7 +464,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                 decls: G::DeclList::from_slice(&[G::Decl {
                                     binding: Binding::alloc(
                                         self.bump,
-                                        js_ast::ast::b::Identifier { r#ref: temp_id },
+                                        bun_ast::b::Identifier { r#ref: temp_id },
                                         stmt.loc,
                                     ),
                                     value: Some(value),
@@ -519,14 +520,14 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             }
             // Head-part bookkeeping (only `parts[0]`, which is the empty
             // namespace-export part): mark dead and depend on `parts[1]`.
-            parts.mut_(0).tag = js_ast::PartTag::DeadDueToInlining;
-            parts.mut_(0).dependencies.push(js_ast::Dependency {
+            parts.mut_(0).tag = bun_ast::PartTag::DeadDueToInlining;
+            parts.mut_(0).dependencies.push(bun_ast::Dependency {
                 part_index: 1,
-                source_index: js_ast::Index { value: self.source_index },
+                source_index: bun_ast::Index(self.source_index),
             });
 
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
-            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
+            parts.mut_(1).stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
             // Non-HMR path: mirror `ImportScanner.scan(AstBuilder, p, stmts,
             // false, false, {})` for the stmt shapes AstBuilder callers emit
@@ -539,13 +540,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let in_stmts = core::mem::take(&mut self.stmts);
             for stmt in in_stmts.iter() {
                 match stmt.data {
-                    js_ast::StmtData::SImport(st) => {
+                    bun_ast::StmtData::SImport(st) => {
                         self.import_records_for_current_part.push(st.import_record_index);
                         for item in st.items.slice() {
                             let ref_ = item.name.ref_.expect("infallible: ref bound");
                             self.named_imports.put(
                                 ref_,
-                                js_ast::NamedImport {
+                                bun_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: Some(item.name.loc),
                                     namespace_ref: Some(st.namespace_ref),
@@ -557,13 +558,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             )?;
                         }
                     }
-                    js_ast::StmtData::SLocal(st) if st.is_export => {
+                    bun_ast::StmtData::SLocal(st) if st.is_export => {
                         for i in 0..st.decls.len_u32() as usize {
                             let binding = st.decls.slice()[i].binding;
                             self.record_exported_binding(binding);
                         }
                     }
-                    js_ast::StmtData::SExportDefault(st) => {
+                    bun_ast::StmtData::SExportDefault(st) => {
                         let default_ref =
                             st.default_name.ref_.expect("infallible: ref bound");
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
@@ -572,11 +573,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 }
             }
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(in_stmts.as_slice());
-            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
+            parts.mut_(1).stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts.mut_(1).scopes = js_ast::StoreSlice::new_mut(
+        parts.mut_(1).scopes = bun_ast::StoreSlice::new_mut(
             self.bump.alloc_slice_copy(self.scopes.as_slice()),
         );
         parts.mut_(1).import_record_indices = Vec::<u32>::move_from_list(
@@ -587,7 +588,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // arena POD; Zig bitwise-copied it (`module_scope.*`).
         let module_scope_value: Scope = unsafe { core::ptr::read(module_scope) };
 
-        Ok(js_ast::BundledAst {
+        Ok(crate::BundledAst {
             parts,
             module_scope: module_scope_value,
             symbols: symbol::List::move_from_list(core::mem::take(&mut self.symbols)),
@@ -603,7 +604,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
             top_level_symbols_to_parts,
-            char_freq: js_ast::ast::CharFreq { freqs: [0; 64] },
+            char_freq: bun_ast::CharFreq { freqs: [0; 64] },
             flags: Default::default(),
             target,
             top_level_await_keyword: Range::NONE,
@@ -692,9 +693,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 }
 
-pub use bun_js_parser::Ref;
+use bun_ast::Ref;
 
-pub use bun_js_parser::Index;
+use bun_ast::Index;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;

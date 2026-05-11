@@ -1,13 +1,12 @@
 use bun_collections::VecExt;
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_interchange::json5;
+use bun_parsers::json5;
 use bun_jsc::{
     self as jsc, wtf, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
 };
 use bun_js_parser::{self as ast, lexer};
-use bun_logger as logger;
-use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
+use bun_ast::{expr::Data as ExprData, E, Expr};
 use bun_str::{String as BunString, ZigString};
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
@@ -70,7 +69,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // TODO(port): ASTMemoryAllocator scope — the Zig enters a typed-slab scope so
     // Expr/Stmt nodes allocate from `bump`. Mirror whatever `bun_js_parser`
     // exposes for this (likely `ast::MemoryAllocator::enter(&bump)`).
-    let mut ast_memory_allocator = ast::ASTMemoryAllocator::new(&bump);
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&bump);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
@@ -90,9 +89,9 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
     };
 
-    let mut log = logger::Log::init();
+    let mut log = bun_ast::Log::init();
 
-    let source = logger::Source::init_path_string(b"input.json5", input.slice());
+    let source = bun_ast::Source::init_path_string(b"input.json5", input.slice());
 
     let root = match json5::JSON5Parser::parse(&source, &mut log, &bump) {
         Ok(r) => r,
@@ -477,7 +476,7 @@ fn hex_digit(v: u16) -> u8 {
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
     // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_js_parser::ast::e::String` Zig-side). The JSON5 parser never builds
+    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
     // ropes, so the simple slice → JS path is sufficient.
     if str.is_utf16 {
         let zig = ZigString::init_utf16(str.slice16());

@@ -1,7 +1,7 @@
-// PORT NOTE: the install crate's JSON layer routes through `bun_logger::js_ast`
+// PORT NOTE: the install crate's JSON layer routes through `bun_ast::js_ast`
 // (see `crate::bun_json`), not the full `bun_js_parser` AST. `from_expr` is
 // only ever fed nodes from the lockfile JSON parse, so type against that.
-use bun_logger::js_ast::{Expr, ExprData};
+use bun_ast::{Expr, ExprData};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

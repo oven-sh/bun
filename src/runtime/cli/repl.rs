@@ -1598,7 +1598,7 @@ impl<'a> Repl<'a> {
         let arena = bun_alloc::Arena::new();
 
         // Set up parser options with repl_mode enabled
-        let mut opts = bun_js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone().into(), bun_js_parser::options::Loader::Tsx);
+        let mut opts = bun_js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone().into(), bun_ast::Loader::Tsx);
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
@@ -1615,15 +1615,15 @@ impl<'a> Repl<'a> {
         // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
-            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::ast::Macro::MacroContext::init(&mut vm_mut(vm).transpiler));
+            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(&mut vm_mut(vm).transpiler));
         }
         opts.macro_context = vm_mut(vm).transpiler.macro_context.as_mut();
 
         // Create log for errors
-        let mut log = bun_logger::Log::init();
+        let mut log = bun_ast::Log::init();
 
         // Create source
-        let source = bun_logger::Source::init_path_string(b"[repl]", processed_code);
+        let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
         let mut parser = match bun_js_parser::Parser::init(
@@ -1657,7 +1657,7 @@ impl<'a> Repl<'a> {
         // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
-        let symbols_map = bun_js_parser::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        let symbols_map = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
         if bun_js_printer::print_ast::<_, /* ASCII_ONLY */ true, /* GENERATE_SOURCE_MAP */ false>(
             &mut buffer_printer,

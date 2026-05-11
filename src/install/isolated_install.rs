@@ -37,7 +37,6 @@ use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 use bun_semver as semver;
-use bun_logger as logger;
 use bstr::BStr;
 
 use crate::analytics;
@@ -2255,7 +2254,7 @@ pub fn install_isolated_packages(
 
                     if !missing_from_cache {
                         if let installer::PatchInfo::Patch(patch) = &patch_info {
-                            let mut patch_log = logger::Log::init();
+                            let mut patch_log = bun_ast::Log::init();
                             installer.apply_package_patch(entry_id, patch, &mut patch_log);
                             if patch_log.has_errors() {
                                 // monotonic is okay because we haven't started the task yet (it isn't running

@@ -104,7 +104,7 @@ bun_spawn::link_impl_ProcessExit! {
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`
             // drops that ref, then drop the Box.
-            (*(*this).process.as_ptr()).deref();
+            Process::deref((*this).process.as_ptr());
             drop(bun_core::heap::take(this));
             INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
         },
@@ -203,7 +203,7 @@ fn spawn(
                 // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
                 // then reclaim the Box (Zig: `bun.destroy(self)`).
                 unsafe {
-                    (*process.as_ptr()).deref();
+                    Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
                 }
                 // fd0_guard (errdefer at the top) closes fds[0]; don't double-close here.

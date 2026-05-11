@@ -4,7 +4,6 @@ use bun_io as Async;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, zstr, Output};
 use bun_js_parser as js_ast;
-use bun_logger as Logger;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{dispatch, FileMap, JSBundlerPlugin};
@@ -101,7 +100,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// Zig: `completion.result = .{ .err | .value }`
     fn set_result(&mut self, result: BundleV2Result);
     /// Zig: `completion.log = out_log`
-    fn set_log(&mut self, log: Logger::Log);
+    fn set_log(&mut self, log: bun_ast::Log);
     /// Zig: `completion.transpiler = this`
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
     /// Zig: `completion.plugins`
@@ -309,8 +308,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         let heap = Arena::new();
 
         let bump = &heap;
-        let ast_memory_store: &mut js_ast::ASTMemoryAllocator =
-            bump.alloc(js_ast::ASTMemoryAllocator::new(bump));
+        let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
+            bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
         ast_memory_store.reset();
         ast_memory_store.push();
 
@@ -343,7 +342,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // path's `set_result(Err)` + complete happens in `thread_main`). The
         // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
         // (it owns `this`).
-        let mut out_log = Logger::Log::init();
+        let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
         // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
@@ -378,7 +377,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // global-heap* state, so there is no double free.
         unsafe {
             core::ptr::drop_in_place(transpiler_ptr);
-            core::ptr::drop_in_place(ast_memory_store as *mut js_ast::ASTMemoryAllocator);
+            core::ptr::drop_in_place(ast_memory_store as *mut bun_ast::ASTMemoryAllocator);
         }
 
         run
@@ -450,8 +449,8 @@ pub mod singleton {
     }
 }
 
-pub use bun_js_parser::Index;
-pub use bun_js_parser::Ref;
+use bun_ast::Index;
+use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;

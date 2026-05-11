@@ -2,11 +2,9 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use bun_collections::{VecExt, BoundedArray};
-use bun_logger::{Loc, Log, Range, Source};
+use bun_ast::{Loc, Log, Range, Source};
 use bun_lolhtml_sys::lol_html as lol;
-use bun_options_types::{
-    ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, BundleEnums::Index as AstIndex,
-};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;

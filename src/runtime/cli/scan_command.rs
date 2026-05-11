@@ -64,7 +64,7 @@ impl ScanCommand {
         {
             let pm_ptr: *mut PackageManager = manager;
             // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-            let log: &mut bun_logger::Log = unsafe { &mut *(*pm_ptr).log };
+            let log: &mut bun_ast::Log = unsafe { &mut *(*pm_ptr).log };
             // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };

@@ -62,7 +62,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
         // printer's scratch buffers (Zig threaded the parser arena).
         let bump = Bump::new();
         let mut arraylist: Vec<u8> = Vec::new();
-        let symbols = bun_logger::symbol::Map::init_list(Default::default());
+        let symbols = bun_ast::symbol::Map::init_list(Default::default());
         let mut printer = css::Printer::new(
             &bump,
             bun_alloc::ArenaVec::<u8>::new_in(&bump),
@@ -479,7 +479,7 @@ where
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
                     // blocked_on: ParserOptions::warn_fmt_with_notes
-                    // (`bun_logger::Log` notes-ownership API). Until that
+                    // (`bun_ast::Log` notes-ownership API). Until that
                     // lands the note ("The parent selector is not a single
                     // class selector because of the syntax here:" at
                     // `info.to_logger_location(options.filename)`) is dropped;

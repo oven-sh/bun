@@ -9,11 +9,11 @@ use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 // PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
 // but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
-// the lower-tier `bun_logger::js_ast` shape (re-exported via `crate::bun_json`).
+// the lower-tier `bun_ast::js_ast` shape (re-exported via `crate::bun_json`).
 // Importing `bun_js_parser` here forced a higher-tier dep and produced
 // distinct-`Expr`-type errors at every call site, so use the T2 type directly.
 use crate::bun_json::{E, Expr, ExprData};
-use bun_logger::{Log, Source};
+use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
 
@@ -114,7 +114,7 @@ impl CatalogMap {
                     let key = item.key.as_ref().expect("infallible: prop has key");
                     builder.count(key.as_utf8_string_literal().expect("infallible: is_string checked"));
                     if let ExprData::EString(version_str) = &item.value.as_ref().expect("infallible: prop has value").data {
-                        builder.count(version_str.data);
+                        builder.count(&version_str.data);
                     }
                 }
             }
@@ -132,7 +132,7 @@ impl CatalogMap {
                             if let ExprData::EString(version_str) =
                                 &item.value.as_ref().expect("infallible: prop has value").data
                             {
-                                builder.count(version_str.data);
+                                builder.count(&version_str.data);
                             }
                         }
                     }
@@ -168,7 +168,7 @@ impl CatalogMap {
                     let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
 
                     if let ExprData::EString(version_str) = &value.data {
-                        let version_literal = builder.append::<String>(version_str.data);
+                        let version_literal = builder.append::<String>(&version_str.data);
 
                         let buf = builder.string_bytes.as_slice();
                         let version_sliced = version_literal.sliced(buf);
@@ -230,7 +230,7 @@ impl CatalogMap {
                                 builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
                             if let ExprData::EString(version_str) = &value.data {
                                 let version_literal =
-                                    builder.append::<String>(version_str.data);
+                                    builder.append::<String>(&version_str.data);
                                 let buf = builder.string_bytes.as_slice();
                                 let version_sliced = version_literal.sliced(buf);
 

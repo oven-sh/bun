@@ -26,7 +26,7 @@ use bun_jsc::{
 use bun_bundler::options_impl::TargetExt as _;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_str::{self as str, strings, OwnedString, String as BunString, ZStr};
 use bun_jsc::StringJsc as _;
@@ -37,9 +37,10 @@ use bun_wyhash::{hash, Wyhash};
 
 use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId, Route};
-use bun_bundler::{self as bundler, options::Loader, BundleV2, Transpiler};
+use bun_bundler::{self as bundler, BundleV2, Transpiler};
+use bun_ast::Loader;
 use bun_http::{Method, MimeType};
-use bun_options_types::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord};
 use crate::api::server::StaticRoute;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
@@ -71,7 +72,7 @@ impl JsPromiseStrongDeinitExt for jsc::JSPromiseStrong {
 // methods on the keystone `bake::Framework` (ported into `bake/mod.rs` from
 // `bake_body::Framework` so this file can call them without the trait shim).
 
-/// Shim: `bun_logger::Log::to_js_aggregate_error` — body lives in `bun_logger_jsc`.
+/// Shim: `bun_ast::Log::to_js_aggregate_error` — body lives in `bun_logger_jsc`.
 trait LogToJsAggregateErrorExt {
     fn to_js_aggregate_error(
         &mut self,
@@ -85,7 +86,7 @@ impl LogToJsAggregateErrorExt for Log {
         global: &JSGlobalObject,
         msg: BunString,
     ) -> JsResult<JSValue> {
-        bun_logger_jsc::log_to_js_aggregate_error(self, global, msg)
+        bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
     }
 }
 pub use crate::bake::dev_server::HotReloadEvent;
@@ -816,8 +817,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         dev.ssr_transpiler_mut().resolver.watcher = Some(resolve_watcher);
     }
 
-    debug_assert!(dev.server_transpiler().resolver.opts.target != bundler::options::Target::Browser);
-    debug_assert!(dev.client_transpiler().resolver.opts.target == bundler::options::Target::Browser);
+    debug_assert!(dev.server_transpiler().resolver.opts.target != bun_ast::Target::Browser);
+    debug_assert!(dev.client_transpiler().resolver.opts.target == bun_ast::Target::Browser);
 
     // PORT NOTE: reborrow `framework` and the two resolvers via `dev_ptr` so
     // borrowck doesn't see three overlapping `&mut dev`.
@@ -2669,9 +2670,9 @@ impl DevServer {
 
     fn generate_javascript_code_for_html_file(
         &mut self,
-        index: bun_js_parser::ast::Index,
+        index: bun_ast::Index,
         import_records: &[Vec<ImportRecord>],
-        input_file_sources: &[bun_logger::Source],
+        input_file_sources: &[bun_ast::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
         // PERF(port): was stack-fallback (65536)
@@ -2969,8 +2970,8 @@ impl DevServer {
         // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
         // and stable across the move of the `Bump` handle, so erase the borrow to a
         // raw pointer (same rationale as `event_loop` below).
-        let ast_memory_store: *mut bun_js_parser::ASTMemoryAllocator =
-            heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
+        let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
+            heap.alloc(bun_ast::ASTMemoryAllocator::default());
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
         // and `_ast_scope` is dropped before `bv2` at end of this fn.
@@ -3422,11 +3423,11 @@ impl DevServer {
 
 pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
-    pub sources: &'a [bun_logger::Source],
+    pub sources: &'a [bun_ast::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [Vec<ImportRecord>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
-    pub scbs: bun_js_parser::ast::server_component_boundary::Slice<'a>,
+    pub scbs: bun_ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
     /// Which files have a server-component boundary.
@@ -3463,9 +3464,9 @@ impl<'a> HotUpdateContext<'a> {
     pub fn get_cached_index(
         &mut self,
         side: bake::Side,
-        i: impl Into<bun_js_parser::ast::Index>,
+        i: impl Into<bun_ast::Index>,
     ) -> &mut CachedFileIndex {
-        let i: bun_js_parser::ast::Index = i.into();
+        let i: bun_ast::Index = i.into();
         let len = self.sources.len();
         let start = match side {
             bake::Side::Client => 0,
@@ -3709,7 +3710,7 @@ pub fn finalize_bundle(
     for (chunk, metadata) in css_chunks_mut.iter_mut().zip(result.css_file_list.values()) {
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
+        let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
         // PORT NOTE: `IntermediateOutput::code` takes `&mut self` (a field of
         // `*chunk`) plus `chunk: &mut Chunk` and `chunks: &mut [Chunk]`;
@@ -3781,7 +3782,7 @@ pub fn finalize_bundle(
     }
 
     for chunk in html_chunks_mut.iter_mut() {
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
+        let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html { code: compile_result_code, script_injection_offset: compile_result_offset, .. } =
             &chunk.compile_results_for_chunk[0]
         else { unreachable!() };
@@ -3858,12 +3859,12 @@ pub fn finalize_bundle(
         }
     }
     for chunk in html_chunks_mut.iter() {
-        let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
+        let index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
     }
     for chunk in css_chunks_mut.iter() {
-        let entry_index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
+        let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Css, entry_index)?;
     }

@@ -5,7 +5,7 @@ use crate::options::Loader;
 // the B-1 stub `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
-use bun_logger::fs;
+use bun_paths::fs;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_string::{PathString, String as BunString};
@@ -25,7 +25,7 @@ pub struct OutputFile {
     // TODO(port): `src_path.text` ownership — Zig `deinit` freed it via
     // `default_allocator` even though it's a field of `Fs.Path`. Ensure
     // `bun_fs::Path` owns `text` so dropping `OutputFile` frees it implicitly.
-    pub src_path: fs::Path,
+    pub src_path: fs::Path<'static>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -299,7 +299,7 @@ pub struct SavedFile {
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
         // PORT NOTE: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
-        // The Rust `bun_logger::fs::Path` and `bun_resolver::fs::Path<'static>` are
+        // The Rust `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
         // distinct nominal types with identical layout; re-init from `text` (the
         // resolver path borrows arena/static memory, so the `'static` bound holds).
         let src_path = fs::Path::init(pending.path_const().expect("path").text);
@@ -380,7 +380,7 @@ impl OutputFile {
         });
         // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
         // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
-        // `OutputFile` *owns* `src_path.text`. `bun_logger::fs::Path` currently
+        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` currently
         // borrows `&'static [u8]`, so ownership of this `Box<[u8]>` is parked
         // (logically held by `OutputFile`, but with no Drop hook to reclaim it
         // yet — see TODO). Do NOT route through `linker::relative_paths_list` —

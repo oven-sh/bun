@@ -2,7 +2,7 @@ use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::StringHashMap;
+use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
 use bun_paths::{self as path, AbsPath, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_paths::resolve_path;
@@ -11,7 +11,7 @@ use bun_semver::{ExternalString, String};
 use bun_str::{strings, w, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
-use crate::bun_json::JsonExprView;
+use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
@@ -196,24 +196,20 @@ impl Bin {
     }
 
     /// Used for packages read from text lockfile / pnpm migration.
-    ///
-    /// Generic over `JsonExprView` so both `bun_logger::js_ast::Expr` (T2,
-    /// JSON parser) and `bun_js_parser::Expr` (T4, YAML / package.json cache)
-    /// share this one body — Zig has a single `Bin.parseAppend` because both
-    /// trees are the same `js_ast.Expr` type there.
-    pub fn parse_append<E: JsonExprView>(
-        bin_expr: &E,
+    pub fn parse_append(
+        bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        if let Some(props) = bin_expr.json_object_props() {
+        if let ExprData::EObject(o) = &bin_expr.data {
+            let props = o.properties.slice();
             match props.len() {
                 0 => {}
                 1 => {
-                    let Some(bin_name) = E::prop_key_str(&props[0]) else {
+                    let Some(bin_name) = props[0].key.as_ref().and_then(Expr::as_utf8_string_literal) else {
                         return Ok(Bin::default());
                     };
-                    let Some(value) = E::prop_value_str(&props[0]) else {
+                    let Some(value) = props[0].value.as_ref().and_then(Expr::as_utf8_string_literal) else {
                         return Ok(Bin::default());
                     };
 
@@ -240,10 +236,10 @@ impl Bin {
                     // divergence.
                     let mut i: usize = 0;
                     for bin_prop in props {
-                        let Some(key_str) = E::prop_key_str(bin_prop) else {
+                        let Some(key_str) = bin_prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
                             return Ok(Bin::default());
                         };
-                        let Some(value_str) = E::prop_value_str(bin_prop) else {
+                        let Some(value_str) = bin_prop.value.as_ref().and_then(Expr::as_utf8_string_literal) else {
                             return Ok(Bin::default());
                         };
                         extern_strings.push(buf.append_external(key_str)?);
@@ -262,7 +258,7 @@ impl Bin {
                     });
                 }
             }
-        } else if let Some(str_) = bin_expr.json_utf8_string() {
+        } else if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
                 return Ok(Bin {
                     tag: Tag::File,
@@ -276,11 +272,11 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub fn parse_append_from_directories<E: JsonExprView>(
-        bin_expr: &E,
+    pub fn parse_append_from_directories(
+        bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
-        if let Some(bin_str) = bin_expr.json_utf8_string() {
+        if let Some(bin_str) = bin_expr.as_utf8_string_literal() {
             return Ok(Bin {
                 tag: Tag::Dir,
                 _padding_tag: [0; 3],

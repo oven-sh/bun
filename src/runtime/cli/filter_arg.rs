@@ -2,8 +2,8 @@ use core::mem::MaybeUninit;
 
 use bun_core::Global;
 use bun_glob as glob;
-use bun_interchange::json;
-use bun_logger::{self, js_ast::ExprData, Log};
+use bun_parsers::json;
+use bun_ast::{self, ExprData, Log};
 use bun_paths::{self, platform, resolve_path, PathBuffer};
 use bun_str::{strings, ZStr};
 use bun_sys;
@@ -49,9 +49,9 @@ pub fn get_candidate_package_patterns<'a>(
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], bun_core::Error> {
     // TODO(port): narrow error set
-    bun_js_parser::ast::expr::data::Store::create();
-    bun_js_parser::ast::stmt::data::Store::create();
-    let _store_guard = bun_js_parser::ast::StoreResetGuard::new();
+    bun_ast::expr::data::Store::create();
+    bun_ast::stmt::data::Store::create();
+    let _store_guard = bun_ast::StoreResetGuard::new();
 
     let mut workdir = workdir_;
 
@@ -70,9 +70,9 @@ pub fn get_candidate_package_patterns<'a>(
             log.errors = 0;
             log.warnings = 0;
 
-            // PORT NOTE: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_logger::to_source`
+            // PORT NOTE: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
-            let json_source = match bun_logger::to_source(json_path, Default::default()) {
+            let json_source = match bun_ast::to_source(json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
                     bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
                         break 'body;
@@ -116,7 +116,7 @@ pub fn get_candidate_package_patterns<'a>(
                     ExprData::EString(pattern_expr) => {
                         let size = pattern_expr.data.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_expr.data.len()].copy_from_slice(pattern_expr.data);
+                        pattern[0..pattern_expr.data.len()].copy_from_slice(&pattern_expr.data);
                         pattern[pattern_expr.data.len()..size].copy_from_slice(b"/package.json");
 
                         out_patterns.push(pattern);

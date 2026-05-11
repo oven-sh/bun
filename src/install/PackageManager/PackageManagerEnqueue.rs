@@ -4,7 +4,6 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
 use bun_core::{fmt as bun_fmt, Output};
-use bun_logger as logger;
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::strings::{self, StringOrTinyString};
@@ -158,7 +157,7 @@ pub fn enqueue_dependency_list(
                 log
                     .add_warning_with_note(
                         None,
-                        logger::Loc::default(),
+                        bun_ast::Loc::default(),
                         err.name().as_bytes(),
                         format_args!("error occurred while resolving {}", path_fmt),
                     );
@@ -356,7 +355,7 @@ pub fn enqueue_parse_npm_package(
     unsafe {
         task.write(Task::Task {
             package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: logger::Log::init(),
+            log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
             request: crate::package_manager_task::Request {
                 package_manifest: ManuallyDrop::new(crate::package_manager_task::PackageManifestRequest {
@@ -788,7 +787,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
@@ -805,10 +804,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        logger::add_error_pretty!(
+                                        bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,
-                                            logger::Loc::EMPTY,
+                                            bun_ast::Loc::EMPTY,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
                                             bstr::BStr::new(this.lockfile.str(&version.literal)),
                                             bstr::BStr::new(this.lockfile.str(&name)),
@@ -824,20 +823,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
                                         if version.tag == dependency::version::Tag::DistTag {
-                                            logger::add_error_pretty!(
+                                            bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(this.lockfile.str(&version.dist_tag().tag)),
                                                 age_gate_ms / MS_PER_S,
                                             );
                                         } else {
-                                            logger::add_error_pretty!(
+                                            bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(this.lockfile.str(&version.literal)),
@@ -855,7 +854,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
                                                     bstr::BStr::new(this.lockfile.str(version.folder())),
@@ -866,7 +865,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for dependency \"{}\"",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
@@ -1058,7 +1057,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
                                                         let _ = this.log_mut().add_error_fmt(
                                                             None,
-                                                            logger::Loc::EMPTY,
+                                                            bun_ast::Loc::EMPTY,
                                                             format_args!(
                                                                 "Version \"{}@{}\" was published within minimum release age of {} seconds",
                                                                 bstr::BStr::new(package_name),
@@ -1453,7 +1452,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.log_mut()
                     .add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 // TODO(port): WORKSPACE_NOT_FOUND_FMT with named args
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
@@ -1465,7 +1464,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.log_mut()
                     .add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 // TODO(port): LINK_NOT_FOUND_FMT with named args
                                 "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
@@ -1478,7 +1477,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.log_mut()
                     .add_warning_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
@@ -1489,7 +1488,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.log_mut()
                     .add_warning_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
@@ -1641,7 +1640,7 @@ fn init_extract_task(
     unsafe {
         task.write(Task::Task {
             package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: logger::Log::init(),
+            log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
                 extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
@@ -1705,7 +1704,7 @@ fn enqueue_git_clone(
     unsafe {
         task.write(Task::Task {
             package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: logger::Log::init(),
+            log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::GitClone,
             request: crate::package_manager_task::Request {
                 git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
@@ -1777,7 +1776,7 @@ pub fn enqueue_git_checkout(
     unsafe {
         task.write(Task::Task {
             package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: logger::Log::init(),
+            log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::GitCheckout,
             request: crate::package_manager_task::Request {
                 git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
@@ -1886,7 +1885,7 @@ fn enqueue_local_tarball(
     unsafe {
         task.write(Task::Task {
             package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: logger::Log::init(),
+            log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::LocalTarball,
             request: crate::package_manager_task::Request {
                 local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
@@ -2225,7 +2224,7 @@ fn get_or_put_resolved_package(
                             this.log_mut()
                     .add_warning_fmt(
                                     None,
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "incorrect peer dependency \"{}@{}\"",
                                         existing_package
@@ -2275,7 +2274,7 @@ fn get_or_put_resolved_package(
                             this.log_mut()
                     .add_warning_fmt(
                                     None,
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "incorrect peer dependency \"{}@{}\"",
                                         existing_package

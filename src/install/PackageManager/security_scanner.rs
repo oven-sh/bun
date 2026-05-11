@@ -15,16 +15,14 @@ use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
-use crate::bun_json::{Expr, ExprAccessors as _, ExprData};
+use crate::bun_json::{Expr, ExprData};
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_io::{BufferedReader, ReadState};
 use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
-// MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
-use bun_logger as logger;
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
 use bun_str::strings;
@@ -1302,7 +1300,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // this fails, nothing is registered yet and the caller's defer can safely
         // destroy the struct.
         let json_data_copy = Box::<[u8]>::from(&*self.json_data);
-        // MOVE_DOWN(b0): subprocess::Source moves to bun_sys; the owned-bytes variant no longer
         // routes through webcore::blob::Any (tier-6). The move-in pass adds
         // `bun_sys::subprocess::Source::from_owned_bytes(Box<[u8]>)`.
         let json_source = subprocess::Source::from_owned_bytes(json_data_copy);
@@ -1577,9 +1574,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
 
         let json_source =
-            logger::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
+            bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
-        let mut temp_log = logger::Log::init();
+        let mut temp_log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
 
         let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {

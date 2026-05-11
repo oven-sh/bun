@@ -390,14 +390,16 @@ Remaining owner movement
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
   │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after ProcessExitReadiness exists
+  │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
+  │     │     - bun_runtime_types currently depends only on bun_spawn_types, and there is no bun_jsc_types sidecar for inert promise/global handles
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
   │     │     - may resolve/reject promises, spawn the next cron command, free the job, or continue cron-specific cleanup
   │     └─> honest next move
-  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name
+  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, and introduce/move any inert JSC handle types before putting promise/global-like fields in that shape
   │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
   ├─> Bun.spawn Subprocess
   │     ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
@@ -408,8 +410,10 @@ Remaining owner movement
   │     │     - therefore ProcessIdentity/Process* cannot recover the Subprocess owner without adding a new registry
   │     ├─> current re-entry: Subprocess::on_process_exit
   │     │     - updates resource usage, removes timers/signals, closes terminal/stdin, resumes stdout/stderr, resolves promises, invokes onExit, disconnects IPC, and derefs self
+  │     │     - the exit path consumes cached JS values from the generated JSSubprocess object and runs callbacks under the owning event loop
   │     └─> honest next move
   │           - move the stable subprocess state/effect boundary out of the JSC wrapper enough that bun_spawn stores a typed target and bun_runtime consumes a typed action
+  │           - because bun_jsc depends on bun_spawn, this cannot be done by making bun_spawn or bun_runtime_types depend on bun_jsc handles directly
   │           - ProcessIdentity plus a runtime-side lookup would preserve neither the current allocation shape nor the direct owner lifetime edge
   └─> JS shell subprocesses
         ├─> current owner: runtime/shell/subproc.rs::ShellSubprocess
@@ -417,6 +421,7 @@ Remaining owner movement
         ├─> remaining JS path
         │     - spawn_async still installs ProcessExit::Shell for EventLoopHandle::Js
         │     - a single JS EventLoop.current_context cannot identify one Interpreter because multiple shell interpreters can be live on one JS event loop
+        │     - Cmd::SubprocExec already stores interp + NodeId after spawn, but handing that pair to bun_spawn would just move the old owner pointer to a CmdHandle-shaped target
         └─> honest next move
               - move JS shell interpreter identity into sidecar state, or arrange a per-shell typed driver context that is already present when the process exit is delivered
               - storing ShellSubprocess* or CmdHandle in ProcessExitTarget would be the old owner callback in typed clothing
@@ -460,10 +465,12 @@ Required deeper type movement
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
   │     ├─> CronRegisterState / CronRemoveState now live in bun_runtime_types::cron
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
+  │     ├─> the JSC promise/global side needs its own inert handle split before a complete cron job state can live below bun_runtime
   │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   ├─> Bun.spawn needs a separable subprocess exit state
   │     ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
   │     ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
+  │     ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
   │     └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
   └─> JS shell needs interpreter identity below the process-exit event
         ├─> Mini shell works because the Mini driver supplies the live Interpreter as typed tick context

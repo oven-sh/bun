@@ -80,10 +80,17 @@ fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
     defer out.* = freqs;
 
     for (text) |c| {
+        // Slots match NameMinifier.default_tail:
+        //   0..26  = 'a'..'z'
+        //   26..52 = 'A'..'Z'
+        //   52..62 = '0'..'9'
+        //   62     = '_'
+        //   63     = '$'
+        // scanBig uses the same layout; keep these in sync.
         const i: usize = switch (c) {
             'a'...'z' => @as(usize, @intCast(c)) - 'a',
             'A'...'Z' => @as(usize, @intCast(c)) - ('A' - 26),
-            '0'...'9' => @as(usize, @intCast(c)) + (53 - '0'),
+            '0'...'9' => @as(usize, @intCast(c)) + (52 - '0'),
             '_' => 62,
             '$' => 63,
             else => continue,

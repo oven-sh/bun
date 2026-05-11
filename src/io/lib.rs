@@ -198,7 +198,6 @@ bun_dispatch::link_interface! {
     pub BufferedReaderParentLink[
         ShellIoReader,
         FileReader,
-        FileResponseStream,
         Terminal,
     ] {
         fn has_on_read_chunk() -> bool;

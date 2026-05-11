@@ -123,14 +123,19 @@ impl BufferedReaderTarget {
     }
 
     #[inline]
-    fn on_read_chunk(self, chunk: &[u8], _has_more: ReadState) -> bool {
+    fn on_read_chunk(
+        self,
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        _has_more: ReadState,
+    ) -> bool {
         match self {
             Self::Install { target, event_loop } => {
                 target.on_read_chunk(chunk);
                 true
             }
             Self::Runtime { target, event_loop } => {
-                let delivery = target.on_read_chunk(chunk, _has_more);
+                let delivery = target.on_read_chunk(reader, chunk, _has_more);
                 // SAFETY: `delivery` carries borrowed data valid for this
                 // synchronous call only; the high-tier dispatcher must consume
                 // it before returning.
@@ -197,8 +202,12 @@ impl BufferedReaderTarget {
                 }
             }
             Self::Runtime { target, event_loop } => {
-                let delivery = if matches!(target, RuntimeBufferedReaderTarget::ShellPipeReader { .. }) {
-                    target.on_system_reader_error(err)
+                let delivery = if matches!(
+                    target,
+                    RuntimeBufferedReaderTarget::ShellPipeReader { .. }
+                        | RuntimeBufferedReaderTarget::FileResponseStream
+                ) {
+                    target.on_system_reader_error(reader, err)
                 } else {
                     target.on_reader_error(
                         RuntimeReaderError {
@@ -344,9 +353,14 @@ impl BufferedReaderVTable {
     /// and hasMore is true, it means that there might be more data to read.
     ///
     /// Returning false prevents the reader from reading more data.
-    pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub fn on_read_chunk(
+        &self,
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        has_more: ReadState,
+    ) -> bool {
         if let Some(target) = self.target {
-            return target.on_read_chunk(chunk, has_more);
+            return target.on_read_chunk(reader, chunk, has_more);
         }
         self.link().on_read_chunk(chunk, has_more)
     }
@@ -583,6 +597,12 @@ impl PosixBufferedReader {
         &mut self._buffer
     }
 
+    #[inline]
+    fn reader_handle(&mut self) -> BufferedReaderHandle {
+        BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null")
+    }
+
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
@@ -803,10 +823,15 @@ impl PosixBufferedReader {
     // PORT NOTE: reshaped for borrowck — takes &vtable instead of &mut Self so
     // call sites can pass &parent._buffer alongside without a raw-pointer escape.
     #[inline]
-    fn drain_chunk(vtable: &BufferedReaderVTable, chunk: &[u8], has_more: ReadState) -> bool {
+    fn drain_chunk(
+        vtable: &BufferedReaderVTable,
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        has_more: ReadState,
+    ) -> bool {
         if vtable.is_streaming_enabled() {
             if !chunk.is_empty() {
-                return vtable.on_read_chunk(chunk, has_more);
+                return vtable.on_read_chunk(reader, chunk, has_more);
             }
         }
 
@@ -864,6 +889,7 @@ impl PosixBufferedReader {
         received_hup_initially: bool,
     ) {
         let mut received_hup = received_hup_initially;
+        let reader = parent.reader_handle();
         loop {
             let streaming = parent.vtable.is_streaming_enabled();
             let mut got_retry = false;
@@ -895,6 +921,7 @@ impl PosixBufferedReader {
                         if streaming {
                             // Stream this chunk and register for next cycle
                             let _ = parent.vtable.on_read_chunk(
+                                reader,
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
@@ -949,6 +976,7 @@ impl PosixBufferedReader {
                                 let new_len = parent._buffer.len();
                                 let chunk = &parent._buffer[new_len - bytes_read..new_len];
                                 if !parent.vtable.on_read_chunk(
+                                    reader,
                                     chunk,
                                     if received_hup && bytes_read < buf_len {
                                         ReadState::Eof
@@ -1036,6 +1064,7 @@ impl PosixBufferedReader {
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
         let streaming = parent.vtable.is_streaming_enabled();
+        let reader = parent.reader_handle();
 
         if streaming {
             // SAFETY: per-loop scratch buffer; single-threaded event loop,
@@ -1062,9 +1091,11 @@ impl PosixBufferedReader {
                             if bytes_read == 0 {
                                 parent.close_without_reporting();
                                 if head_start > 0 {
-                                    let _ = parent
-                                        .vtable
-                                        .on_read_chunk(&stack_buffer[..head_start], ReadState::Eof);
+                                    let _ = parent.vtable.on_read_chunk(
+                                        reader,
+                                        &stack_buffer[..head_start],
+                                        ReadState::Eof,
+                                    );
                                 }
                                 if !parent.flags.contains(PosixFlags::IS_DONE) {
                                     parent.done();
@@ -1089,6 +1120,7 @@ impl PosixBufferedReader {
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
                                 if !parent.vtable.on_read_chunk(
+                                    reader,
                                     &stack_buffer[..head_start],
                                     if received_hup {
                                         ReadState::Eof
@@ -1112,6 +1144,7 @@ impl PosixBufferedReader {
 
                                 if head_start > 0 {
                                     let _ = parent.vtable.on_read_chunk(
+                                        reader,
                                         &stack_buffer[..head_start],
                                         ReadState::Drained,
                                     );
@@ -1121,6 +1154,7 @@ impl PosixBufferedReader {
 
                             if head_start > 0 {
                                 let _ = parent.vtable.on_read_chunk(
+                                    reader,
                                     &stack_buffer[..head_start],
                                     ReadState::Progress,
                                 );
@@ -1133,6 +1167,7 @@ impl PosixBufferedReader {
 
                 if head_start > 0 {
                     if !parent.vtable.on_read_chunk(
+                        reader,
                         &stack_buffer[..head_start],
                         if received_hup {
                             ReadState::Eof
@@ -1173,7 +1208,12 @@ impl PosixBufferedReader {
 
                     if bytes_read == 0 {
                         parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
+                        let _ = Self::drain_chunk(
+                            &parent.vtable,
+                            reader,
+                            &parent._buffer,
+                            ReadState::Eof,
+                        );
                         if !parent.flags.contains(PosixFlags::IS_DONE) {
                             parent.done();
                         }
@@ -1218,7 +1258,12 @@ impl PosixBufferedReader {
 
                     if bytes_read == 0 {
                         parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
+                        let _ = Self::drain_chunk(
+                            &parent.vtable,
+                            reader,
+                            &parent._buffer,
+                            ReadState::Eof,
+                        );
                         if !parent.flags.contains(PosixFlags::IS_DONE) {
                             parent.done();
                         }
@@ -1230,7 +1275,7 @@ impl PosixBufferedReader {
                             // PORT NOTE: `defer resizable_buffer.clearRetainingCapacity()` inlined below.
                             let keep_going = parent
                                 .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Progress);
+                                .on_read_chunk(reader, &parent._buffer, ReadState::Progress);
                             parent._buffer.clear();
                             if !keep_going {
                                 return;
@@ -1244,7 +1289,7 @@ impl PosixBufferedReader {
                         if !parent._buffer.is_empty() {
                             let _ = parent
                                 .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Drained);
+                                .on_read_chunk(reader, &parent._buffer, ReadState::Drained);
                             parent._buffer.clear();
                         }
                     }
@@ -1473,6 +1518,12 @@ impl WindowsBufferedReader {
         &mut self._buffer
     }
 
+    #[inline]
+    fn reader_handle(&mut self) -> BufferedReaderHandle {
+        BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null")
+    }
+
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         self.buffer()
     }
@@ -1513,7 +1564,8 @@ impl WindowsBufferedReader {
             self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
-        let result = self.vtable.on_read_chunk(buf, has_more);
+        let reader = self.reader_handle();
+        let result = self.vtable.on_read_chunk(reader, buf, has_more);
         // Clear has_inflight_read after the callback completes to prevent
         // libuv from starting a new read while we're still processing data
         self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);

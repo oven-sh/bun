@@ -31,6 +31,7 @@ pub enum RuntimeBufferedReaderTarget {
         interpreter: Option<InterpreterHandle>,
         pipe: RuntimePipeKind,
     },
+    FileResponseStream,
     SubprocessPipeReader {
         state: SubprocessExitStateHandle,
         pipe: RuntimePipeKind,
@@ -66,6 +67,11 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         chunk: &'a [u8],
         has_more: ReadState,
     },
+    FileResponseStreamChunk {
+        reader: BufferedReaderHandle,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    },
     TestParallelWorkerPipeDone {
         index: usize,
         pipe: RuntimePipeKind,
@@ -79,6 +85,13 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         command: NodeId,
         interpreter: Option<InterpreterHandle>,
         pipe: RuntimePipeKind,
+        error: bun_sys::Error,
+    },
+    FileResponseStreamDone {
+        reader: BufferedReaderHandle,
+    },
+    FileResponseStreamError {
+        reader: BufferedReaderHandle,
         error: bun_sys::Error,
     },
     CronRegisterOutputDone {
@@ -119,7 +132,8 @@ impl RuntimeBufferedReaderTarget {
             Self::FilterRunHandle { .. }
             | Self::MultiRunPipeReader { .. }
             | Self::TestParallelWorkerPipe { .. }
-            | Self::ShellPipeReader { .. } => true,
+            | Self::ShellPipeReader { .. }
+            | Self::FileResponseStream => true,
             Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => false,
@@ -129,6 +143,7 @@ impl RuntimeBufferedReaderTarget {
     #[inline]
     pub fn on_read_chunk<'a>(
         self,
+        reader: BufferedReaderHandle,
         chunk: &'a [u8],
         has_more: ReadState,
     ) -> RuntimeBufferedReaderDelivery<'a> {
@@ -162,10 +177,15 @@ impl RuntimeBufferedReaderTarget {
                 chunk,
                 has_more,
             },
+            Self::FileResponseStream => RuntimeBufferedReaderDelivery::FileResponseStreamChunk {
+                reader,
+                chunk,
+                has_more,
+            },
             Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => {
-                unreachable!("cron output readers do not consume chunks")
+                unreachable!("non-streaming reader targets do not consume chunks")
             }
         }
     }
@@ -197,6 +217,9 @@ impl RuntimeBufferedReaderTarget {
                 interpreter,
                 pipe,
             }),
+            Self::FileResponseStream => {
+                Some(RuntimeBufferedReaderDelivery::FileResponseStreamDone { reader })
+            }
             Self::SubprocessPipeReader { state, pipe } => {
                 Some(RuntimeBufferedReaderDelivery::SubprocessPipeReaderDone {
                     state,
@@ -227,9 +250,9 @@ impl RuntimeBufferedReaderTarget {
                     name: error.name,
                 })
             }
-            Self::ShellPipeReader {
-                ..
-            } => unreachable!("shell pipe reader errors use on_system_reader_error"),
+            Self::ShellPipeReader { .. } | Self::FileResponseStream => {
+                unreachable!("system reader errors use on_system_reader_error")
+            }
             Self::SubprocessPipeReader { state, pipe } => {
                 Some(RuntimeBufferedReaderDelivery::SubprocessPipeReaderError {
                     state,
@@ -245,6 +268,7 @@ impl RuntimeBufferedReaderTarget {
     #[inline]
     pub fn on_system_reader_error(
         self,
+        reader: BufferedReaderHandle,
         error: bun_sys::Error,
     ) -> Option<RuntimeBufferedReaderDelivery<'static>> {
         match self {
@@ -258,6 +282,9 @@ impl RuntimeBufferedReaderTarget {
                 pipe,
                 error,
             }),
+            Self::FileResponseStream => {
+                Some(RuntimeBufferedReaderDelivery::FileResponseStreamError { reader, error })
+            }
             _ => None,
         }
     }
@@ -283,9 +310,11 @@ mod tests {
     fn filter_run_reader_target_preserves_index_and_chunk() {
         let chunk = b"hello";
         let target = RuntimeBufferedReaderTarget::FilterRunHandle { index: 7 };
+        let mut reader = 0u8;
+        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
 
         assert!(target.has_on_read_chunk());
-        match target.on_read_chunk(chunk, ReadState::Progress) {
+        match target.on_read_chunk(reader, chunk, ReadState::Progress) {
             RuntimeBufferedReaderDelivery::FilterRunHandleChunk { index, chunk: actual } => {
                 assert_eq!(index, 7);
                 assert_eq!(actual, chunk);
@@ -301,8 +330,10 @@ mod tests {
             index: 2,
             pipe: RuntimePipeKind::Stderr,
         };
+        let mut reader = 0u8;
+        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
 
-        match target.on_read_chunk(chunk, ReadState::Progress) {
+        match target.on_read_chunk(reader, chunk, ReadState::Progress) {
             RuntimeBufferedReaderDelivery::MultiRunPipeReaderChunk { index, pipe, chunk: actual } => {
                 assert_eq!(index, 2);
                 assert_eq!(pipe, RuntimePipeKind::Stderr);
@@ -310,8 +341,6 @@ mod tests {
             }
             _ => panic!("wrong delivery"),
         }
-        let mut reader = 0u8;
-        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
 
         assert!(target.on_reader_done(reader).is_none());
 
@@ -340,7 +369,7 @@ mod tests {
         let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
 
         assert!(target.has_on_read_chunk());
-        match target.on_read_chunk(chunk, ReadState::Eof) {
+        match target.on_read_chunk(reader, chunk, ReadState::Eof) {
             RuntimeBufferedReaderDelivery::ShellPipeReaderChunk {
                 command,
                 interpreter,
@@ -366,6 +395,35 @@ mod tests {
                 assert_eq!(command, crate::shell::NodeId(9));
                 assert_eq!(interpreter, None);
                 assert_eq!(pipe, RuntimePipeKind::Stderr);
+            }
+            _ => panic!("wrong delivery"),
+        }
+    }
+
+    #[test]
+    fn file_response_stream_target_preserves_reader_and_read_state() {
+        let chunk = b"file";
+        let mut reader = 0u8;
+        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
+        let target = RuntimeBufferedReaderTarget::FileResponseStream;
+
+        assert!(target.has_on_read_chunk());
+        match target.on_read_chunk(reader, chunk, ReadState::Drained) {
+            RuntimeBufferedReaderDelivery::FileResponseStreamChunk {
+                reader: actual_reader,
+                chunk: actual,
+                has_more,
+            } => {
+                assert_eq!(actual_reader, reader);
+                assert_eq!(actual, chunk);
+                assert_eq!(has_more, ReadState::Drained);
+            }
+            _ => panic!("wrong delivery"),
+        }
+
+        match target.on_reader_done(reader) {
+            Some(RuntimeBufferedReaderDelivery::FileResponseStreamDone { reader: actual_reader }) => {
+                assert_eq!(actual_reader, reader);
             }
             _ => panic!("wrong delivery"),
         }

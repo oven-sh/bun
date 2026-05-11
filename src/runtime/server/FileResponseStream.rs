@@ -10,10 +10,13 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::mem::offset_of;
 use core::ptr::NonNull;
 
 use bun_io::Closer;
-use bun_io::{BufferedReader, FileType, ReadState};
+use bun_io::{BufferedReader, BufferedReaderTarget, FileType, ReadState};
+use bun_io_types::reader::BufferedReaderHandle;
+use bun_runtime_types::reader::RuntimeBufferedReaderTarget;
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 #[cfg(windows)]
@@ -108,6 +111,8 @@ pub struct StartOptions {
 impl FileResponseStream {
     pub fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
+        // SAFETY: `opts.vm` is &'static; event_loop() returns its live JS loop.
+        let event_loop_handle = EventLoopHandle::init(unsafe { (*opts.vm).event_loop() }.cast::<()>());
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
         // via `heap::take` in `deref()` when the intrusive refcount hits 0.
@@ -115,8 +120,7 @@ impl FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,
-            // SAFETY: `opts.vm` is &'static; event_loop() returns its live JS loop.
-            event_loop_handle: EventLoopHandle::init(unsafe { (*opts.vm).event_loop() }.cast::<()>()),
+            event_loop_handle,
             fd: opts.fd,
             auto_close: opts.auto_close,
             idle_timeout: opts.idle_timeout,
@@ -125,7 +129,10 @@ impl FileResponseStream {
             on_abort: opts.on_abort,
             on_error: opts.on_error,
             mode: if use_sendfile { Mode::Sendfile } else { Mode::Reader },
-            reader: BufferedReader::init::<FileResponseStream>(),
+            reader: BufferedReader::init_target(BufferedReaderTarget::Runtime {
+                target: RuntimeBufferedReaderTarget::FileResponseStream,
+                event_loop: event_loop_handle.as_event_loop_ctx(),
+            }),
             max_size: None,
             eof_task: None,
             sendfile: Sendfile::default(),
@@ -173,8 +180,6 @@ impl FileResponseStream {
         if opts.file_type == FileType::Socket {
             this.reader.flags.insert(ReaderFlags::SOCKET);
         }
-        let this_parent = std::ptr::from_mut::<FileResponseStream>(this).cast::<c_void>();
-        this.reader.set_parent(this_parent);
 
         // SAFETY: `this` reborrows the live heap::alloc allocation above.
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
@@ -302,6 +307,34 @@ impl FileResponseStream {
         // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.fail_with(err);
+    }
+
+    fn from_reader_handle(reader: BufferedReaderHandle) -> &'static mut Self {
+        let reader = reader.as_ptr::<BufferedReader>();
+        let this = reader
+            .cast::<u8>()
+            .wrapping_sub(offset_of!(Self, reader))
+            .cast::<Self>();
+        // SAFETY: FileResponseStream initializes its embedded reader with the
+        // FileResponseStream runtime target, so matching deliveries can only
+        // carry a handle to this field inside the owning allocation.
+        unsafe { &mut *this }
+    }
+
+    pub fn dispatch_read_chunk(
+        reader: BufferedReaderHandle,
+        chunk: &[u8],
+        state: ReadState,
+    ) -> bool {
+        Self::from_reader_handle(reader).on_read_chunk(chunk, state)
+    }
+
+    pub fn dispatch_reader_done(reader: BufferedReaderHandle) {
+        Self::from_reader_handle(reader).on_reader_done();
+    }
+
+    pub fn dispatch_reader_error(reader: BufferedReaderHandle, err: sys::Error) {
+        Self::from_reader_handle(reader).on_reader_error(err);
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
@@ -536,45 +569,6 @@ impl FileResponseStream {
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
     // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; the former
     // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
-}
-
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(FileResponseStream for FileResponseStream);
-impl bun_io::BufferedReaderParent for FileResponseStream {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileResponseStream;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack.
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
-        // SAFETY: trait aliasing contract; the body's reader accesses go through
-        // the same `&mut self.reader` provenance the caller already holds.
-        unsafe { (*this).on_read_chunk(chunk, state) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: tail-position — reader is finished with `self`.
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: tail-position — reader is finished with `self`.
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `r#loop()` which already does the
-        // cfg(windows) `.uv_loop` projection — `EventLoopCtx::loop_()` returns
-        // the uws `WindowsLoop*` on Windows, NOT a `uv_loop_t*`, so casting it
-        // directly (the old body) type-punned the wrapper struct into libuv.
-        // Zig spec: FileResponseStream.zig `loop()` does the same projection.
-        // SAFETY: trait contract — `this` non-null/live.
-        unsafe { (*this).r#loop() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
 }
 
 impl Drop for FileResponseStream {

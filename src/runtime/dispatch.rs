@@ -366,6 +366,19 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
             );
             true
         }
+        RuntimeBufferedReaderDelivery::FileResponseStreamChunk {
+            reader,
+            chunk,
+            has_more,
+        } => crate::server::FileResponseStream::dispatch_read_chunk(reader, chunk, has_more),
+        RuntimeBufferedReaderDelivery::FileResponseStreamDone { reader } => {
+            crate::server::FileResponseStream::dispatch_reader_done(reader);
+            true
+        }
+        RuntimeBufferedReaderDelivery::FileResponseStreamError { reader, error } => {
+            crate::server::FileResponseStream::dispatch_reader_error(reader, error);
+            true
+        }
         RuntimeBufferedReaderDelivery::CronRegisterOutputDone { state } => {
             crate::api::cron::on_register_reader_done(state);
             true
@@ -411,8 +424,8 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
             );
             true
         }
-      }
-  }
+    }
+}
 
 fn process_exit_context(
     event_loop: bun_event_loop::EventLoopHandle,

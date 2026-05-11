@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot } from "harness";
 
 test.concurrent("concurrent order", async () => {
   const result = await Bun.spawn({
@@ -137,7 +137,7 @@ test.concurrent("max-concurrency limits concurrent tests", async () => {
   expect(executionPattern).toEqual(expected);
 });
 
-test.concurrent("max-concurrency default is 20", async () => {
+test.concurrent("max-concurrency default", async () => {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/concurrent-max.fixture.ts"],
     stdout: "pipe",
@@ -154,8 +154,12 @@ test.concurrent("max-concurrency default is 20", async () => {
   expect(maxMatch).toBeTruthy();
   const executionPattern = JSON.parse(maxMatch![1]);
 
-  // Should be 1,2,3,...,18,19,20,20,20,20,20,20,...
-  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, 20));
+  // Default is 20, but ASAN builds cap at 5 (each spawned bun child is
+  // several-× heavier in RSS and ~2× slower to start, so subprocess-spawning
+  // describe.concurrent suites would otherwise OOM the CI box).
+  const cap = isASAN ? 5 : 20;
+  // Should be 1,2,3,...,cap-1,cap,cap,cap,...
+  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, cap));
   expect(executionPattern).toEqual(expected);
 });
 

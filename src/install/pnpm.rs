@@ -245,16 +245,20 @@ pub fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // PORT NOTE: Zig parses into `yaml_arena` then `deepClone`s out of it
-    // before freeing. The Rust YAML parser allocates into the thread-local
-    // Store (the bump arg is unused), so the clone is unnecessary — keep the
-    // T2 `bun_ast::js_ast::Expr` as-is; this whole file operates on that tier.
+    // The YAML parser allocates `Expr::Data` nodes into the thread-local
+    // `Store` (via `Expr::init`). Later `workspace_package_json_cache.get_with_path`
+    // calls (with default `init_reset_store: true`) invoke `initialize_store()`,
+    // which `Store::reset()`s — invalidating every `StoreRef` in the parsed
+    // YAML tree. Mirror Zig's `deepClone(allocator)`: clone the tree out of
+    // the Store into `yaml_arena` (which lives for the whole function) so
+    // `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
-    let root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
+    let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
+    let root: Expr = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
 
     if !root.is_object() {
         log.add_error_fmt(

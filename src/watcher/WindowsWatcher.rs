@@ -518,6 +518,17 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
         deduped.len()
     );
 
+    // Hold `this.mutex` for the on_file_update dispatch — mirrors
+    // KEventWatcher.rs:138 / INotifyWatcher.rs:555. `on_file_update` impls
+    // defer `flush_evictions()`, which assumes the lock is held to serialize
+    // its close+swap_remove against the JS thread's
+    // `snapshot_fd_and_package_json` / `append_file_maybe_lock<true>`.
+    // Intentionally diverges from Zig spec (`WindowsWatcher.zig` does not
+    // lock here); same EBADF race exists there.
+    let _guard = this.mutex.lock_guard();
+    if !this.running {
+        return Ok(());
+    }
     let changed = &this.changed_filepaths[0..last_event_index + 1];
     this.write_trace_events(&deduped, changed);
     (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);

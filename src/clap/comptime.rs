@@ -219,11 +219,44 @@ impl<Id> ComptimeClap<Id> {
     // TODO(port): Zig `findParam` is comptime-only and emits `@compileError` on miss.
     // Phase A does a runtime scan and panics on miss; the Phase-B proc-macro should
     // resolve names at compile time.
+    //
+    // PERF(port): Zig `findParam` resolves to a constant index at compile time
+    // (zero runtime cost). The Phase-A port made it a linear scan through
+    // `Names::matches`, which re-checks the `-`/`--` prefix and the
+    // short/long/alias arms for *every* param. `Arguments::parse` calls
+    // `flag()`/`option()` ~190 times against ~100 params → ~19k slice
+    // compares per CLI startup, dominating `bun -e ''` self time (perf: ~5%
+    // of cycles). Until a proc-macro restores the comptime resolution, this
+    // hand-rolled scan is the cheapest stand-in: prefix is classified once,
+    // then the inner loop rejects on length before touching bytes.
     fn find_param(&self, name: &[u8]) -> &Param<usize> {
-        self.converted_params
-            .iter()
-            .find(|p| p.names.matches(name))
-            .unwrap_or_else(|| unreachable!("{} is not a parameter.", bstr::BStr::new(name)))
+        if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
+            let key = &name[2..];
+            let key_len = key.len();
+            for p in &self.converted_params {
+                // Primary long name (length-gate first; almost every miss
+                // falls out on the single `usize` compare).
+                if let Some(l) = p.names.long {
+                    if l.len() == key_len && l == key {
+                        return p;
+                    }
+                }
+                // Aliases are rare (≤1 on a handful of params).
+                for alias in p.names.long_aliases {
+                    if alias.len() == key_len && *alias == key {
+                        return p;
+                    }
+                }
+            }
+        } else if name.len() == 2 && name[0] == b'-' {
+            let s = name[1];
+            for p in &self.converted_params {
+                if p.names.short == Some(s) {
+                    return p;
+                }
+            }
+        }
+        unreachable!("{} is not a parameter.", bstr::BStr::new(name))
     }
 }
 

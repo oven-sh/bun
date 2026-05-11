@@ -230,27 +230,32 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         v
     }
     #[inline]
-    fn from_bump_vec(src: bun_alloc::ArenaVec<'_, T>) -> Self {
+    fn from_bump_vec(mut src: bun_alloc::ArenaVec<'_, T>) -> Self {
         let len = src.len();
-        // Suppress `src`'s Drop: element destructors must NOT run (they are
-        // about to be bitwise-moved out), and the buffer deallocation is
-        // deferred to the arena's bulk reset.
-        let mut src = ManuallyDrop::new(src);
         let mut out = Vec::with_capacity_in(len, A::default());
         // SAFETY:
         // - `src` is the unique owner of `len` initialized `T` at
-        //   `src.as_mut_ptr()`; `ManuallyDrop` guarantees neither the elements
-        //   nor the buffer will be touched again through `src`.
+        //   `src.as_ptr()`.
         // - `out` has `cap >= len` uninit slots at `out.as_mut_ptr()`.
         // - Source/dest are distinct allocations (arena heap vs `A` heap),
         //   so they cannot overlap.
         // After the copy, `out` is the sole logical owner of every `T`; its
-        // `Drop` will run their destructors exactly once. The arena buffer
-        // bytes are abandoned (leak-on-purpose, reclaimed on arena reset).
+        // `Drop` will run their destructors exactly once. `src.set_len(0)`
+        // marks the source logically empty so its `Drop` skips element
+        // destructors but still frees the buffer back to the `MimallocArena`
+        // (real `mi_free`, not a bump no-op) — without this the scratch buffer
+        // leaks until arena reset, and the parser's per-node
+        // `BumpVec → AstVec` pattern (decls/properties/args/items) turns that
+        // into O(nodes) dead arena bytes (≈+11% transpile RSS on a 5.7 MB
+        // input). Freeing here makes the scratch slot O(1): mimalloc recycles
+        // the same size-class block on the next iteration.
         unsafe {
-            core::ptr::copy_nonoverlapping(src.as_mut_ptr(), out.as_mut_ptr(), len);
+            core::ptr::copy_nonoverlapping(src.as_ptr(), out.as_mut_ptr(), len);
             out.set_len(len);
+            src.set_len(0);
         }
+        // Buffer freed via `<&MimallocArena as Allocator>::deallocate` → `mi_free`.
+        drop(src);
         out
     }
     #[inline]

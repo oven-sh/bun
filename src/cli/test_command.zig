@@ -1267,6 +1267,11 @@ pub const CommandLineReporter = struct {
                     avg.functions /= avg_count;
                     avg.lines /= avg_count;
                     avg.stmts /= avg_count;
+
+                    // Check if average coverage is below threshold
+                    if (avg.functions < base_fraction.functions or avg.lines < base_fraction.lines or avg.stmts < base_fraction.stmts) {
+                        failing = true;
+                    }
                 }
 
                 const failed = if (avg_count > 0) base_fraction else bun.SourceMap.coverage.Fraction{

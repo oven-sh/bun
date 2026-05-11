@@ -938,7 +938,7 @@ impl EventLoop {
         unsafe { self.virtual_machine.unwrap_unchecked().as_ref() }
     }
     #[inline(always)]
-    fn global_ref(&self) -> &JSGlobalObject {
+    pub fn global_ref(&self) -> &JSGlobalObject {
         // SAFETY: global is set during VM init and outlives EventLoop
         unsafe { self.global.unwrap_unchecked().as_ref() }
     }

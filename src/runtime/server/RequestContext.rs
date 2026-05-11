@@ -3000,8 +3000,7 @@ where
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
             let exception_list = jsc_exceptions_to_api(exception_list_upstream);
-            // SAFETY: vm.log is set during VM init and live for the VM lifetime.
-            let log = unsafe { vm.log.unwrap().as_mut() };
+            let log = vm.log_mut().unwrap();
             // PORT NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
             let msg = format!(
@@ -3022,8 +3021,7 @@ where
             (vm.on_unhandled_rejection)(vm, global_this, value);
         }
         self.render_production_error(status);
-        // SAFETY: vm.log is set during VM init and live for the VM lifetime.
-        unsafe { vm.log.unwrap().as_mut() }.reset();
+        vm.log_mut().unwrap().reset();
     }
 
     pub fn run_error_handler_with_status_code_dont_check_responded(

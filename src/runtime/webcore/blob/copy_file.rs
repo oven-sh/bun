@@ -1248,9 +1248,7 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        // SAFETY: `event_loop.global` is set to the VM's `JSGlobalObject` before any JS task can
-        // schedule a CopyFile; it has process lifetime.
-        let global = unsafe { event_loop.global.unwrap().as_ref() };
+        let global = event_loop.global_ref();
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1507,8 +1505,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
-        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
-        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
+        let global_this = self.event_loop.global_ref();
         // PORT NOTE: `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
@@ -1597,8 +1594,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
-        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
-        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
+        let global_this = self.event_loop.global_ref();
         // PORT NOTE: see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());

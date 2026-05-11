@@ -2136,23 +2136,43 @@ impl NetworkSink {
             .get()
     }
 
+    /// Shared borrow of the upload task, if attached.
+    ///
+    /// SAFETY (invariant): `task` is an intrusively ref-counted heap allocation;
+    /// while `Some`, this sink holds a counted ref (released in `detach_writable`),
+    /// so the pointee is live for at least `'_`.
+    #[inline]
+    fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
+        // SAFETY: see doc comment — counted ref keeps pointee alive.
+        self.task.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Exclusive borrow of the upload task, if attached.
+    ///
+    /// SAFETY (invariant): the `MultiPartUpload` is single-threaded and the sink
+    /// is its sole writer once attached; `&mut self` ensures no overlapping
+    /// borrow from this sink. Mirrors the prior `task.as_ptr().as_mut()` sites.
+    #[inline]
+    fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
+        // SAFETY: see doc comment — exclusive while `&mut self` held.
+        self.task.map(|mut p| unsafe { p.as_mut() })
+    }
+
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {
         Box::new(init)
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
     fn get_high_water_mark(&self) -> BlobSizeType {
-        if let Some(task) = self.task {
-            // SAFETY: task is ref-counted, alive while held
-            return unsafe { task.as_ref() }.part_size_in_bytes() as BlobSizeType;
+        if let Some(task) = self.task_ref() {
+            return task.part_size_in_bytes() as BlobSizeType;
         }
         self.high_water_mark
     }
 
     pub fn path(&self) -> Option<&[u8]> {
-        if let Some(task) = self.task {
-            // SAFETY: task is ref-counted, alive while held
-            return Some(&unsafe { task.as_ref() }.path);
+        if let Some(task) = self.task_ref() {
+            return Some(&task.path);
         }
         None
     }
@@ -2239,13 +2259,10 @@ impl NetworkSink {
             ));
         }
         // flush more
-        if let Some(task) = self.task {
-            // SAFETY: task ref-counted, alive
-            if !unsafe { task.as_ref() }.is_queue_empty() {
-                // we have something queued, we need to wait for the next flush
-                self.flush_promise = JSPromiseStrong::init(global_this);
-                return bun_sys::Result::Ok(self.flush_promise.value());
-            }
+        if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
+            // we have something queued, we need to wait for the next flush
+            self.flush_promise = JSPromiseStrong::init(global_this);
+            return bun_sys::Result::Ok(self.flush_promise.value());
         }
         // we are done flushing no backpressure
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -2277,12 +2294,8 @@ impl NetworkSink {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
 
-        if let Some(task) = self.task {
-            // SAFETY: task ref-counted, alive
-            if unsafe { task.as_ptr().as_mut().unwrap() }
-                .write_bytes(bytes, false)
-                .is_err()
-            {
+        if let Some(task) = self.task_mut() {
+            if task.write_bytes(bytes, false).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
@@ -2301,12 +2314,8 @@ impl NetworkSink {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
 
-        if let Some(task) = self.task {
-            // SAFETY: task ref-counted, alive
-            if unsafe { task.as_ptr().as_mut().unwrap() }
-                .write_latin1(bytes, false)
-                .is_err()
-            {
+        if let Some(task) = self.task_mut() {
+            if task.write_latin1(bytes, false).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
@@ -2318,14 +2327,10 @@ impl NetworkSink {
             return Writable::Owned(0);
         }
         let bytes = data.slice();
-        if let Some(task) = self.task {
+        if let Some(task) = self.task_mut() {
             // we must always buffer UTF-16
             // we assume the case of all-ascii UTF-16 string is pretty uncommon
-            // SAFETY: task ref-counted, alive
-            if unsafe { task.as_ptr().as_mut().unwrap() }
-                .write_utf16(bytes, false)
-                .is_err()
-            {
+            if task.write_utf16(bytes, false).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
         }
@@ -2341,9 +2346,8 @@ impl NetworkSink {
         // send EOF
         self.ended = true;
         // flush everything and send EOF
-        if let Some(task) = self.task {
-            // SAFETY: task ref-counted, alive
-            let _ = unsafe { task.as_ptr().as_mut().unwrap() }.write_bytes(b"", true);
+        if let Some(task) = self.task_mut() {
+            let _ = task.write_bytes(b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
 
@@ -2357,15 +2361,16 @@ impl NetworkSink {
             // we are already waiting for the end
             return bun_sys::Result::Ok(self.end_promise.value());
         }
-        if let Some(task) = self.task {
+        if self.task.is_some() {
             // we need to wait for the task to end
             self.end_promise = JSPromiseStrong::init(self.global_this());
             let value = self.end_promise.value();
             if !self.ended {
                 self.ended = true;
                 // we need to send EOF
-                // SAFETY: task ref-counted, alive
-                let _ = unsafe { task.as_ptr().as_mut().unwrap() }.write_bytes(b"", true);
+                if let Some(task) = self.task_mut() {
+                    let _ = task.write_bytes(b"", true);
+                }
                 self.signal.close(None);
             }
             return bun_sys::Result::Ok(value);
@@ -2381,10 +2386,9 @@ impl NetworkSink {
 
     pub fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        if let Some(task) = self.task {
+        if let Some(task) = self.task_ref() {
             //TODO: we could do better here
-            // SAFETY: task is intrusively ref-counted and alive while held in `self.task`.
-            return unsafe { task.as_ref() }.buffered.memory_cost();
+            return task.buffered.memory_cost();
         }
         0
     }

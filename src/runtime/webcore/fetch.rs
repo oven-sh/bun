@@ -433,11 +433,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut disable_timeout = false;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
-    // SAFETY: `vm.log` is set during VM init and live for the VM lifetime.
     let mut verbose: http::HTTPVerboseLevel = if vm
-        .log
-        .map(|p| unsafe { p.as_ref() }.level.at_least(bun_ast::Level::Debug))
-        .unwrap_or(false)
+        .log_ref()
+        .is_some_and(|l| l.level.at_least(bun_ast::Level::Debug))
     {
         http::HTTPVerboseLevel::Headers
     } else {

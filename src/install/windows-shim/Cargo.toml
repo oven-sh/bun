@@ -28,8 +28,9 @@
 #
 # Built by `scripts/build/rust.ts` (Windows targets only) before the main
 # `cargo build -p bun_bin`, with `--profile shim` (workspace `[profile.shim]`:
-# panic=abort, opt-level=z, strip), and the output is copied to
-# `src/install/windows-shim/bun_shim_impl.exe` for `include_bytes!`.
+# panic=abort, opt-level=z, lto, strip) plus `-Zbuild-std=core` /
+# `panic_immediate_abort` / `/ENTRY:shim_main` (no CRT), and the output is
+# copied to `src/install/windows-shim/bun_shim_impl.exe` for `include_bytes!`.
 
 [package]
 name = "bun_shim_impl"
@@ -47,9 +48,12 @@ required-features = ["shim_standalone"]
 [features]
 shim_standalone = []
 
+# No crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]` (they
+# pull `alloc`/`std` into the link). The shared source's two former uses of
+# them — `strum::IntoStaticStr` on `FailReason` (never consumed) and
+# `bstr::BStr` for byte-slice display — are handled with `core`-only code
+# under `cfg(feature = "shim_standalone")`.
 [dependencies]
-bstr.workspace = true
-strum.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

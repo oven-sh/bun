@@ -21,6 +21,15 @@
 
 // Mirror `bun_install/lib.rs`'s crate-level attributes — the path-included
 // modules assume these are set at the crate root.
+//
+// Freestanding: `no_std` + `no_main` so the link contains only the launcher
+// + Win32 externs — no Rust runtime, no CRT, no `std::sys` init. Matches
+// Zig's build (build.zig built `bun_shim_impl.zig` as a freestanding
+// ReleaseFast exe with `link_libc = false`, `single_threaded = true`).
+// `scripts/build/rust.ts` supplies `/ENTRY:shim_main` and rebuilds `core`
+// with `panic_immediate_abort` so the panic/fmt machinery is dead code.
+#![no_std]
+#![no_main]
 #![allow(unused, nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
 #![feature(adt_const_params)]
 
@@ -32,17 +41,89 @@ mod _bin_linking_shim;
 #[path = "bun_shim_impl.rs"]
 mod _bun_shim_impl;
 
+// ── /NODEFAULTLIB CRT stubs ────────────────────────────────────────────────
+// With `/NODEFAULTLIB` the MSVC CRT isn't linked, so the two CRT-hosted
+// link-time symbols LLVM/link.exe expect must be provided here.
+
+/// `_fltused` — link-time marker the MSVC toolchain references whenever a
+/// translation unit touches floating-point. The CRT defines it; we just need
+/// the symbol to exist.
 #[cfg(windows)]
-fn main() -> ! {
+#[unsafe(no_mangle)]
+pub static _fltused: i32 = 0;
+
+/// `__chkstk` — MSVC's stack-probe; LLVM inserts a call before any frame
+/// allocating >4 KiB (the launcher's path/cmdline buffers exceed that). The
+/// CRT version walks each 4 KiB page so the OS's guard-page-driven stack
+/// growth commits them. With `/NODEFAULTLIB` we supply the same probe.
+/// MS x64 contract: bytes-to-probe in `rax`; must preserve all registers
+/// except `rax`/`r10`/`r11`; does NOT adjust `rsp` (caller subtracts after).
+#[cfg(all(windows, target_arch = "x86_64"))]
+core::arch::global_asm!(
+    ".globl __chkstk",
+    "__chkstk:",
+    "    push rcx",
+    "    push rax",
+    "    cmp  rax, 0x1000",
+    "    lea  rcx, [rsp + 0x18]",
+    "    jb   3f",
+    "2:  sub  rcx, 0x1000",
+    "    or   qword ptr [rcx], 0",
+    "    sub  rax, 0x1000",
+    "    cmp  rax, 0x1000",
+    "    ja   2b",
+    "3:  sub  rcx, rax",
+    "    or   qword ptr [rcx], 0",
+    "    pop  rax",
+    "    pop  rcx",
+    "    ret",
+);
+
+/// AArch64 spelling (`__chkstk` on Win-ARM64): bytes/16 in `x15`; touches each
+/// 4 KiB page; preserves everything except `x16`/`x17`.
+#[cfg(all(windows, target_arch = "aarch64"))]
+core::arch::global_asm!(
+    ".globl __chkstk",
+    "__chkstk:",
+    "    lsl  x16, x15, #4",
+    "    mov  x17, sp",
+    "1:  sub  x17, x17, #4096",
+    "    subs x16, x16, #4096",
+    "    ldr  xzr, [x17]",
+    "    b.gt 1b",
+    "    ret",
+);
+
+/// PE entry point (named via `-C link-arg=/ENTRY:shim_main` in the build
+/// script — bypasses `mainCRTStartup` and the CRT entirely). The launcher
+/// reads its arguments / image path straight from the TEB→PEB process
+/// parameters, so no CRT argv parsing is needed.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn shim_main() -> ! {
     _bun_shim_impl::main()
 }
 
+/// `no_std` requires a crate-graph-unique panic handler. The shim's only
+/// panics are debug assertions; in release the build script enables `core`'s
+/// `panic_immediate_abort` so they compile to a bare trap and never reach
+/// this. If one does (debug `--profile shim` build), exit 255 — same code
+/// `fail_and_exit_with_reason` uses, and matching Zig's `panic = abort`.
+#[cfg(windows)]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+    // SAFETY: RtlExitUserProcess never returns.
+    unsafe { bun_windows_sys::ntdll::RtlExitUserProcess(255) }
+}
+
+// Non-Windows: the build system only ever builds this crate for
+// `*-pc-windows-msvc`, but a stray `cargo check -p bun_shim_impl
+// --features shim_standalone` on another host still needs a panic handler
+// to satisfy `#![no_std]`. With `#![no_main]` no entry symbol is required.
 #[cfg(not(windows))]
-fn main() {
-    // Unreachable in practice — the build system only builds this crate for
-    // `*-pc-windows-msvc` targets. Present so a stray `cargo check` on a
-    // non-Windows host doesn't fail with "main function not found".
-    panic!("bun_shim_impl is a Windows-only binary");
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+    loop {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

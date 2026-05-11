@@ -577,8 +577,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (cfg.windows) {
     const shimDest = windowsShimDestPath(cfg);
     // Always `--profile shim` (workspace `[profile.shim]`: panic=abort,
-    // opt-level=z, strip) regardless of bun's own profile — a debug bun should
-    // still write release shims (matches Zig's unconditional `.ReleaseFast`).
+    // opt-level=z, lto, codegen-units=1, strip) regardless of bun's own
+    // profile — a debug bun should still write release shims (matches Zig's
+    // unconditional `.ReleaseFast`).
+    //
+    // `-Zbuild-std=core,compiler_builtins` rebuilds the sysroot for the
+    // freestanding `#![no_std]` crate so LTO can inline across `core`;
+    // `panic_immediate_abort` makes every `panic!`/`unreachable!`/`assert!`
+    // (incl. those buried in `core::fmt`, slice indexing, `Option::unwrap`)
+    // compile to a bare `ud2`/`brk` with no `core::fmt::Arguments` payload —
+    // that machinery is otherwise the bulk of `.text`. Nightly + `rust-src`
+    // are guaranteed by `rust-toolchain.toml`.
     const shimArgs: string[] = [
       "-p",
       "bun_shim_impl",
@@ -592,14 +601,41 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       triple,
       "--profile",
       "shim",
+      "-Zbuild-std=core,compiler_builtins",
+      "-Zbuild-std-features=compiler-builtins-mem",
     ];
     const shimSrc = resolve(targetDir, triple, "shim", "bun_shim_impl.exe");
-    // Same env minus CARGO_ENCODED_RUSTFLAGS: the shim has its own panic
-    // strategy (abort) so `-Zsanitizer=address` (which assumes unwind) and
-    // `-Clinker-plugin-lto` (the PE is final-linked here, not deferred to
-    // bun's lld link) don't apply. `-Ctarget-cpu` is harmless to drop — the
-    // shim is I/O-bound and we want it small, not fast.
+    // Same env minus the main build's CARGO_ENCODED_RUSTFLAGS — the shim has
+    // its own panic strategy (abort) so `-Zsanitizer=address` (which assumes
+    // unwind) and `-Clinker-plugin-lto` (the PE is final-linked here, not
+    // deferred to bun's lld link) don't apply, and `-Cforce-frame-pointers` /
+    // `-Ctarget-cpu` cost size we don't want. Replace with a freestanding
+    // flag set:
+    //   - `/ENTRY:shim_main`      — bypass the CRT (`mainCRTStartup`) entirely;
+    //                               the launcher reads argv from TEB→PEB itself.
+    //   - `/SUBSYSTEM:CONSOLE`    — link.exe can't infer subsystem without a
+    //                               recognised entry symbol.
+    //   - `/NODEFAULTLIB`         — don't pull msvcrt/vcruntime/ucrt; the only
+    //                               imports are kernel32 + ntdll (named via
+    //                               `#[link]` on the externs).
+    //
+    // (`-Cforce-unwind-tables=no` would drop `.pdata`, but the
+    // `*-windows-msvc` target spec sets `requires_uwtable: true` so rustc
+    // rejects it. The section is ~3 KiB; not worth a custom target JSON.)
     const { CARGO_ENCODED_RUSTFLAGS: _, ...shimEnv } = env;
+    shimEnv.CARGO_ENCODED_RUSTFLAGS = [
+      // `panic = "immediate-abort"` is the new (nightly ≥ 2025-12) spelling of
+      // the old `-Zbuild-std-features=panic_immediate_abort`: every panic call
+      // (incl. core::fmt-carrying assert/unreachable/unwrap) compiles to a
+      // bare trap with no `Arguments` payload.
+      "-Zunstable-options",
+      "-Cpanic=immediate-abort",
+      "-Clink-arg=/ENTRY:shim_main",
+      "-Clink-arg=/SUBSYSTEM:CONSOLE",
+      "-Clink-arg=/NODEFAULTLIB",
+      "-Clink-arg=kernel32.lib",
+      "-Clink-arg=ntdll.lib",
+    ].join("\x1f");
     n.build({
       outputs: [shimDest],
       rule: "rust_shim",

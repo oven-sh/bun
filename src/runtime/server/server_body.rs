@@ -850,10 +850,11 @@ pub enum GetOrStartLoadResult<'a> {
 }
 
 pub enum ServePluginsCallback<'a> {
-    /// Raw `*mut` because the route is stored in `ServePluginsState::Pending.html_bundle_routes`
-    /// and later mutated via `on_plugins_resolved`/`on_plugins_rejected`. A `&Route` would not
-    /// carry write provenance, making the later `&mut *route` deref UB. Callers pass `&mut self`,
-    /// which coerces to `*mut` here.
+    /// Raw `*mut` because the route is stored in
+    /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
+    /// `on_plugins_resolved`/`on_plugins_rejected`. R-2: those now take `&self`
+    /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
+    /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
     HtmlBundleRoute(*mut html_bundle::Route),
     DevServer(&'a DevServer),
 }
@@ -1043,8 +1044,9 @@ impl ServePlugins {
         };
 
         for route in html_bundle_routes {
-            // SAFETY: route was ref'd when stored
-            let route_ref = unsafe { &mut *route };
+            // SAFETY: route was ref'd when stored. R-2: deref as shared —
+            // `on_plugins_resolved` takes `&self`.
+            let route_ref = unsafe { &*route };
             // Spec server.zig:457 — `bun.handleOom(route.onPluginsResolved(plugin))`
             bun_core::handle_oom(route_ref.on_plugins_resolved(Some(NonNull::from(plugin_ref))));
             // SAFETY: paired with the `ref_` taken when the route was pushed.
@@ -1073,8 +1075,9 @@ impl ServePlugins {
         self.state = ServePluginsState::Err;
 
         for route in html_bundle_routes {
-            // SAFETY: route was ref'd when stored
-            bun_core::handle_oom(unsafe { &mut *route }.on_plugins_rejected());
+            // SAFETY: route was ref'd when stored. R-2: deref as shared —
+            // `on_plugins_rejected` takes `&self`.
+            bun_core::handle_oom(unsafe { &*route }.on_plugins_rejected());
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }

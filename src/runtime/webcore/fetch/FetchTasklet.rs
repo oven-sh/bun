@@ -709,8 +709,21 @@ impl FetchTasklet {
             // chunk type (e.g. a JS number) throws inside `sink.write` and lands in
             // `writeEndRequest` → `abort_reason` on the next microtask. Drain now so the
             // abort is observable below before we commit to resolving the Response.
-            // SAFETY: event_loop ptr is live for the VM's lifetime; see enqueue_task below.
-            let _ = unsafe { (*vm.event_loop()).drain_microtasks() };
+            //
+            // Only drain when this same progress tick would otherwise *resolve* the
+            // promise (i.e. response metadata is already present). On the common
+            // can_stream-only first progress (`metadata == None`) we early-return
+            // right below anyway, and draining the whole microtask queue from inside
+            // `tick_queue_with_count` while `self.mutex` is held is both an aliased
+            // `&mut EventLoop` (`run_task` already holds one) and observable in
+            // `fetch-leak-test-fixture-5.js`'s post-batch `heapStats().Promise`
+            // count for the streaming-body cases — the extra `release_weak_refs`
+            // + JSC drain per task perturbs Promise lifetimes enough to push the
+            // count over its 35-object threshold (#53208 flaky annotation).
+            if self.metadata.is_some() && !self.is_waiting_body {
+                // SAFETY: event_loop ptr is live for the VM's lifetime; see enqueue_task below.
+                let _ = unsafe { (*vm.event_loop()).drain_microtasks() };
+            }
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {

@@ -102,17 +102,25 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
             &mut kerneltime,
             &mut usertime,
         )
-    } == 1
+    } != 0
     {
+        // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
+        // 10 ticks. The Zig spec (process.zig:53) computes the sub-second part
+        // as `temp % 1_000_000`, which is unit-mismatched: it takes a 100-ns
+        // tick count modulo a microsecond denominator, so a 178 125 µs run
+        // (1_781_250 ticks) reports as 781_250 µs. That over-report is what
+        // tips the "does not use 100% cpu > install" test (`cpuTime.total <
+        // 750_000`) on Windows aarch64. Diverge from spec and convert
+        // correctly: `(ticks % 10_000_000) / 10`.
         let mut temp: u64 = ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
-            usage_info.stime.sec = i64::try_from(temp / 10_000_000).expect("int cast");
-            usage_info.stime.usec = i64::try_from(temp % 1_000_000).expect("int cast");
+            usage_info.stime.sec = (temp / 10_000_000) as i64;
+            usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
         }
         temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
         if temp > 0 {
-            usage_info.utime.sec = i64::try_from(temp / 10_000_000).expect("int cast");
-            usage_info.utime.usec = i64::try_from(temp % 1_000_000).expect("int cast");
+            usage_info.utime.sec = (temp / 10_000_000) as i64;
+            usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
         }
     }
     let mut counters = IoCounters::default();

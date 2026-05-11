@@ -1475,20 +1475,47 @@ impl<'a> SecurityScanSubprocess<'a> {
             // and `handle_results` reports "exited without sending data".
             //
             // The child has exited, so the write end of fd 3 is closed: a
-            // synchronous drain cannot block. Read until EOF/EAGAIN before
-            // closing. Windows reads via libuv (async) and the fd here is a
-            // uv-owned pipe handle — skip the sync drain there.
+            // synchronous drain cannot block. Read until EOF before closing.
+            // Windows reads via libuv (async) and the fd here is a uv-owned
+            // pipe handle — skip the sync drain there.
+            //
+            // EINTR: on macOS `bun_sys::read` is single-shot (`read$NOCANCEL`,
+            // no retry — sys.zig:2138). The install path always uses the
+            // WaiterThread (PackageManager.rs:1929), and the TTY matrix arms
+            // spawn under a PTY, so signals can land mid-drain; retrying
+            // EINTR is mandatory or we bail with `ipc_data` empty and report
+            // "exited without sending data" exactly like the pre-drain race.
+            // EAGAIN cannot legitimately occur once the sole writer is gone,
+            // but treat it as retry too (bounded) rather than truncating —
+            // truncation here is unrecoverable.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();
                 if fd != Fd::INVALID {
                     let mut buf = [0u8; 4096];
+                    let mut spins: u32 = 0;
                     loop {
                         match bun_sys::read(fd, &mut buf) {
                             Ok(0) => break,
-                            Ok(n) => self.ipc_data.extend_from_slice(&buf[..n]),
-                            Err(e) if e.get_errno() == bun_sys::E::EAGAIN => break,
-                            Err(_) => break,
+                            Ok(n) => {
+                                self.ipc_data.extend_from_slice(&buf[..n]);
+                                spins = 0;
+                            }
+                            Err(e) => match e.get_errno() {
+                                bun_sys::E::EINTR => continue,
+                                bun_sys::E::EAGAIN => {
+                                    // Writer is gone; this is a transient
+                                    // kernel-visibility window at most. Spin
+                                    // briefly, then give up to avoid a hard
+                                    // loop if something is genuinely wedged.
+                                    spins += 1;
+                                    if spins > 64 {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                _ => break,
+                            },
                         }
                     }
                     self.has_received_ipc = !self.ipc_data.is_empty();

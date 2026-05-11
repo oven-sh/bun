@@ -180,7 +180,9 @@ impl JSMySQLQuery {
         };
         // SAFETY: `from_js` returned a non-null `*mut MySQLConnection` whose
         // backing JSC wrapper is rooted by `arguments[0]` for this frame.
-        let connection: &mut MySQLConnection = unsafe { &mut *connection };
+        // R-2: shared `&` only — every `MySQLConnection` method reached below
+        // is `&self` post-migration.
+        let connection: &MySQLConnection = unsafe { &*connection };
         let target = arguments[1];
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
@@ -415,7 +417,7 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn run(&mut self, connection: &mut MySQLConnection) -> Result<(), AnyMySQLError::Error> {
+    pub fn run(&mut self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         if self.vm().is_shutting_down() {
             debug!("run cannot run a query if the VM is shutting down");
             // cannot run a query if the VM is shutting down

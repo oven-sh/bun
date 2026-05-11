@@ -115,10 +115,12 @@ impl MySQLRequestQueue {
     ///   `(*this)` access overlaps the lifetime of that `&mut`.
     pub unsafe fn advance(connection: *mut MySQLConnection) {
         // SAFETY: caller contract — `connection` has full-allocation
-        // provenance; `addr_of_mut!` projects the embedded queue without
-        // creating an intermediate `&mut` (so `connection`'s tag stays live).
+        // provenance. R-2: the inner protocol struct is wrapped in
+        // `JsCell` (`UnsafeCell`); `as_ptr()` yields a `*mut` with write
+        // provenance for the inner bytes, and `addr_of_mut!` projects the
+        // embedded queue without an intermediate `&mut`.
         let this: *mut Self =
-            unsafe { core::ptr::addr_of_mut!((*connection).connection.queue) };
+            unsafe { core::ptr::addr_of_mut!((*(*connection).connection.as_ptr()).queue) };
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
@@ -176,10 +178,10 @@ impl MySQLRequestQueue {
                 // from the same `connection` raw via `addr_of_mut!`, the
                 // reborrow is a child tag that is popped when the `&mut` ends
                 // — the next `(*this)` access below remains valid.
-                if let Err(err) = req.run(unsafe { &mut *connection }) {
+                if let Err(err) = req.run(unsafe { &*connection }) {
                     debug!("run failed");
-                    // SAFETY: same as above — fresh `&mut *connection`
-                    // reborrow, no `(*this)` access overlaps its lifetime.
+                    // SAFETY: same as above — shared `&*connection` reborrow
+                    // (R-2: `on_error` takes `&self`).
                     unsafe { (*connection).on_error(Some(req), err) };
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };

@@ -193,7 +193,6 @@ bun_dispatch::link_interface! {
         Terminal,
         CronRegister,
         CronRemove,
-        LifecycleScript,
     ] {
         fn has_on_read_chunk() -> bool;
         fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;

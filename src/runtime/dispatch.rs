@@ -107,6 +107,9 @@ use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThr
 use bun_install_types::process_exit::{
     InstallProcessExitAction, LifecycleScriptExitAction,
 };
+use bun_install_types::reader::{
+    InstallBufferedReaderDelivery, InstallReaderError,
+};
 use bun_runtime_types::process_exit::RuntimeProcessExitAction;
 use bun_runtime_types::reader::RuntimeBufferedReaderDelivery;
 
@@ -243,6 +246,41 @@ pub fn __bun_dispatch_process_exit_delivery(
 
 fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
     __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_dispatch_install_buffered_reader_delivery(
+    delivery: InstallBufferedReaderDelivery,
+    event_loop: bun_io::EventLoopHandle,
+    context: *mut core::ffi::c_void,
+) {
+    match delivery {
+        InstallBufferedReaderDelivery::LifecycleScriptOutput {
+            state,
+            action,
+            error,
+        } => {
+            if let Some(InstallReaderError { errno, name }) = error {
+                bun_install::LifecycleScriptSubprocess::report_reader_error_from_state(
+                    state, errno, name,
+                );
+            }
+            if matches!(action, LifecycleScriptExitAction::MaybeFinished) {
+                let context = if context.is_null() {
+                    event_loop.current_context()
+                } else {
+                    context
+                };
+                if !context.is_null() {
+                    unsafe {
+                        bun_install::LifecycleScriptSubprocess::drain_ready_from_event_loop_context(
+                            context,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

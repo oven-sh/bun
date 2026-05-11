@@ -9,15 +9,15 @@ use crate::isolated_install::installer::{Installer, Step, CompleteState};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use crate::PackageManager;
-use bun_event_loop::AnyEventLoop;
 use bun_io_types::heap as io_heap;
-use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
+use bun_io::{BufferedReader, BufferedReaderTarget};
+use bun_install_types::reader::InstallBufferedReaderTarget;
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_install_types::lifecycle::{InstallCtx, LifecycleScriptState};
 use bun_install_types::process_exit::{
-    InstallProcessExitTarget, LifecycleScriptExitAction, LifecycleScriptStateHandle,
+    InstallProcessExitTarget, LifecycleScriptStateHandle,
 };
 use bun_spawn::{
     Process, ProcessExitTarget, Rusage, SpawnOptions, SpawnResultExt as _, Status,
@@ -26,12 +26,6 @@ use bun_io_types::reader::BufferedReaderHandle;
 use bun_spawn_types::ProcessHandle;
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
-use bun_io::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -305,64 +299,27 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         )
     }
 
-    pub fn loop_(&self) -> *mut AsyncLoop {
-        // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_io::Loop` *is* `PosixLoop` (identity). On Windows the uws
-        // wrapper (`WindowsLoop`) embeds the `*mut uv_loop_t` as a field —
-        // project it so the `BufferedReaderParent::loop_` consumer (which
-        // feeds `uv_fs_read`/`Source::open`) sees a real `uv_loop_t*`.
-        #[cfg(not(windows))]
-        { self.manager_mut().event_loop.r#loop().cast::<AsyncLoop>() }
-        #[cfg(windows)]
-        // SAFETY: `r#loop()` returns the live `us_loop` allocated by
-        // `us_create_loop`; `uv_loop` is set once in C at construction.
-        { unsafe { (*self.manager_mut().event_loop.r#loop()).uv_loop } }
-    }
-
-    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
-        &self.manager().event_loop
+    pub fn report_reader_error_from_state(
+        state: LifecycleScriptStateHandle,
+        errno: u16,
+        errno_name: &'static str,
+    ) {
+        state.with_reader_error_info(|script_name, package_name| {
+            Output::pretty_errorln(
+                format_args!(
+                    "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
+                    bstr::BStr::new(script_name),
+                    bstr::BStr::new(package_name),
+                    errno,
+                    errno_name,
+                ),
+            );
+        });
+        Output::flush();
     }
 
     pub fn script_name(&self) -> &'static [u8] {
         self.state.script_name()
-    }
-
-    pub fn on_reader_done(&mut self) {
-        let action = self.state.record_reader_done();
-        self.apply_exit_action(action);
-    }
-
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        let action = self.state.record_reader_done();
-
-        Output::pretty_errorln(
-            format_args!(
-                "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
-                bstr::BStr::new(self.script_name()),
-                bstr::BStr::new(&self.state.package_name),
-                err.errno,
-                <&'static str>::from(err.get_errno()),
-            ),
-        );
-        Output::flush();
-        self.apply_exit_action(action);
-    }
-
-    fn apply_exit_action(&mut self, action: LifecycleScriptExitAction) {
-        match action {
-            LifecycleScriptExitAction::WrongProcess => {
-                Output::debug_warn(format_args!(
-                    "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
-                ));
-            }
-            LifecycleScriptExitAction::Pending => {}
-            LifecycleScriptExitAction::MaybeFinished => {
-                let Some(status) = self.state.exit_status() else {
-                    return;
-                };
-                self.handle_exit(status);
-            }
-        }
     }
 
     unsafe fn find_ready_node(
@@ -524,8 +481,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // whole-struct `&mut Self` across reentrant calls.
         unsafe {
         let manager: *mut PackageManager = (*this).manager;
-        (*this).stdout.set_parent(this.cast::<c_void>());
-        (*this).stderr.set_parent(this.cast::<c_void>());
 
         Self::ensure_not_in_heap(this);
         (*this).state.reset_for_script(next_script_index);
@@ -702,12 +657,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 unreachable!();
             }
         };
+        let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
+        let event_loop_ctx = event_loop.as_event_loop_ctx();
+        let state_handle = LifecycleScriptStateHandle::from_live_state(&mut (*this).state);
 
         #[cfg(unix)]
         {
             if let Some(stdout) = spawned.stdout {
                 if !spawned.memfds[1] {
-                    (*this).stdout.set_parent(this.cast::<c_void>());
+                    (*this).stdout.set_target(BufferedReaderTarget::Install {
+                        target: InstallBufferedReaderTarget::LifecycleScriptOutput {
+                            state: state_handle,
+                        },
+                        event_loop: event_loop_ctx,
+                    });
                     let _ = bun_sys::set_nonblocking(stdout);
                     (*this).state.record_output_fd();
 
@@ -721,13 +684,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stdout.set_parent(this.cast::<c_void>());
                     (*this).stdout.start_memfd(stdout);
                 }
             }
             if let Some(stderr) = spawned.stderr {
                 if !spawned.memfds[2] {
-                    (*this).stderr.set_parent(this.cast::<c_void>());
+                    (*this).stderr.set_target(BufferedReaderTarget::Install {
+                        target: InstallBufferedReaderTarget::LifecycleScriptOutput {
+                            state: state_handle,
+                        },
+                        event_loop: event_loop_ctx,
+                    });
                     let _ = bun_sys::set_nonblocking(stderr);
                     (*this).state.record_output_fd();
 
@@ -741,7 +708,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stderr.set_parent(this.cast::<c_void>());
                     (*this).stderr.start_memfd(stderr);
                 }
             }
@@ -758,7 +724,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                 (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
-                (*this).stdout.set_parent(this.cast::<c_void>());
+                (*this).stdout.set_target(BufferedReaderTarget::Install {
+                    target: InstallBufferedReaderTarget::LifecycleScriptOutput {
+                        state: state_handle,
+                    },
+                    event_loop: event_loop_ctx,
+                });
                 (*this).state.record_output_fd();
                 (*this).stdout.start_with_current_pipe()?;
                 (*this).state.record_stdout_reader(
@@ -768,7 +739,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
                 (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
-                (*this).stderr.set_parent(this.cast::<c_void>());
+                (*this).stderr.set_target(BufferedReaderTarget::Install {
+                    target: InstallBufferedReaderTarget::LifecycleScriptOutput {
+                        state: state_handle,
+                    },
+                    event_loop: event_loop_ctx,
+                });
                 (*this).state.record_output_fd();
                 (*this).stderr.start_with_current_pipe()?;
                 (*this).state.record_stderr_reader(
@@ -778,7 +754,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
         }
 
-        let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
         // `to_process` returns an intrusively-refcounted `*mut Process` (heap::alloc,
         // refcount = 1); the strong ref transfers to `(*this).process` and is released
         // in `reset_polls` via `process.deref()`.
@@ -789,9 +764,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let process_handle = ProcessHandle::from_ptr(process)
             .expect("spawned Process pointer must not be null");
         (*this).state.initialize_exit_state_from_handle(process_handle);
-        let exit_handle = LifecycleScriptStateHandle::from_live_state(&mut (*this).state);
         (*process).set_exit_target(ProcessExitTarget::Install(
-            InstallProcessExitTarget::LifecycleScript(exit_handle),
+            InstallProcessExitTarget::LifecycleScript(state_handle),
         ));
 
         let delivery = match (*process).watch_or_reap() {
@@ -1113,8 +1087,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         self.stdout.deinit();
         self.stderr.deinit();
-        self.stdout = OutputReader::init::<Self>();
-        self.stderr = OutputReader::init::<Self>();
+        self.stdout = OutputReader::init_detached();
+        self.stderr = OutputReader::init_detached();
         self.state.reset_exit_state();
     }
 
@@ -1175,8 +1149,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             envp,
             shell_bin,
             process: core::ptr::null_mut(),
-            stdout: OutputReader::init::<Self>(),
-            stderr: OutputReader::init::<Self>(),
+            stdout: OutputReader::init_detached(),
+            stderr: OutputReader::init_detached(),
             heap: io_heap::IntrusiveField::default(),
         });
 
@@ -1226,42 +1200,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .manager()
             .pending_lifecycle_script_tasks
             .fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// BufferedReaderParent — wires the stdout/stderr OutputReaders back to
-// `on_reader_done`/`on_reader_error` via the type-erased vtable.
-// ──────────────────────────────────────────────────────────────────────────
-
-bun_io::buffered_reader_parent_link!(LifecycleScript for LifecycleScriptSubprocess<'static>);
-impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::LifecycleScript;
-    /// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
-    const HAS_ON_READ_CHUNK: bool = false;
-
-    unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: vtable contract — `this` is the live `set_parent` backref;
-        // tail-position call so no `&mut` to the embedded reader survives.
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: as above.
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        // SAFETY: as above. `AsyncLoop` (= `bun_io::Loop`) is a type alias for
-        // `bun_uws_sys::Loop` on POSIX, matching the trait's nominal return type.
-        unsafe { (*this).loop_() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
-        // SAFETY: as above. `manager.event_loop` is an `AnyEventLoop`; convert
-        // through `EventLoopHandle::from_any` so the by-value `EventLoopCtx`
-        // carries the right `kind`.
-        unsafe {
-            bun_event_loop::EventLoopHandle::from_any(&mut (*(*this).manager).event_loop)
-                .as_event_loop_ctx()
-        }
     }
 }
 

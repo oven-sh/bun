@@ -180,7 +180,8 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime process completion: value-only state lives below, effect application
 stays above.
 
-This branch proves seven production paths plus one Mini-shell hard-case slice.
+This branch proves seven process-exit production paths, three runtime reader
+paths, and two install reader paths, plus one Mini-shell hard-case slice.
 WebView process exits use the
 runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
@@ -229,13 +230,18 @@ spawn path records those lower handles in the sidecar state and installs
 the owning script may be ready. `bun_install` keeps the effectful owner side:
 it drains ready nodes from the existing `PackageManager.active_lifecycle_scripts`
 heap, then the normal lifecycle code prints output, updates progress, starts the
-next script, completes installer entries, or frees the subprocess. The install
-context stores the entry id plus a typed installer handle; the concrete
-`Installer<'_>` pointer is recovered only at the `bun_install` effect sites. The
-reader side for lifecycle stdout/stderr still uses the existing
-`BufferedReaderParent` callback path, so the next movement target is making
-those readers feed the same typed lifecycle state instead of calling back into
-`LifecycleScriptSubprocess`. Cron register/remove now keep their child-process
+next script, completes installer entries, or frees the subprocess. Lifecycle
+stdout/stderr readers now use `BufferedReaderTarget::Install` with
+`InstallBufferedReaderTarget::LifecycleScriptOutput { state }`: `bun_io`
+records reader done/error into the same `LifecycleScriptStateHandle`, emits a
+typed install-reader delivery when the reducer may be ready, and
+`bun_runtime::dispatch` re-enters `bun_install` through the current
+`PackageManager*` context to drain the existing active lifecycle heap. Reader
+errors still print the same script/package/errno message from `bun_install`,
+with the lower IO crate passing only typed error data. The install context
+stores the entry id plus a typed installer handle; the concrete `Installer<'_>`
+pointer is recovered only at the `bun_install` effect sites. Cron
+register/remove now keep their child-process
 readiness/error state in `bun_runtime_types::cron::ProcessState`: pending
 output-fd count, lower `ProcessHandle`, stdout/stderr `BufferedReaderHandle`s,
 initialized `ProcessExitReadiness`, and the first process-output error. The
@@ -363,6 +369,15 @@ pub enum InstallProcessExitAction {
 
 pub enum InstallBufferedReaderTarget {
     SecurityScanIpc { state: SecurityScanExitHandle },
+    LifecycleScriptOutput { state: LifecycleScriptStateHandle },
+}
+
+pub enum InstallBufferedReaderDelivery {
+    LifecycleScriptOutput {
+        state: LifecycleScriptStateHandle,
+        action: LifecycleScriptExitAction,
+        error: Option<InstallReaderError>,
+    },
 }
 
 pub enum SecurityScanExitAction {
@@ -421,13 +436,14 @@ Process-exit production wiring
 ```
 
 ```
-Reducer prework that still needs owner type movement
+Typed reducer paths that feed existing owner/effect contexts
   ├─> install/lifecycle_script_runner.rs
   │     ├─> counts output readers before process identity exists
   │     ├─> initializes LifecycleScriptExit once spawned Process exists
-  │     ├─> reader callbacks call record_reader_done()
-  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
-  │     └─> MaybeFinished applies handle_exit() in bun_install
+  │     ├─> Process stores InstallProcessExitTarget::LifecycleScript(LifecycleScriptStateHandle)
+  │     ├─> stdout/stderr readers store InstallBufferedReaderTarget::LifecycleScriptOutput
+  │     ├─> process exit and reader done/error mutate the same LifecycleScriptState
+  │     └─> MaybeFinished drains PackageManager.active_lifecycle_scripts in bun_install
   └─> runtime/api/cron.rs
         ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
         ├─> initializes bun_runtime_types::cron::ProcessState once spawned Process exists
@@ -440,24 +456,6 @@ Reducer prework that still needs owner type movement
 
 ```
 Remaining owner movement
-  ├─> LifecycleScriptSubprocess
-  │     ├─> current owner: install/lifecycle_script_runner.rs::LifecycleScriptSubprocess
-  │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, shell path, intrusive heap node
-  │     │     - embeds LifecycleScriptState for command/readiness/timer/install-task state and lower process/reader handles
-  │     │     - spawn_next_script_inner still installs ProcessExit::LifecycleScript after ProcessIdentity exists
-  │     ├─> current event-loop context
-  │     │     - PackageManager::tick_lifecycle_scripts passes PackageManager* directly
-  │     │     - PackageManager::sleep_until now separates task/is_done closure context from current typed context and exposes PackageManager*
-  │     │     - that proves the manager is live, but it does not identify which active LifecycleScriptSubprocess finished
-  │     ├─> current re-entry: LifecycleScriptSubprocess::on_process_exit
-  │     │     - validates through LifecycleScriptState::process_handle, updates LifecycleScriptExit, then calls apply_exit_action()
-  │     ├─> synchronous effect: LifecycleScriptSubprocess::handle_exit
-  │     │     - may print output, mutate PackageManager/installer state, spawn the next script, destroy self, or exit process
-  │     └─> honest next move
-  │           - move the lifecycle owner/effect boundary far enough into bun_install_types that ProcessExitTarget can carry a typed state/handle whose Ready action is directly consumable
-  │           - a NonNull<LifecycleScriptExit> target by itself is only reducer state; using it to recover LifecycleScriptSubprocess would be the old owner-pointer coupling under a field-offset disguise
-  │           - a NonNull<LifecycleScriptState> target by itself has the same problem: handle_exit still needs the process ref, stdout/stderr readers and buffers, envp/shell path, heap node, PackageManager effects, and Installer effects
-  │           - scanning PackageManager.active_lifecycle_scripts by ProcessIdentity would add the side lookup path this branch is specifically rejecting
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
   │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
@@ -495,12 +493,6 @@ Remaining owner movement
 
 ```
 What a real next split must change
-  ├─> lifecycle
-  │     ├─> current typed reducer: LifecycleScriptExit in bun_install_types
-  │     ├─> current typed command/readiness state: ScriptsList + LifecycleScriptState in bun_install_types
-  │     ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
-  │     ├─> missing typed consumer: exact lifecycle owner/effect state, not PackageManager as a broad context
-  │     └─> valid shape: move the lifecycle completion state that owns "spawn next / finish / destroy" decisions into an install sidecar type, then let bun_install apply only the package-manager effects
   ├─> cron
   │     ├─> current typed process state: ProcessState in bun_runtime_types::cron
   │     ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
@@ -515,22 +507,11 @@ What a real next split must change
 
 ```
 Required deeper type movement
-  ├─> lifecycle cannot finish with the current split alone
-  │     ├─> the reducer knows "ready", but handle_exit also needs:
-  │     │     - process/env/shell/reader storage and teardown authority
-  │     │     - process close/deref authority
-  │     │     - stdout/stderr buffers and reader teardown/reuse
-  │     │     - PackageManager/Installer effects
-  │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
-  │     ├─> ScriptsList has moved into bun_install_types as the first command-data piece; the old lockfile path re-exports that sidecar type so install callers keep the same surface
-  │     ├─> LifecycleScriptState has moved the current index, copied package name, output readiness count, and LifecycleScriptExit reducer into bun_install_types without changing the old package-name allocation shape
-  │     ├─> LifecycleScriptState now also owns timer, alive-count state, and InstallCtx; bun_install reconstructs `entry::Id`/`Installer<'_>*` only while applying completion effects
-  │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle and stored in LifecycleScriptState by the production spawn path
-  │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks and lifecycle stdout/stderr handles are stored in LifecycleScriptState once the readers start
-  │     ├─> the generic intrusive heap metadata moved to bun_io_types, and lifecycle/timer production code imports that sidecar path directly
-  │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
-  │     ├─> lifecycle still needs the process/reader/env/effect storage split that owns those handles without recovering LifecycleScriptSubprocess
-  │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
+  ├─> lifecycle is now the install mixed process+reader proof point
+  │     ├─> ScriptsList, LifecycleScriptState, LifecycleScriptExit, timer/alive/install context, ProcessHandle, and BufferedReaderHandle storage live in bun_install_types
+  │     ├─> bun_spawn and bun_io mutate only LifecycleScriptStateHandle
+  │     ├─> bun_install applies effects by draining the already-existing PackageManager.active_lifecycle_scripts heap when the typed reducer says MaybeFinished
+  │     └─> no lower crate stores LifecycleScriptSubprocess*, reconstructs it from a state field, or looks it up by ProcessIdentity
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
   │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
@@ -552,6 +533,9 @@ Typed reader-delivery follow-through
   │     ├─> SecurityScan IPC reader stores BufferedReaderTarget::Install { target: InstallBufferedReaderTarget::SecurityScanIpc, ... }
   │     │     - bun_io mutates only bun_install_types::SecurityScanExit
   │     │     - bun_install still performs scanner parsing/drain/deinit effects
+  │     ├─> LifecycleScript stdout/stderr readers store BufferedReaderTarget::Install { target: InstallBufferedReaderTarget::LifecycleScriptOutput, ... }
+  │     │     - bun_io mutates only bun_install_types::LifecycleScriptState
+  │     │     - bun_install still prints errors and drains active lifecycle effects
   │     └─> runtime CLI readers store BufferedReaderTarget::Runtime
   │           - FilterRunHandle chunks route through RuntimeBufferedReaderDelivery::FilterRunHandleChunk
   │           - MultiRunPipeReader chunks route through RuntimeBufferedReaderDelivery::MultiRunPipeReaderChunk
@@ -614,7 +598,8 @@ BufferedReader target shape
         └─> package-manager or runtime-local cleanup
 ```
 
-The SecurityScan reader is the first production reader-side conversion:
+SecurityScan and LifecycleScript are the install-domain reader-side
+conversions:
 
 ```
 SecurityScan IPC reader target
@@ -632,6 +617,20 @@ SecurityScan IPC reader target
         ├─> installs the target after ProcessIdentity exists
         ├─> drains a pending process-exit-first close locally before completion
         └─> parses SecurityScanExit::ipc_data() in handle_results()
+
+LifecycleScript output reader target
+  ├─> bun_install_types::LifecycleScriptState
+  │     ├─> owns output readiness count and lower stdout/stderr reader handles
+  │     ├─> records reader completion/error
+  │     └─> shares the same LifecycleScriptExit gate as process exit
+  ├─> bun_io::BufferedReaderTarget::Install
+  │     ├─> stores InstallBufferedReaderTarget::LifecycleScriptOutput + EventLoopHandle
+  │     ├─> records done/error through LifecycleScriptStateHandle
+  │     └─> emits InstallBufferedReaderDelivery::LifecycleScriptOutput when the reducer may be ready
+  └─> bun_install::LifecycleScriptSubprocess
+        ├─> installs the target before starting stdout/stderr readers
+        ├─> reports reader errors with the same script/package/errno output
+        └─> drains ready nodes from PackageManager.active_lifecycle_scripts
 ```
 
 ## Safety Invariants

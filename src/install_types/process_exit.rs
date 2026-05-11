@@ -85,6 +85,16 @@ impl LifecycleScriptStateHandle {
     pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> LifecycleScriptExitAction {
         self.with_state(|state| state.on_process_exit(ctx))
     }
+
+    #[inline]
+    pub fn record_reader_done(self) -> LifecycleScriptExitAction {
+        self.with_state(|state| state.record_reader_done())
+    }
+
+    #[inline]
+    pub fn with_reader_error_info<R>(self, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
+        self.with_state(|state| f(state.script_name(), &state.package_name))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

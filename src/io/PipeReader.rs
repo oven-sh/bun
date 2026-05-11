@@ -7,7 +7,9 @@ use std::sync::Arc;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
-use bun_install_types::reader::InstallBufferedReaderTarget;
+use bun_install_types::reader::{
+    InstallBufferedReaderDelivery, InstallBufferedReaderTarget, InstallReaderError,
+};
 use bun_io_types::file_poll;
 use bun_io_types::reader::BufferedReaderHandle;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
@@ -46,6 +48,11 @@ use bun_sys::ReturnCodeExt as _;
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
 
 unsafe extern "Rust" {
+    fn __bun_dispatch_install_buffered_reader_delivery(
+        delivery: InstallBufferedReaderDelivery,
+        event_loop: EventLoopHandle,
+        context: *mut c_void,
+    );
     fn __bun_dispatch_runtime_buffered_reader_delivery(
         delivery: RuntimeBufferedReaderDelivery<'_>,
         context: *mut c_void,
@@ -116,7 +123,7 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_read_chunk(self, chunk: &[u8], _has_more: ReadState) -> bool {
         match self {
-            Self::Install { target, .. } => {
+            Self::Install { target, event_loop } => {
                 target.on_read_chunk(chunk);
                 true
             }
@@ -138,8 +145,16 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_reader_done(self, _reader: BufferedReaderHandle) {
         match self {
-            Self::Install { target, .. } => {
-                let _ = target.on_reader_done();
+            Self::Install { target, event_loop } => {
+                if let Some(delivery) = target.on_reader_done() {
+                    unsafe {
+                        __bun_dispatch_install_buffered_reader_delivery(
+                            delivery,
+                            event_loop,
+                            event_loop.current_context(),
+                        );
+                    }
+                }
             }
             Self::Runtime { target, event_loop } => {
                 if let Some(delivery) = target.on_reader_done() {
@@ -159,12 +174,25 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_reader_error(self, _reader: BufferedReaderHandle, err: sys::Error) {
         match self {
-            Self::Install { target, .. } => {
-                bun_core::Output::err_generic(
-                    "Failed to read security scanner IPC: {}",
-                    (err,),
-                );
-                let _ = target.on_reader_error();
+            Self::Install { target, event_loop } => {
+                if matches!(target, InstallBufferedReaderTarget::SecurityScanIpc { .. }) {
+                    bun_core::Output::err_generic(
+                        "Failed to read security scanner IPC: {}",
+                        (&err,),
+                    );
+                }
+                if let Some(delivery) = target.on_reader_error(InstallReaderError {
+                    errno: err.errno,
+                    name: <&'static str>::from(err.get_errno()),
+                }) {
+                    unsafe {
+                        __bun_dispatch_install_buffered_reader_delivery(
+                            delivery,
+                            event_loop,
+                            event_loop.current_context(),
+                        );
+                    }
+                }
             }
             Self::Runtime { target, event_loop } => {
                 let _ = err;

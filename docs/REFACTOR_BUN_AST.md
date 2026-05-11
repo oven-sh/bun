@@ -24,10 +24,12 @@ bun_bundler ─► {bun_js_parser, bun_js_printer, bun_css, bun_parsers, bun_res
 ### → `src/ast/` (new crate `bun_ast`)
 
 From `src/logger/`:
+
 - `lib.rs` (Loc, Range, Log, Msg, MsgData, Source, fs::Path, Indentation) — **minus** `js_ast` mod + re-exports at L3360-3373
 - everything else in `src/logger/*.rs`
 
 From `src/js_parser/ast/`:
+
 - `E.rs` `Expr.rs` `S.rs` `Stmt.rs` `B.rs` `Binding.rs` `G.rs` `Op.rs`
 - `base.rs` `Scope.rs` `Symbol.rs` `CharFreq.rs` `Ref.rs` (if separate; else in base/mod)
 - `NewStore.rs` `ASTMemoryAllocator.rs`
@@ -37,6 +39,7 @@ From `src/js_parser/ast/`:
 - `mod.rs` (split: data re-exports stay, parser-pass mod decls go back to js_parser)
 
 From `src/js_parser/`:
+
 - `lexer_tables.rs` (keyword/identifier tables — printer/renamer needs them)
 - `runtime.rs` (Runtime feature enum — `Ast` field type)
 - `flags` module (wherever it lives — `G.rs`/`B.rs` import `crate::flags`)
@@ -44,18 +47,22 @@ From `src/js_parser/`:
 `bun_ast` Cargo deps: `bun_alloc bun_core bun_collections bun_paths bun_string bun_sys bun_wyhash` (= `bun_logger`'s deps today). **No** css/glob/http_types/options_types.
 
 ### → `src/bundler/`
+
 - `src/js_parser/ast/BundledAst.rs` → `src/bundler/bundled_ast.rs` (brings `bun_css::BundlerStyleSheet` field + `MimeType::by_extension`)
 - `DefineData::from_input` JSON body (from `js_parser/lib.rs:~2188`) merges into `src/bundler/defines.rs`
 - `AllowUnresolved` glob matcher: `bun_js_parser` keeps the enum but `Patterns` arm stores `Box<dyn Fn(&[u8]) -> bool + Send + Sync>`; `bun_bundler` constructs it with `|s| bun_glob::r#match(p, s).matches()`
 
 ### → `src/js_parser_jsc/`
+
 - macro blob→Expr helper (`parse_for_macro` caller in `Expr.rs:~155-180`)
 
 ### → `src/parsers/` (renamed from `src/interchange/`)
+
 - `git mv src/interchange src/parsers`; crate name `bun_parsers`
 - produces `bun_ast::Expr` directly (the one true enum)
 
 ### → `src/ast_jsc/` (renamed from `src/logger_jsc/`)
+
 - `git mv src/logger_jsc src/ast_jsc`; crate name `bun_ast_jsc`
 
 ### Stays in `src/js_parser/` — and `ast/` subdir is **deleted**

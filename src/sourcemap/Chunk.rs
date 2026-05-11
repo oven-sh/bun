@@ -502,9 +502,18 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         // Derive the byte-offset column on demand from `line_offset_tables` instead of
         // relying on the cached `line_offset_table_byte_offset_list` (which can't borrow
         // `line_offset_tables` without a struct lifetime param — see field comment).
+        //
+        // The printer emits mappings in (mostly) source order, so the previous
+        // call's `original_line` is the right answer or one/two lines before
+        // it >95% of the time. Seed `find_line_with_hint` with it; the
+        // fallback is the same binary search as before.
         let original_line = {
             use crate::line_offset_table::LineOffsetTableColumns as _;
-            LineOffsetTable::find_line(list.items_byte_offset_to_start_of_line(), loc)
+            LineOffsetTable::find_line_with_hint(
+                list.items_byte_offset_to_start_of_line(),
+                loc,
+                self.prev_state.original_line as u32,
+            )
         };
         let line = list.get(usize::try_from(original_line.max(0)).expect("int cast"));
 

@@ -45,6 +45,7 @@ impl LineOffsetTableColumns for List {
 }
 
 impl LineOffsetTable {
+    #[inline]
     pub fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
         debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
@@ -67,6 +68,41 @@ impl LineOffsetTable {
         }
 
         i32::try_from(original_line).expect("int cast") - 1
+    }
+
+    /// `find_line` with an O(1) fast path for the printer's monotone access
+    /// pattern. `add_source_mapping` is called once per printed AST node in
+    /// (mostly) source order, so the result is almost always `hint`, `hint+1`,
+    /// or `hint+2`. Perf on next-lint showed `find_line` at 0.85% self-time
+    /// (≈90-120M cycles) doing a fresh bounds-checked binary search every
+    /// call; this short-circuits to a couple of compares for the common case
+    /// and falls back to the binary search otherwise.
+    ///
+    /// Zig spec (`LineOffsetTable.zig:20`) only has the binary search; this is
+    /// a deliberate divergence — strictly cheaper, identical result.
+    #[inline]
+    pub fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
+        debug_assert!(loc.start > -1);
+        let loc_start = loc.start as u32;
+        let len = offsets.len();
+        let h = hint as usize;
+        // The answer is `i` iff `offsets[i] <= loc_start && (i+1 == len || loc_start < offsets[i+1])`.
+        // Probe `hint` and the next two lines (covers same-line tokens, single
+        // newline, and the `stmt;\n\nstmt` blank-line gap). Anything further
+        // apart is either a backwards jump (hoisted decl) or a large forward
+        // skip — let the binary search handle those.
+        if h < len && offsets[h] <= loc_start {
+            if h + 1 == len || loc_start < offsets[h + 1] {
+                return hint as i32;
+            }
+            if h + 2 == len || loc_start < offsets[h + 2] {
+                return hint as i32 + 1;
+            }
+            if h + 3 == len || loc_start < offsets[h + 3] {
+                return hint as i32 + 2;
+            }
+        }
+        Self::find_line(offsets, loc)
     }
 
     pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {

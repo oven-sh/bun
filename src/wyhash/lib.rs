@@ -68,6 +68,7 @@ struct WyhashStateless {
 }
 
 impl WyhashStateless {
+    #[inline(always)]
     pub(crate) fn init(seed: u64) -> WyhashStateless {
         WyhashStateless {
             seed,
@@ -75,7 +76,7 @@ impl WyhashStateless {
         }
     }
 
-    #[inline]
+    #[inline(always)] // Zig: `@call(bun.callmod_inline, self.round, ...)`
     fn round(&mut self, b: &[u8]) {
         debug_assert!(b.len() == 32);
 
@@ -104,7 +105,11 @@ impl WyhashStateless {
         self.msg_len += b.len();
     }
 
-    #[inline]
+    // perf on next-lint showed `WyhashStateless::final_` as a standalone
+    // 0.80%-self-time symbol — `#[inline]` was being declined for the ~45-line
+    // length-switch body. Zig spells the call as `@call(bun.callmod_inline,
+    // c.final, ...)` (force-inline); match that.
+    #[inline(always)]
     pub(crate) fn final_(&mut self, b: &[u8]) -> u64 {
         debug_assert!(b.len() < 32);
 
@@ -153,6 +158,7 @@ impl WyhashStateless {
         mum(self.seed ^ (self.msg_len as u64), PRIMES[4])
     }
 
+    #[inline]
     pub(crate) fn hash(seed: u64, input: &[u8]) -> u64 {
         let aligned_len = input.len() - (input.len() % 32);
 
@@ -174,6 +180,7 @@ pub struct Wyhash11 {
 }
 
 impl Wyhash11 {
+    #[inline]
     pub fn init(seed: u64) -> Wyhash11 {
         Wyhash11 {
             state: WyhashStateless::init(seed),
@@ -182,6 +189,7 @@ impl Wyhash11 {
         }
     }
 
+    #[inline]
     pub fn update(&mut self, b: &[u8]) {
         let mut off: usize = 0;
 
@@ -201,12 +209,14 @@ impl Wyhash11 {
         self.buf_len += usize::from(u8::try_from(tail.len()).expect("int cast"));
     }
 
+    #[inline]
     pub fn final_(&mut self) -> u64 {
         let rem_key = &self.buf[0..self.buf_len];
 
         self.state.final_(rem_key)
     }
 
+    #[inline]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         WyhashStateless::hash(seed, input)
     }
@@ -257,6 +267,7 @@ impl Wyhash {
         0x589965cc75374cc3,
     ];
 
+    #[inline]
     pub fn init(seed: u64) -> Wyhash {
         let s0 = seed ^ Self::mix(seed ^ Self::SECRET[0], Self::SECRET[1]);
         Wyhash {
@@ -271,6 +282,7 @@ impl Wyhash {
 
     // This is subtly different from other hash function update calls. Wyhash requires the last
     // full 48-byte block to be run through final1 if is exactly aligned to 48-bytes.
+    #[inline]
     pub fn update(&mut self, input: &[u8]) {
         self.total_len += input.len();
 
@@ -305,6 +317,7 @@ impl Wyhash {
         self.buf_len = remaining_bytes.len();
     }
 
+    #[inline]
     pub fn final_(&self) -> u64 {
         let input: &[u8] = &self.buf[0..self.buf_len];
         let mut new_self = self.shallow_copy(); // ensure idempotency
@@ -444,6 +457,7 @@ impl Wyhash {
         )
     }
 
+    #[inline]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         let mut this = Wyhash::init(seed);
 

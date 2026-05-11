@@ -252,12 +252,16 @@ pub mod lib_info {
             unsafe {
                 if (*request).cache.pending_cache() {
                     // Release the pending-cache slot. `getOrPutIntoPendingCache` already
-                    // set the `used` bit via `HiveArray.get`, so failing to unset it here
-                    // permanently orphans the slot and leaves `buffer[pos].lookup` pointing
-                    // at the request we are about to free (UAF on the next `.inflight` hit).
+                    // set the `used` bit, so failing to unset it here permanently orphans
+                    // the slot and leaves `buffer[pos].lookup` pointing at the request we
+                    // are about to free (UAF on the next `.inflight` hit).
+                    // `PendingCacheKey` is POD (`u64`/`u16`/`*mut`), so `put_raw`
+                    // (no `T::drop`) is the right release; the previous
+                    // `MaybeUninit::uninit().assume_init()` write was UB regardless of
+                    // POD-ness.
                     let pos = (*request).cache.pos_in_pending();
-                    this.pending_host_cache_native.buffer[pos as usize] = MaybeUninit::uninit().assume_init();
-                    this.pending_host_cache_native.used.unset(pos as usize);
+                    let slot = this.pending_host_cache_native.buffer[pos as usize].as_mut_ptr();
+                    this.pending_host_cache_native.put_raw(slot);
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
                 DNSLookup::destroy(&raw mut (*request).head);
@@ -3277,12 +3281,13 @@ pub trait HasPendingCacheKey {
     fn key_hash(key: &Self::PendingCacheKey) -> u64;
     /// `key.len`
     fn key_len(key: &Self::PendingCacheKey) -> u16;
-    /// Partially initialize a freshly-claimed slot's `{hash, len}`; `lookup` is filled in later
-    /// by `*Request::init` once the request has been heap-allocated.
-    ///
-    /// SAFETY: `slot` must point at a valid (possibly uninitialized) `PendingCacheKey` slot
-    /// inside the resolver's HiveArray buffer.
-    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16);
+    /// Construct a fully-initialized `PendingCacheKey { hash, len, lookup: null }`
+    /// for `HiveArray::get_init`. `lookup` is filled in later by `*Request::init`
+    /// once the request has been heap-allocated; until then it is a defined null
+    /// rather than uninit garbage, so the `iter_set` loop in
+    /// `get_or_put_into_resolve_pending_cache` can safely materialise
+    /// `&mut PendingCacheKey` over the slot.
+    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey;
 }
 
 impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
@@ -3300,13 +3305,8 @@ impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
     #[inline]
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
-    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        // SAFETY: caller contract — `slot` points at a valid (possibly
-        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
-        unsafe {
-            ptr::addr_of_mut!((*slot).hash).write(hash);
-            ptr::addr_of_mut!((*slot).len).write(len);
-        }
+    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+        resolve_info_request::PendingCacheKey { hash, len, lookup: ptr::null_mut() }
     }
 }
 
@@ -3325,13 +3325,8 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
     #[inline]
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
-    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        // SAFETY: caller contract — `slot` points at a valid (possibly
-        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
-        unsafe {
-            ptr::addr_of_mut!((*slot).hash).write(hash);
-            ptr::addr_of_mut!((*slot).len).write(len);
-        }
+    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+        get_host_by_addr_info_request::PendingCacheKey { hash, len, lookup: ptr::null_mut() }
     }
 }
 
@@ -3350,13 +3345,8 @@ impl HasPendingCacheKey for GetNameInfoRequest {
     #[inline]
     fn key_len(key: &Self::PendingCacheKey) -> u16 { key.len }
     #[inline]
-    unsafe fn key_write_hash_len(slot: *mut Self::PendingCacheKey, hash: u64, len: u16) {
-        // SAFETY: caller contract — `slot` points at a valid (possibly
-        // uninitialized) `PendingCacheKey` slot inside the resolver's HiveArray.
-        unsafe {
-            ptr::addr_of_mut!((*slot).hash).write(hash);
-            ptr::addr_of_mut!((*slot).len).write(len);
-        }
+    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+        get_name_info_request::PendingCacheKey { hash, len, lookup: ptr::null_mut() }
     }
 }
 
@@ -4042,11 +4032,8 @@ impl Resolver {
             }
         }
 
-        if let Some(new) = cache.get() {
-            // SAFETY: `new` is a freshly-claimed (uninitialized) slot inside `cache.buffer`;
-            // write `{hash, len}` now, `lookup` is filled by `*Request::init` once allocated.
-            unsafe { R::key_write_hash_len(new, R::key_hash(key), R::key_len(key)) };
-            return LookupCacheHit::New(new);
+        if let Some(new) = cache.get_init(R::key_new(R::key_hash(key), R::key_len(key))) {
+            return LookupCacheHit::New(new.as_ptr());
         }
 
         LookupCacheHit::Disabled
@@ -4068,13 +4055,12 @@ impl Resolver {
             }
         }
 
-        if let Some(new) = cache.get() {
-            // SAFETY: `new` is a freshly-claimed slot inside `cache.buffer`.
-            unsafe {
-                (*new).hash = key.hash;
-                (*new).len = key.len;
-            }
-            return CacheHit::New(new);
+        if let Some(new) = cache.get_init(get_addr_info_request::PendingCacheKey {
+            hash: key.hash,
+            len: key.len,
+            lookup: ptr::null_mut(),
+        }) {
+            return CacheHit::New(new.as_ptr());
         }
 
         CacheHit::Disabled

@@ -1697,65 +1697,66 @@ fn enqueue_git_clone(
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
-            package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::GitClone,
-            request: crate::package_manager_task::Request {
-                git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
-                    name: StringOrTinyString::init_append_if_needed(
-                        name,
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    url: StringOrTinyString::init_append_if_needed(
-                        this.lockfile.str(&repository.repo),
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                    env: crate::repository::SharedEnv::get(this.env.unwrap().as_mut()),
-                    dep_id,
-                    res: *res,
-                }),
-            },
-            id: task_id,
-            apply_patch_task: if let Some(h) = patch_name_and_version_hash {
-                let dep = dependency;
-                let pkg_id = match this
-                    .lockfile
-                    .package_index
-                    .get(&dep.name_hash)
-                    .unwrap_or_else(|| panic!("Package not found"))
-                {
-                    PackageIndexEntry::Id(p) => *p,
-                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
-                };
-                let patch_hash = this
-                    .lockfile
-                    .patched_dependencies
-                    .get(&h)
-                    .unwrap()
-                    .patchfile_hash()
-                    .unwrap();
-                let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
-                let mut pt = bun_core::heap::take(pt);
-                pt.callback.apply_mut().task_id = Some(task_id);
-                Some(pt)
-            } else {
-                None
-            },
-            // TODO(port): `data: undefined`
-            ..Task::uninit()
-        });
-        &raw mut (*task).threadpool_task
-    }
+    // Build the `Task` value *before* claiming a hive slot. Several initializers
+    // below (`.expect()`, `.unwrap()`, `panic!`) can unwind; doing them with the
+    // slot already claimed would leave a claimed-but-uninit `Task` (which carries
+    // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
+    // `get_init` the slot is claimed only after the value is fully constructed.
+    let value = Task::Task {
+        package_manager: std::ptr::from_ref::<PackageManager>(this),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::GitClone,
+        request: crate::package_manager_task::Request {
+            git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
+                name: StringOrTinyString::init_append_if_needed(
+                    name,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                url: StringOrTinyString::init_append_if_needed(
+                    this.lockfile.str(&repository.repo),
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
+                env: crate::repository::SharedEnv::get(unsafe { this.env.unwrap().as_mut() }),
+                dep_id,
+                res: *res,
+            }),
+        },
+        id: task_id,
+        apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+            let dep = dependency;
+            let pkg_id = match this
+                .lockfile
+                .package_index
+                .get(&dep.name_hash)
+                .unwrap_or_else(|| panic!("Package not found"))
+            {
+                PackageIndexEntry::Id(p) => *p,
+                PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
+            };
+            let patch_hash = this
+                .lockfile
+                .patched_dependencies
+                .get(&h)
+                .unwrap()
+                .patchfile_hash()
+                .unwrap();
+            let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+            // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
+            let mut pt = unsafe { bun_core::heap::take(pt) };
+            pt.callback.apply_mut().task_id = Some(task_id);
+            Some(pt)
+        } else {
+            None
+        },
+        // TODO(port): `data: undefined`
+        ..Task::uninit()
+    };
+    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
+    // SAFETY: `get_init` just fully initialized the slot.
+    unsafe { &raw mut (*task).threadpool_task }
 }
 
 pub fn enqueue_git_checkout(
@@ -1878,50 +1879,48 @@ fn enqueue_local_tarball(
         break 'tarball_path (joined, false);
     };
 
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
-            package_manager: std::ptr::from_ref::<PackageManager>(this),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::LocalTarball,
-            request: crate::package_manager_task::Request {
-                local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
-                    tarball: ExtractTarball {
-                        package_manager: bun_ptr::BackRef::new(this),
-                        name: StringOrTinyString::init_append_if_needed(
-                            name,
-                            &mut crate::network_task::filename_store_appender(),
-                        )
-                        .expect("unreachable"),
-                        resolution,
-                        cache_dir: get_cache_directory(this),
-                        temp_dir: get_temporary_directory(this).handle,
-                        dependency_id,
-                        integrity,
-                        url: StringOrTinyString::init_append_if_needed(
-                            path,
-                            &mut crate::network_task::filename_store_appender(),
-                        )
-                        .expect("unreachable"),
-                        skip_verify: false,
-                    },
-                    tarball_path: StringOrTinyString::init_append_if_needed(
-                        tarball_path,
+    // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
+    // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
+    let value = Task::Task {
+        package_manager: std::ptr::from_ref::<PackageManager>(this),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::LocalTarball,
+        request: crate::package_manager_task::Request {
+            local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
+                tarball: ExtractTarball {
+                    package_manager: bun_ptr::BackRef::new(this),
+                    name: StringOrTinyString::init_append_if_needed(
+                        name,
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    normalize,
-                }),
-            },
-            id: task_id,
-            // TODO(port): `data: undefined`
-            ..Task::uninit()
-        });
-        &raw mut (*task).threadpool_task
-    }
+                    resolution,
+                    cache_dir: get_cache_directory(this),
+                    temp_dir: get_temporary_directory(this).handle,
+                    dependency_id,
+                    integrity,
+                    url: StringOrTinyString::init_append_if_needed(
+                        path,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    skip_verify: false,
+                },
+                tarball_path: StringOrTinyString::init_append_if_needed(
+                    tarball_path,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                normalize,
+            }),
+        },
+        id: task_id,
+        // TODO(port): `data: undefined`
+        ..Task::uninit()
+    };
+    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
+    // SAFETY: `get_init` just fully initialized the slot.
+    unsafe { &raw mut (*task).threadpool_task }
 }
 
 fn update_name_and_name_hash_from_version_replacement(

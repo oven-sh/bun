@@ -2778,25 +2778,32 @@ where
             );
         }
 
+        let self_ptr: *const Self = self;
+        let should_deinit_ptr = should_deinit_context.map(|r| std::ptr::from_mut::<bool>(r));
         // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
         // const-bool H3 parameter only affects associated consts/types, not layout, so
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
+        //
+        // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
+        // `MaybeUninit::write` placement-new through the slot's stable
+        // address, after which `assume_init()` consumes the token.
+        // `RequestContext` carries the heaviest drop glue in the codebase, so
+        // a panic inside `create_in` (or `to_any_response`) now releases the
+        // slot via `HiveSlot::drop` without running `RequestContext::drop` on
+        // garbage.
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
-                (*self.h3_request_pool).get().cast()
+                let slot = (*self.h3_request_pool).claim();
+                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_ptr, method);
+                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+                slot.assume_init().as_ptr().cast()
             } else {
-                (*self.request_pool).get().cast()
+                let slot = (*self.request_pool).claim();
+                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_ptr, method);
+                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+                slot.assume_init().as_ptr().cast()
             }
         };
-        let self_ptr: *const Self = self;
-        Ctx::create_in(
-            ctx_slot,
-            self_ptr,
-            req,
-            resp,
-            should_deinit_context.map(|r| std::ptr::from_mut::<bool>(r)),
-            method,
-        );
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running

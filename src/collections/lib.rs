@@ -39,7 +39,7 @@ pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
-pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
+pub use hive_array::{HiveArray, HiveRef, HiveSlot, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 

@@ -632,65 +632,60 @@ impl FilePoll {
         }
     }
 
+    /// Build a fully-initialized `FilePoll` value for `Store::get_init`.
+    ///
+    /// PORT NOTE: the previous `&mut *pool.get()` + field-assign pattern was
+    /// instant validity UB — `FilePoll.owner`/`allocator_type` are enums with
+    /// niches, and `&mut FilePoll` over an uninitialized hive slot asserts a
+    /// valid discriminant. It also left `generation_number` uninitialized on
+    /// non-macOS-debug builds and then read it in the `syslog!` below. Building
+    /// the whole struct by value fixes both.
+    #[inline]
+    fn new_value(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> FilePoll {
+        FilePoll {
+            fd,
+            flags,
+            owner,
+            next_to_free: ptr::null_mut(),
+            allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            // Matches Zig `max_generation_number +%= 1`; single-threaded event
+            // loop so `Relaxed` ordering is sufficient.
+            generation_number: MAX_GENERATION_NUMBER
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1),
+            #[cfg(not(all(target_os = "macos", debug_assertions)))]
+            generation_number: 0,
+        }
+    }
+
     // TODO(port): Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
     // Phase B: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
+        let value = Self::new_value(vm, fd, flags, owner);
         // SAFETY: sole `&mut Store` borrow in this scope.
-        let poll = unsafe { vm.file_polls() }.get();
-        // SAFETY: Store::get returns a valid uninitialized slot from the hive.
-        let poll = unsafe { &mut *poll };
-        poll.fd = fd;
-        poll.flags = flags;
-        poll.owner = owner;
-        poll.next_to_free = ptr::null_mut();
-        poll.allocator_type = if vm.is_js() {
-            AllocatorType::Js
-        } else {
-            AllocatorType::Mini
-        };
-
-        #[cfg(all(target_os = "macos", debug_assertions))]
-        {
-            // Matches Zig `max_generation_number +%= 1`; single-threaded event
-            // loop so `Relaxed` ordering is sufficient.
-            poll.generation_number = MAX_GENERATION_NUMBER
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                .wrapping_add(1);
-        }
+        let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            std::ptr::from_mut(poll) as usize,
-            poll.generation_number,
+            poll as usize,
+            // SAFETY: `get_init` just fully initialized the slot.
+            unsafe { (*poll).generation_number },
             fd
         );
         poll
     }
 
     pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        let poll = vm.alloc_file_poll();
-        // SAFETY: alloc_file_poll returns a valid pool slot.
-        let poll_ref = unsafe { &mut *poll };
-        poll_ref.fd = fd;
-        poll_ref.flags = flags;
-        poll_ref.owner = owner;
-        poll_ref.next_to_free = ptr::null_mut();
-        poll_ref.allocator_type = if vm.is_js() {
-            AllocatorType::Js
-        } else {
-            AllocatorType::Mini
-        };
-
-        #[cfg(all(target_os = "macos", debug_assertions))]
-        {
-            poll_ref.generation_number = MAX_GENERATION_NUMBER
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                .wrapping_add(1);
-        }
-
+        let value = Self::new_value(vm, fd, flags, owner);
+        // SAFETY: sole `&mut Store` borrow in this scope. (`alloc_file_poll`
+        // resolved to `file_polls().get()` on every vtable impl, so going
+        // through `file_polls()` directly is equivalent.)
+        let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
         syslog!(
             "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,
-            poll_ref.generation_number,
+            // SAFETY: `get_init` just fully initialized the slot.
+            unsafe { (*poll).generation_number },
             fd
         );
         poll
@@ -1432,8 +1427,16 @@ impl Store {
         }
     }
 
+    #[deprecated = "returns *mut FilePoll to uninitialized memory; use get_init"]
     pub fn get(&mut self) -> *mut FilePoll {
+        #[allow(deprecated)]
         self.hive.get()
+    }
+
+    /// Claim a hive slot and move `value` into it. Infallible (heap fallback).
+    #[inline]
+    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+        self.hive.get_init(value)
     }
 
     pub fn process_deferred_frees(&mut self) {

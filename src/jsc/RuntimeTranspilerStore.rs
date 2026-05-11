@@ -281,7 +281,6 @@ impl RuntimeTranspilerStore {
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
-        let job: *mut TranspilerJob = self.store.get();
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
         let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));
@@ -305,10 +304,15 @@ impl RuntimeTranspilerStore {
             }
         }
 
-        // SAFETY: `job` points to an uninitialized slot returned by HiveArrayFallback::get();
-        // we are the sole writer until schedule() hands it to the work pool.
-        unsafe {
-            job.write(TranspilerJob {
+        // Build the job by value and `get_init` it into the hive — the `Box`
+        // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
+        // above all happen *before* the slot is claimed, so an OOM/throw on
+        // that path no longer leaves a claimed-but-uninit `TranspilerJob` (which
+        // carries `Log`/`String`/`StrongOptional` drop glue) for the next
+        // `put()` to drop.
+        let job: *mut TranspilerJob = self
+            .store
+            .get_init(TranspilerJob {
                 non_threadsafe_input_specifier: input_specifier,
                 path: owned_path,
                 global_this: BackRef::new(global_object),
@@ -327,8 +331,8 @@ impl RuntimeTranspilerStore {
                     callback: TranspilerJob::run_from_worker_thread,
                 },
                 next: unbounded_queue::Link::new(),
-            });
-        }
+            })
+            .as_ptr();
         if cfg!(debug_assertions) {
             bun_core::scoped_log!(
                 RuntimeTranspilerStore,

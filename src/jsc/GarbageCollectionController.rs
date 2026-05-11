@@ -66,6 +66,32 @@ pub enum GcRepeatSetting {
 }
 
 impl GarbageCollectionController {
+    /// Accessor for the init-once `gc_timer` handle. Consolidates the four
+    /// open-coded `(*self.<field>.unwrap().as_ptr())` deref sites into one
+    /// SAFETY block so call sites are safe.
+    #[inline]
+    fn gc_timer_mut(&mut self) -> &mut uws::Timer {
+        // SAFETY: `gc_timer` is set in `init()` (via `Timer::create_fallthrough`)
+        // before any code path reaches a deref site, and remains a live FFI
+        // handle until `deinit()` closes it. The Timer lives on the uws heap,
+        // not inside `self`, so the returned `&mut` cannot alias `self`.
+        unsafe { &mut *self.gc_timer.expect("gc_timer set in init()").as_ptr() }
+    }
+
+    /// Accessor for the init-once `gc_repeating_timer` handle (see
+    /// [`gc_timer_mut`] for the invariant).
+    #[inline]
+    fn gc_repeating_timer_mut(&mut self) -> &mut uws::Timer {
+        // SAFETY: same invariant as `gc_timer_mut` — set in `init()`, live
+        // until `deinit()`, FFI-heap-owned.
+        unsafe {
+            &mut *self
+                .gc_repeating_timer
+                .expect("gc_repeating_timer set in init()")
+                .as_ptr()
+        }
+    }
+
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
@@ -117,29 +143,20 @@ impl GarbageCollectionController {
         self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
 
         if !self.disabled {
-            // SAFETY: gc_repeating_timer was just created above and is non-null
-            unsafe {
-                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    std::ptr::from_mut::<Self>(self),
-                    Some(on_gc_repeating_timer),
-                    gc_timer_interval,
-                    gc_timer_interval,
-                );
-            }
+            let ext = std::ptr::from_mut::<Self>(self);
+            self.gc_repeating_timer_mut().set(
+                ext,
+                Some(on_gc_repeating_timer),
+                gc_timer_interval,
+                gc_timer_interval,
+            );
         }
     }
 
     pub fn schedule_gc_timer(&mut self) {
         self.gc_timer_state = GCTimerState::Scheduled;
-        // SAFETY: gc_timer is non-null after init()
-        unsafe {
-            (*self.gc_timer.unwrap().as_ptr()).set(
-                std::ptr::from_mut::<Self>(self),
-                Some(on_gc_timer),
-                16,
-                0,
-            );
-        }
+        let ext = std::ptr::from_mut::<Self>(self);
+        self.gc_timer_mut().set(ext, Some(on_gc_timer), 16, 0);
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
@@ -182,27 +199,16 @@ impl GarbageCollectionController {
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = true;
-            // SAFETY: gc_repeating_timer is non-null after init()
-            unsafe {
-                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    std::ptr::from_mut::<Self>(self),
-                    Some(on_gc_repeating_timer),
-                    self.gc_timer_interval,
-                    self.gc_timer_interval,
-                );
-            }
+            let ext = std::ptr::from_mut::<Self>(self);
+            let interval = self.gc_timer_interval;
+            self.gc_repeating_timer_mut()
+                .set(ext, Some(on_gc_repeating_timer), interval, interval);
             self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         } else if setting == GcRepeatSetting::Slow && self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = false;
-            // SAFETY: gc_repeating_timer is non-null after init()
-            unsafe {
-                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    std::ptr::from_mut::<Self>(self),
-                    Some(on_gc_repeating_timer),
-                    30_000,
-                    30_000,
-                );
-            }
+            let ext = std::ptr::from_mut::<Self>(self);
+            self.gc_repeating_timer_mut()
+                .set(ext, Some(on_gc_repeating_timer), 30_000, 30_000);
             self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         }
     }

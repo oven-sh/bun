@@ -720,6 +720,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         unsafe { &mut *self.log.as_ptr() }
     }
 
+    /// Safe mutable projection of `nearest_stmt_list`.
+    ///
+    /// The pointer targets a `ListManaged` living on a parent
+    /// `visit_stmts_and_prepend_temp_refs` stack frame (saved/restored around
+    /// each visit), disjoint from `*self`, so a transient `&mut` tied to
+    /// `&mut self` cannot alias any other live borrow. Centralises the
+    /// `unsafe` so call sites stay safe.
+    #[inline]
+    pub fn nearest_stmt_list_mut(&mut self) -> Option<&mut ListManaged<'a, Stmt>> {
+        // SAFETY: `nearest_stmt_list` is a back-pointer to stack storage on
+        // the enclosing visit frame, set before recursion and restored before
+        // that frame returns. It is disjoint from `*self` and from any other
+        // `&mut` reachable through `self`. The `&mut self` receiver ensures no
+        // concurrent caller is projecting it.
+        self.nearest_stmt_list.map(|mut p| unsafe { p.as_mut() })
+    }
+
     /// Shared borrow of the current scope.
     #[inline]
     pub fn current_scope(&self) -> &js_ast::Scope {

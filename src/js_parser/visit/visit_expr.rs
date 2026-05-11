@@ -2361,12 +2361,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
-                let Some(mut stmts) = p.nearest_stmt_list else {
+                if p.nearest_stmt_list.is_none() {
                     break 'try_mark_hook;
-                };
+                }
                 let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);
-                // SAFETY: nearest_stmt_list points at a live ListManaged on a parent visit frame.
-                unsafe { stmts.as_mut().push(decl) };
+                p.nearest_stmt_list_mut().unwrap().push(decl);
 
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
                 e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
@@ -2421,12 +2420,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
-                let Some(mut stmts) = p.nearest_stmt_list else {
+                if p.nearest_stmt_list.is_none() {
                     break 'try_mark_hook;
-                };
+                }
                 let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);
-                // SAFETY: nearest_stmt_list points at a live ListManaged on a parent visit frame.
-                unsafe { stmts.as_mut().push(decl) };
+                p.nearest_stmt_list_mut().unwrap().push(decl);
                 final_expr = p.get_react_refresh_hook_signal_init(hook, expr);
                 replaced = true;
             }

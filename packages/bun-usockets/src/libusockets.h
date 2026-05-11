@@ -454,6 +454,14 @@ long us_ssl_ctx_live_count(void);
  * NULL/0-len input to mirror Node. */
 int us_ssl_ctx_add_ca_pem(struct ssl_ctx_st *ssl_ctx, const char *pem, size_t pem_len);
 
+/* 1 if this CTX already carries user CAs (installed at construction via
+ * `options.ca` / `ca_file_name` / `request_cert`, or appended by a later
+ * `us_ssl_ctx_add_ca_pem`); 0 otherwise. Client-attach paths read this to
+ * decide whether to override the per-SSL verify store with the shared
+ * default roots — they must NOT override when user CAs are on the CTX, or
+ * the added CAs become invisible at handshake time. */
+int us_ctx_has_user_ca(struct ssl_ctx_st *ssl_ctx);
+
 /* Public interfaces for loops */
 
 /* Returns a new event loop with user data extension */

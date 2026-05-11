@@ -512,10 +512,13 @@ describe("tls.createSecureContext().context.addCACert", () => {
     expect(typeof ctx.context.addCACert).toBe("function");
   });
 
-  it("accepts no arg options (Node parity)", () => {
-    // Node: `createSecureContext()` with no argument is equivalent to `{}`.
-    // Previously threw `TLSOptions must be an object` in Bun.
-    const ctx = tls.createSecureContext();
+  it("accepts createSecureContext(null) (Node parity)", () => {
+    // Node treats `undefined` / `null` as an empty dictionary. Bindgen's
+    // converter throws ERR_INVALID_ARG_TYPE on non-objects, so the Zig
+    // constructor/intern paths short-circuit on `isUndefinedOrNull` before
+    // reaching it. The sibling "is a function" test above covers the
+    // no-arg form; this one covers explicit `null`.
+    const ctx = tls.createSecureContext(null);
     expect(typeof ctx.context.addCACert).toBe("function");
   });
 
@@ -809,6 +812,65 @@ describe("tls.createSecureContext().context.addCACert", () => {
         secureContext: ctx,
         rejectUnauthorized: false,
         servername: "agent1",
+      },
+      () => {
+        resolve(client.authorized);
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    expect(await promise).toBe(true);
+  });
+
+  // `tls.connect({ socket: duplex })` routes through `SSLWrapper` in
+  // `src/runtime/socket/ssl_wrapper.zig` instead of `us_internal_ssl_attach`.
+  // That path had the same per-SSL `SSL_set0_verify_cert_store` override and
+  // needs the same `us_ctx_has_user_ca` gate, or addCACert'd CAs are
+  // discarded when TLS runs on top of a Duplex (Bun.TCPSocket-over-Duplex,
+  // node:tls proxies, Windows named pipes).
+  it("added CA survives on the Duplex-wrapped client path", async () => {
+    const { Duplex } = await import("node:stream");
+    const net = await import("node:net");
+
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
+    });
+
+    const rawSocket = net.connect(server.port, "127.0.0.1");
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, _enc, cb) {
+        rawSocket.write(chunk, cb);
+      },
+      final(cb) {
+        rawSocket.end(cb);
+      },
+    });
+    rawSocket.on("data", c => duplex.push(c));
+    rawSocket.on("end", () => duplex.push(null));
+    rawSocket.on("error", e => duplex.destroy(e));
+
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(ca1);
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const client = tls.connect(
+      {
+        socket: duplex,
+        host: "127.0.0.1",
+        servername: "agent1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
       },
       () => {
         resolve(client.authorized);

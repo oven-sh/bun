@@ -50,6 +50,13 @@ pub enum Mode {
     Test,
 }
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// fields are written exactly once in `create_unbound` and never mutated again,
+// so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
+// construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
+// re-enter JS (create_bound → to_js / JSFunction::create / bind), which can
+// form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
+// aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ScopeFunctions {
     pub mode: Mode,
@@ -116,31 +123,31 @@ impl ScopeFunctions {
         this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_skip_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_todo_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_failing_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_concurrent_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_serial_if(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_each(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let [array] = frame.arguments_as_array::<1>();
@@ -165,7 +172,10 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     };
     // SAFETY: `from_js` returned non-null; the JS wrapper keeps the boxed
     // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
-    let this: &mut ScopeFunctions = unsafe { &mut *this_ptr };
+    // R-2: deref as shared (`&*const`) — every field is read-only after
+    // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
+    // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
+    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(

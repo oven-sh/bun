@@ -1053,14 +1053,17 @@ describe("construct", () => {
     expect(typeof result === "object" || typeof result === "function").toBe(true);
   });
 
-  test("Reflect.construct on spyOn of non-function value does not crash", () => {
-    const arr = [-62400, 1355854322, -7];
-    const spy = spyOn(arr, 1);
-    const result = Reflect.construct(spy, []);
-    expect(typeof result).toBe("object");
-    expect(result).not.toBeNull();
-    spy.mockRestore();
-  });
+  if (isBun) {
+    // Jest/Vitest don't allow spying on non-function properties
+    test("Reflect.construct on spyOn of non-function value does not crash", () => {
+      const arr = [-62400, 1355854322, -7];
+      const spy = spyOn(arr, 1);
+      const result = Reflect.construct(spy, []);
+      expect(typeof result).toBe("object");
+      expect(result).not.toBeNull();
+      spy.mockRestore();
+    });
+  }
 
   test("Reflect.construct respects newTarget prototype", () => {
     const fn = jest.fn();

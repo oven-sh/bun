@@ -244,7 +244,7 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
             "Microsoft\\Edge Dev\\Application\\msedge.exe",
             "Microsoft\\Edge SxS\\Application\\msedge.exe",
         };
-        const roots = [_]?[:0]const u8{
+        const roots = [_]?[]const u8{
             bun.getenvZ("ProgramFiles"),
             bun.getenvZ("ProgramFiles(x86)"),
             bun.getenvZ("LOCALAPPDATA"),

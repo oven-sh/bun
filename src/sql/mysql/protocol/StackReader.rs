@@ -76,10 +76,9 @@ impl<'a> StackReader<'a> {
         }
 
         self.skip(isize::try_from(count).expect("int cast"));
-        // Data::Temporary stores a raw fat pointer (see shared/Data.rs).
-        Ok(Data::Temporary(
-            &raw const self.buffer[offset..self.offset.get()],
-        ))
+        Ok(Data::Temporary(bun_ptr::RawSlice::new(
+            &self.buffer[offset..self.offset.get()],
+        )))
     }
 
     pub fn read_z(&self) -> Result<Data, AnyMySQLError> {
@@ -87,7 +86,7 @@ impl<'a> StackReader<'a> {
         if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
             self.skip(isize::try_from(zero + 1).expect("int cast"));
-            return Ok(Data::Temporary(&raw const remaining[0..zero]));
+            return Ok(Data::Temporary(bun_ptr::RawSlice::new(&remaining[0..zero])));
         }
 
         Err(AnyMySQLError::ShortRead)

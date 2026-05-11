@@ -1,6 +1,7 @@
 use crate::shared::Data;
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
+use bun_ptr::RawSlice;
 
 bun_core::declare_scope!(Postgres, hidden);
 
@@ -27,17 +28,18 @@ pub enum Authentication {
 
 pub struct SASLContinue {
     pub data: Data,
-    // TODO(port): r/s/i are sub-slices borrowed from `data.slice()` (self-referential).
-    // Stored as raw fat pointers in Phase A; revisit ownership in Phase B.
-    pub r: *const [u8],
-    pub s: *const [u8],
-    pub i: *const [u8],
+    // r/s/i are sub-slices borrowed from `data.slice()` (self-referential).
+    // `RawSlice` encapsulates the back-reference invariant: the backing `data`
+    // buffer outlives every `SASLContinue` (it is a sibling field), so the safe
+    // `.slice()` projection is sound for `'_` of any `&SASLContinue`.
+    pub r: RawSlice<u8>,
+    pub s: RawSlice<u8>,
+    pub i: RawSlice<u8>,
 }
 
 impl SASLContinue {
     pub fn iteration_count(&self) -> Result<u32, bun_core::Error> {
-        // SAFETY: `i` points into `self.data`'s buffer, which is alive for `'self`.
-        let i = unsafe { &*self.i };
+        let i = self.i.slice();
         // TODO(port): std.fmt.parseInt(u32, _, 0) auto-detects radix from prefix (0x/0o/0b);
         // Phase B should provide bun_string::strings::parse_int with the same semantics.
         let s = core::str::from_utf8(i).map_err(|_| bun_core::err!("InvalidCharacter"))?;
@@ -135,20 +137,19 @@ impl Authentication {
                 let bytes = reader.bytes((message_length - 8) as usize)?;
                 // errdefer { bytes.deinit(); } — `Data: Drop` frees on `?` early-return.
 
-                let mut r: Option<*const [u8]> = None;
-                let mut i: Option<*const [u8]> = None;
-                let mut s: Option<*const [u8]> = None;
+                let mut r: Option<RawSlice<u8>> = None;
+                let mut i: Option<RawSlice<u8>> = None;
+                let mut s: Option<RawSlice<u8>> = None;
 
                 {
-                    // PORT NOTE: reshaped for borrowck — iterate over a raw view so the
-                    // resulting sub-slice raw pointers don't hold a borrow on `bytes`.
-                    let slice: *const [u8] = bytes.slice();
-                    // SAFETY: `slice` points into `bytes`, alive for this scope.
-                    let mut iter = bun_string::strings::split(unsafe { &*slice }, b",");
+                    // `RawSlice::new` erases the borrowck lifetime so the captured
+                    // sub-slices don't keep `bytes` borrowed past this block (they
+                    // remain valid because `bytes` is moved into the result below).
+                    let mut iter = bun_string::strings::split(bytes.slice(), b",");
                     while let Some(item) = iter.next() {
                         if item.len() > 2 {
                             let key = item[0];
-                            let after_equals: *const [u8] = &raw const item[2..];
+                            let after_equals = RawSlice::new(&item[2..]);
                             if key == b'r' {
                                 r = Some(after_equals);
                             } else if key == b's' {

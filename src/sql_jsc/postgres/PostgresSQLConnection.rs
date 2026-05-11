@@ -128,17 +128,16 @@ pub struct PostgresSQLConnection {
     pub backend_parameters: StringMap,
     pub backend_key_data: protocol::BackendKeyData,
 
-    // TODO(port): self-referential — `database`/`user`/`password`/`path`/`options` are
-    // slices into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
-    // and never moves (intrusive refcount), so raw fat pointers are sound. Phase B: consider
-    // (offset,len) pairs or a dedicated borrowed-slice newtype.
-    // Private — self-referential invariant; reassigning `options_buf` is UAF.
+    // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
+    // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
+    // and never moves (intrusive refcount), so the `RawSlice` backing-outlives-holder
+    // invariant holds. Private — reassigning `options_buf` is UAF.
     // Reach via `database()`/`user()`/`password()`/`path()`/`options()`.
-    database: *const [u8],
-    user: *const [u8],
-    password: *const [u8],
-    path: *const [u8],
-    options: *const [u8],
+    database: bun_ptr::RawSlice<u8>,
+    user: bun_ptr::RawSlice<u8>,
+    password: bun_ptr::RawSlice<u8>,
+    path: bun_ptr::RawSlice<u8>,
+    options: bun_ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
 
     pub authentication_state: AuthenticationState,
@@ -241,33 +240,27 @@ impl PostgresSQLConnection {
 
     #[inline]
     pub fn database(&self) -> &[u8] {
-        // SAFETY: points into `self.options_buf`; set once at construction, never
-        // null, never reassigned. Valid for the lifetime of `&self`.
-        unsafe { &*self.database }
+        self.database.slice()
     }
 
     #[inline]
     pub fn user(&self) -> &[u8] {
-        // SAFETY: see `database()` — slice into `self.options_buf`.
-        unsafe { &*self.user }
+        self.user.slice()
     }
 
     #[inline]
     pub fn password(&self) -> &[u8] {
-        // SAFETY: see `database()` — slice into `self.options_buf`.
-        unsafe { &*self.password }
+        self.password.slice()
     }
 
     #[inline]
     pub fn path(&self) -> &[u8] {
-        // SAFETY: see `database()` — slice into `self.options_buf`.
-        unsafe { &*self.path }
+        self.path.slice()
     }
 
     #[inline]
     pub fn options(&self) -> &[u8] {
-        // SAFETY: see `database()` — slice into `self.options_buf`.
-        unsafe { &*self.options }
+        self.options.slice()
     }
 
     #[inline]
@@ -785,9 +778,9 @@ impl PostgresSQLConnection {
         debug!("sendStartupMessage");
         self.status = Status::SentStartupMessage;
         let mut msg = protocol::StartupMessage {
-            user: Data::Temporary(std::ptr::from_ref::<[u8]>(self.user())),
-            database: Data::Temporary(std::ptr::from_ref::<[u8]>(self.database())),
-            options: Data::Temporary(std::ptr::from_ref::<[u8]>(self.options())),
+            user: Data::Temporary(self.user),
+            database: Data::Temporary(self.database),
+            options: Data::Temporary(self.options),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
             self.fail(b"Failed to write startup message", AnyPostgresError::from(err));
@@ -1110,13 +1103,13 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     // of the backing buffer, so successive appends can't keep their `&[u8]`
     // results live across each other. The buffer is allocated once and never
     // moved (`move_to_slice` hands back the same allocation), so detach each
-    // result to a raw `*const [u8]` immediately — the struct stores them as
-    // raw pointers anyway (self-referential into `options_buf`).
-    let mut username: *const [u8] = b"";
-    let mut password: *const [u8] = b"";
-    let mut database: *const [u8] = b"";
-    let mut options: *const [u8] = b"";
-    let mut path: *const [u8] = b"";
+    // result to a `RawSlice` immediately — the struct stores them as
+    // `RawSlice` (self-referential into `options_buf`).
+    let mut username = bun_ptr::RawSlice::<u8>::EMPTY;
+    let mut password = bun_ptr::RawSlice::<u8>::EMPTY;
+    let mut database = bun_ptr::RawSlice::<u8>::EMPTY;
+    let mut options = bun_ptr::RawSlice::<u8>::EMPTY;
+    let mut path = bun_ptr::RawSlice::<u8>::EMPTY;
 
     let options_str = arguments[7].to_bun_string(global_object)?;
 
@@ -1132,23 +1125,23 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
         let _ = b.allocate();
         let u = username_str.to_utf8_without_ref();
-        username = std::ptr::from_ref::<[u8]>(b.append(u.slice()));
+        username = bun_ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
         let p = password_str.to_utf8_without_ref();
-        password = std::ptr::from_ref::<[u8]>(b.append(p.slice()));
+        password = bun_ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
         let d = database_str.to_utf8_without_ref();
-        database = std::ptr::from_ref::<[u8]>(b.append(d.slice()));
+        database = bun_ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
         let o = options_str.to_utf8_without_ref();
-        options = std::ptr::from_ref::<[u8]>(b.append(o.slice()));
+        options = bun_ptr::RawSlice::new(b.append(o.slice()));
         drop(o);
 
         let _path = path_str.to_utf8_without_ref();
-        path = std::ptr::from_ref::<[u8]>(b.append(_path.slice()));
+        path = bun_ptr::RawSlice::new(b.append(_path.slice()));
         drop(_path);
 
         break 'brk b.move_to_slice();
@@ -1163,9 +1156,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         (database, b"database"),
         (path, b"path"),
     ] {
-        // SAFETY: each ptr is either `b""` (static) or points into `options_buf`,
-        // which is live for this scope.
-        let entry = unsafe { &*entry };
+        let entry = entry.slice();
         if !entry.is_empty() && entry.iter().any(|&c| c == 0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
@@ -1252,8 +1243,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // overlap (rare_data() returns a disjoint `&mut RareData`).
         let group = unsafe { (*vm_ptr).rare_data().postgres_group::<false>(&*vm_ptr) };
-        // SAFETY: path is a valid slice into options_buf which is owned by *ptr.
-        let path_slice = unsafe { &*this.path };
+        let path_slice = this.path.slice();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(group, uws::SocketKind::Postgres, None, path_slice, ptr, false)
         } else {
@@ -1686,21 +1676,21 @@ impl Reader {
             return Err(AnyPostgresError::ShortRead);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture slice ptr before calling skip().
-        let slice = &raw const remaining[..count];
+        // PORT NOTE: reshaped for borrowck — capture as `RawSlice` before calling
+        // skip(); the read_buffer backing storage is not reallocated by skip().
+        let slice = bun_ptr::RawSlice::new(&remaining[..count]);
         self.skip(count);
-        // SAFETY: slice points into read_buffer which is not reallocated by skip().
-        Ok(Data::Temporary(unsafe { &raw const *slice }))
+        Ok(Data::Temporary(slice))
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         let remain = self.read_buffer().remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
-            let slice = &raw const remain[..zero as usize];
+            // `RawSlice` backref into read_buffer (not reallocated by skip()).
+            let slice = bun_ptr::RawSlice::new(&remain[..zero as usize]);
             self.skip(zero as usize + 1);
-            // SAFETY: slice points into read_buffer which is not reallocated by skip().
-            return Ok(Data::Temporary(unsafe { &raw const *slice }));
+            return Ok(Data::Temporary(slice));
         }
 
         Err(AnyPostgresError::ShortRead)
@@ -2456,8 +2446,8 @@ impl PostgresSQLConnection {
                             &mechanism_buf[..written]
                         };
                         let mut response = protocol::SASLInitialResponse {
-                            mechanism: Data::Temporary(b"SCRAM-SHA-256"),
-                            data: Data::Temporary(mechanism),
+                            mechanism: Data::Temporary(bun_ptr::RawSlice::new(b"SCRAM-SHA-256")),
+                            data: Data::Temporary(bun_ptr::RawSlice::new(mechanism)),
                         };
 
                         response.write_internal(self.writer()).map_err(pg_err)?;
@@ -2465,13 +2455,11 @@ impl PostgresSQLConnection {
                         self.flush_data();
                     }
                     protocol::Authentication::SASLContinue(cont) => {
-                        // PORT NOTE: reshaped for borrowck — read `password` (raw
-                        // *const [u8] backref into options_buf) before taking
+                        // PORT NOTE: reshaped for borrowck — copy the `RawSlice`
+                        // backref into options_buf out before taking
                         // `&mut self.authentication_state`; Zig passed `this` but
                         // compute_salted_password only needs the password slice.
-                        // SAFETY: self.password points into self.options_buf for the
-                        // lifetime of the connection (see ::init).
-                        let password: &[u8] = unsafe { &*self.password };
+                        let password: &[u8] = &self.password;
                         let AuthenticationState::Sasl(sasl) = &mut self.authentication_state else {
                             debug!("Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
@@ -2485,9 +2473,8 @@ impl PostgresSQLConnection {
 
                         let iteration_count = cont.iteration_count().map_err(pg_err)?;
 
-                        // SAFETY: cont.s points into cont.data, which is alive for this match arm.
                         let server_salt_decoded_base64 =
-                            bun_base64::decode_alloc(unsafe { &*cont.s }).map_err(|e| match e {
+                            bun_base64::decode_alloc(cont.s.slice()).map_err(|e| match e {
                                 bun_base64::DecodeAllocError::DecodingFailed => {
                                     AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
                                 }
@@ -2502,11 +2489,10 @@ impl PostgresSQLConnection {
                                 &mut auth_string,
                                 "n=*,r={},r={},s={},i={},c=biws,r={}",
                                 bstr::BStr::new(sasl.nonce()),
-                                // SAFETY: cont.{r,s,i} point into cont.data, alive for this arm.
-                                bstr::BStr::new(unsafe { &*cont.r }),
-                                bstr::BStr::new(unsafe { &*cont.s }),
-                                bstr::BStr::new(unsafe { &*cont.i }),
-                                bstr::BStr::new(unsafe { &*cont.r }),
+                                bstr::BStr::new(cont.r.slice()),
+                                bstr::BStr::new(cont.s.slice()),
+                                bstr::BStr::new(cont.i.slice()),
+                                bstr::BStr::new(cont.r.slice()),
                             );
                         }
                         sasl.compute_server_signature(&auth_string)?;
@@ -2529,14 +2515,13 @@ impl PostgresSQLConnection {
                             let _ = write!(
                                 &mut payload,
                                 "c=biws,r={},p={}",
-                                // SAFETY: cont.r points into cont.data, alive for this arm.
-                                bstr::BStr::new(unsafe { &*cont.r }),
+                                bstr::BStr::new(cont.r.slice()),
                                 bstr::BStr::new(&client_key_xor_base64_buf[..xor_base64_len]),
                             );
                         }
 
                         let mut response = protocol::SASLResponse {
-                            data: Data::Temporary(std::ptr::from_ref::<[u8]>(payload.as_slice())),
+                            data: Data::Temporary(bun_ptr::RawSlice::new(payload.as_slice())),
                         };
 
                         // PORT NOTE: reshaped for borrowck — set status before
@@ -2642,7 +2627,7 @@ impl PostgresSQLConnection {
                         };
 
                         let mut response = protocol::PasswordMessage {
-                            password: Data::Temporary(final_password),
+                            password: Data::Temporary(bun_ptr::RawSlice::new(final_password)),
                         };
 
                         self.authentication_state = AuthenticationState::Md5;

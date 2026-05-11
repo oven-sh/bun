@@ -549,9 +549,9 @@ impl MySQLQuery {
     #[inline]
     pub fn is_being_prepared(&self) -> bool {
         self.status == Status::Pending
-            && !self.statement.is_null()
-            // SAFETY: non-null and kept alive by the intrusive ref in `self.statement`.
-            && unsafe { (*self.statement).status } == my_sql_statement::Status::Parsing
+            && self
+                .get_statement()
+                .is_some_and(|s| s.status == my_sql_statement::Status::Parsing)
     }
 
     #[inline]
@@ -577,11 +577,7 @@ impl MySQLQuery {
     #[inline]
     pub fn mark_as_prepared(&mut self) {
         if self.status == Status::Pending {
-            if !self.statement.is_null() {
-                // SAFETY: non-null and kept alive by the intrusive ref in
-                // `self.statement`; this thread is the only mutator (matches Zig
-                // shared `*MySQLStatement` mutation).
-                let statement = unsafe { &mut *self.statement };
+            if let Some(statement) = self.get_statement() {
                 if statement.status == my_sql_statement::Status::Parsing
                     && statement.params.len() == statement.params_received as usize
                     && statement.statement_id > 0

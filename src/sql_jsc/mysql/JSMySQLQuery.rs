@@ -36,8 +36,8 @@ pub struct JSMySQLQuery {
     this_value: JsRef,
     // unfortunately we cannot use #ref_count here
     ref_count: Cell<u32>,
-    // TODO(port): lifetime — heap-stored borrow of VM/global (JSC_BORROW on m_ctx payload)
-    vm: NonNull<VirtualMachine>,
+    // Process-lifetime backrefs (JSC_BORROW on m_ctx payload).
+    vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: MySQLQuery,
 }
@@ -131,7 +131,7 @@ impl JSMySQLQuery {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
             // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
+            vm: BackRef::from(NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null")),
             global_object: BackRef::new(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));
@@ -592,16 +592,15 @@ impl JSMySQLQuery {
         None
     }
 
-    // Helpers for stored raw pointers.
+    // Helpers for stored back-references.
     #[inline]
     fn vm(&self) -> &VirtualMachine {
-        // SAFETY: vm outlives every JSMySQLQuery (owned by the runtime).
-        unsafe { self.vm.as_ref() }
+        self.vm.get()
     }
     #[inline]
     fn vm_mut(&self) -> &mut VirtualMachine {
         // SAFETY: vm outlives every JSMySQLQuery (owned by the runtime). The
-        // VM is interior-mutable on the C++/Zig side; the stored `NonNull`
+        // VM is interior-mutable on the C++/Zig side; the stored `BackRef`
         // carries write provenance from `bun_vm_ptr()` so projecting `&mut`
         // here mirrors the Zig spec's `*jsc.VirtualMachine`.
         unsafe { &mut *self.vm.as_ptr() }

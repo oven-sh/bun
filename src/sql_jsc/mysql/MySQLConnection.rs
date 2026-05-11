@@ -159,19 +159,13 @@ impl MySQLConnection {
     }
 
     pub fn can_pipeline(&mut self) -> bool {
-        let conn = self.get_js_connection();
-        // SAFETY: get_js_connection returns the parent struct embedding self.
-        self.queue.can_pipeline(unsafe { &*conn })
+        self.queue.can_pipeline(self.js_connection_ref())
     }
     pub fn can_prepare_query(&mut self) -> bool {
-        let conn = self.get_js_connection();
-        // SAFETY: see can_pipeline.
-        self.queue.can_prepare_query(unsafe { &*conn })
+        self.queue.can_prepare_query(self.js_connection_ref())
     }
     pub fn can_execute_query(&mut self) -> bool {
-        let conn = self.get_js_connection();
-        // SAFETY: see can_pipeline.
-        self.queue.can_execute_query(unsafe { &*conn })
+        self.queue.can_execute_query(self.js_connection_ref())
     }
 
     #[inline]
@@ -962,17 +956,17 @@ impl MySQLConnection {
             capability_flags: self.capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
-            username: Data::Temporary(&raw const *self.user),
-            database: Data::Temporary(&raw const *self.database),
-            auth_plugin_name: Data::Temporary(if let Some(plugin) = self.auth_plugin {
+            username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
+            database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
+            auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(if let Some(plugin) = self.auth_plugin {
                 match plugin {
-                    AuthMethod::MysqlNativePassword => b"mysql_native_password",
-                    AuthMethod::CachingSha2Password => b"caching_sha2_password",
-                    AuthMethod::Sha256Password => b"sha256_password",
+                    AuthMethod::MysqlNativePassword => &b"mysql_native_password"[..],
+                    AuthMethod::CachingSha2Password => &b"caching_sha2_password"[..],
+                    AuthMethod::Sha256Password => &b"sha256_password"[..],
                 }
             } else {
-                b""
-            }),
+                &b""[..]
+            })),
             auth_response: Data::Empty,
             sequence_id: self.sequence_id,
             connect_attrs: Default::default(),
@@ -995,7 +989,7 @@ impl MySQLConnection {
             }
 
             response.auth_response =
-                Data::Temporary(plugin.scramble(&self.password, &self.auth_data, &mut scrambled_buf)?);
+                Data::Temporary(bun_ptr::RawSlice::new(plugin.scramble(&self.password, &self.auth_data, &mut scrambled_buf)?));
         }
         response.capability_flags.reject();
         response.write(self.writer())?;
@@ -1014,7 +1008,7 @@ impl MySQLConnection {
         let mut scrambled_buf = [0u8; 32];
 
         response.auth_response =
-            Data::Temporary(auth_method.scramble(&self.password, plugin_data, &mut scrambled_buf)?);
+            Data::Temporary(bun_ptr::RawSlice::new(auth_method.scramble(&self.password, plugin_data, &mut scrambled_buf)?));
 
         let response_writer = self.writer();
         let mut packet = response_writer.start(self.sequence_id)?;
@@ -1265,6 +1259,29 @@ impl MySQLConnection {
             bun_core::from_field_ptr!(JSMySQLConnection, connection, std::ptr::from_mut::<Self>(self))
         }
         // TODO(port): JSMySQLConnection field name was `#connection` (private) in Zig; confirm Rust field name
+    }
+
+    /// Shared back-reference to the embedding `JSMySQLConnection` (read-only).
+    ///
+    /// Encapsulates the single `container_of` unsafe so the N read-only callers
+    /// (`can_pipeline` / `can_prepare_query` / `can_execute_query`) need no
+    /// per-site unsafe deref. The returned borrow is tied to
+    /// `&self`; the parent's bytes are valid wherever `&self` is valid (self is
+    /// a subobject of the parent allocation).
+    #[inline]
+    fn js_connection_ref(&self) -> &JSMySQLConnection {
+        // SAFETY: `self` is the `connection` field embedded inside a live
+        // `JSMySQLConnection` (it is only ever constructed there). Recovering
+        // the parent via `from_field_ptr!` and reborrowing as `&` for the
+        // lifetime of `&self` is sound — the parent allocation outlives any
+        // borrow of its field.
+        unsafe {
+            &*bun_core::from_field_ptr!(
+                JSMySQLConnection,
+                connection,
+                std::ptr::from_ref::<Self>(self).cast_mut()
+            )
+        }
     }
 
     
@@ -1603,8 +1620,8 @@ impl ReaderContext for Reader {
             return Err(AnyMySQLError::ShortRead);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture slice ptr before skip().
-        let slice = &raw const remaining[0..count];
+        // PORT NOTE: reshaped for borrowck — capture detached slice before skip().
+        let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
@@ -1612,7 +1629,7 @@ impl ReaderContext for Reader {
     fn read_z(self) -> Result<Data, AnyMySQLError> {
         let remaining = self.read_buffer().remaining();
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = &raw const remaining[0..zero as usize];
+            let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
             self.skip(isize::try_from(zero + 1).expect("int cast"));
             return Ok(Data::Temporary(slice));
         }

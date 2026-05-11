@@ -62,8 +62,7 @@ impl<'a> StackReader<'a> {
         // PORT NOTE: reshaped for borrowck — copy the &'a [u8] out before slicing so the
         // returned Data borrows 'a, not &mut self.
         let buffer: &'a [u8] = self.buffer;
-        // Data::Temporary stores a raw fat pointer (see shared/Data.rs).
-        Ok(Data::Temporary(&raw const buffer[offset..*self.offset]))
+        Ok(Data::Temporary(bun_ptr::RawSlice::new(&buffer[offset..*self.offset])))
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
@@ -74,7 +73,7 @@ impl<'a> StackReader<'a> {
         if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
             self.skip(zero + 1);
-            return Ok(Data::Temporary(&raw const remaining[0..zero]));
+            return Ok(Data::Temporary(bun_ptr::RawSlice::new(&remaining[0..zero])));
         }
 
         Err(AnyPostgresError::ShortRead)

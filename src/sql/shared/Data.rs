@@ -1,4 +1,5 @@
 use bun_collections::{VecExt, BoundedArray};
+use bun_ptr::RawSlice;
 use bun_string::ZStr;
 
 pub type InlineStorage = BoundedArray<u8, 15>;
@@ -7,9 +8,10 @@ pub type InlineStorage = BoundedArray<u8, 15>;
 pub enum Data {
     Owned(Vec<u8>),
     // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
-    // returns a `Data` aliasing `self`). Stored as a raw fat pointer in Phase A; revisit
-    // whether a `<'a>` on `Data` is acceptable in Phase B.
-    Temporary(*const [u8]),
+    // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
+    // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
+    // invariant). Revisit whether a `<'a>` on `Data` is acceptable in Phase B.
+    Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
     Empty,
 }
@@ -45,11 +47,7 @@ impl Data {
     pub fn to_owned(self) -> Result<Vec<u8>, bun_alloc::AllocError> {
         match self {
             Data::Owned(owned) => Ok(owned),
-            Data::Temporary(temporary) => {
-                // SAFETY: caller guarantees the borrowed slice is still valid (same as Zig)
-                let slice = unsafe { &*temporary };
-                Ok(slice.to_vec())
-            }
+            Data::Temporary(temporary) => Ok(temporary.slice().to_vec()),
             Data::Empty => Ok(Vec::new()),
             Data::InlineStorage(inline_storage) => Ok(inline_storage.as_slice().to_vec()),
         }
@@ -78,8 +76,7 @@ impl Data {
     pub fn slice(&self) -> &[u8] {
         match self {
             Data::Owned(owned) => owned.slice(),
-            // SAFETY: caller guarantees the borrowed slice is still valid (same as Zig)
-            Data::Temporary(temporary) => unsafe { &**temporary },
+            Data::Temporary(temporary) => temporary.slice(),
             Data::Empty => b"",
             Data::InlineStorage(inline_storage) => inline_storage.as_slice(),
         }
@@ -88,39 +85,25 @@ impl Data {
     pub fn substring(&self, start_index: usize, end_index: usize) -> Data {
         match self {
             Data::Owned(owned) => {
-                Data::Temporary(&raw const owned.slice()[start_index..end_index])
+                Data::Temporary(RawSlice::new(&owned.slice()[start_index..end_index]))
             }
             Data::Temporary(temporary) => {
-                // SAFETY: caller guarantees the borrowed slice is still valid (same as Zig)
-                let s = unsafe { &**temporary };
-                Data::Temporary(&raw const s[start_index..end_index])
+                Data::Temporary(RawSlice::new(&temporary.slice()[start_index..end_index]))
             }
             Data::Empty => Data::Empty,
             Data::InlineStorage(inline_storage) => {
-                Data::Temporary(&raw const inline_storage.as_slice()[start_index..end_index])
+                Data::Temporary(RawSlice::new(&inline_storage.as_slice()[start_index..end_index]))
             }
         }
     }
 
     pub fn slice_z(&self) -> &ZStr {
-        match self {
-            Data::Owned(owned) => {
-                let s = owned.slice();
-                // SAFETY: caller invariant — owned bytes are NUL-terminated at `len`
-                unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
-            }
-            Data::Temporary(temporary) => {
-                // SAFETY: caller invariant — borrowed bytes are NUL-terminated at `len`
-                let s = unsafe { &**temporary };
-                unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
-            }
-            Data::Empty => ZStr::EMPTY,
-            Data::InlineStorage(inline_storage) => {
-                let s = inline_storage.as_slice();
-                // SAFETY: caller invariant — inline bytes are NUL-terminated at `len`
-                unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
-            }
+        let s = self.slice();
+        if s.is_empty() {
+            return ZStr::EMPTY;
         }
+        // SAFETY: caller invariant — bytes are NUL-terminated at `len`.
+        unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 

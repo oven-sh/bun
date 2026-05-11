@@ -238,15 +238,15 @@ impl Value {
                 // return a `Temporary` aliasing the same bytes. `to_data` callers
                 // must keep `self` alive until the returned `Data` is consumed.
                 let s = data.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
             }
             Value::String(slice) => {
                 let s = slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
             }
             Value::Bytes(b) => {
                 let s = b.slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(bun_ptr::RawSlice::new(s)) });
             }
         }
 

@@ -731,8 +731,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             // OpenTelemetry: Notify operation end
-            const status_code: u16 = if (this.response_ptr) |resp| resp.getInitStatusCode() else 500;
-            const content_length: u64 = if (this.response_ptr) |resp| resp.getBodyLen() else 0;
+            const status_code: u16 = if (this.response_weakref.get()) |resp| resp.getInitStatusCode() else 500;
+            const content_length: u64 = if (this.response_weakref.get()) |resp| resp.getBodyLen() else 0;
             bun.telemetry.http.notifyHttpRequestEnd(&this.telemetry_ctx, globalThis, status_code, content_length);
 
             if (this.response_jsvalue != .zero) {

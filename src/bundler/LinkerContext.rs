@@ -1527,8 +1527,10 @@ pub struct PendingPartRange<'a> {
 /// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
 /// the task allocation for the callback's duration; the returned raw pointers
 /// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
-/// Callers uphold the disjoint-write contract before materializing `&mut`:
-///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`,
+/// Callers uphold the disjoint-write contract:
+///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
+///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
+///     `UnsafeCell` slot write — never `&mut Chunk`),
 ///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
 ///   - all other access through `c` / `chunk` during codegen is read-only.
 #[inline]

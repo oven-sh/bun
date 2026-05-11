@@ -69,9 +69,9 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
     let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, chunk, chunks) };
-    unsafe {
-        (*chunk).compile_results_for_chunk[i] = result;
-    }
+    // SAFETY: HTML chunks have exactly one part-range (i == 0); see
+    // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
+    unsafe { Chunk::write_compile_result_slot(chunk, i, result) };
 }
 
 #[derive(Default)]

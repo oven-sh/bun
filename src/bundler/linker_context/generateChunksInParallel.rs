@@ -162,21 +162,20 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); js.parts_in_chunk_in_order.len()].into_boxed_slice();
+                            crate::chunk::CompileResultSlots::new(js.parts_in_chunk_in_order.len());
                         has_js_chunk = true;
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
                         total_count += css.imports_in_chunk_in_order.len() as usize;
                         chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); css.imports_in_chunk_in_order.len() as usize].into_boxed_slice();
+                            crate::chunk::CompileResultSlots::new(css.imports_in_chunk_in_order.len() as usize);
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
                         total_count += 1;
-                        chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); 1].into_boxed_slice();
+                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(1);
                     }
                 }
             }

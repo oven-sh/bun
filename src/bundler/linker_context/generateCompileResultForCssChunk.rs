@@ -37,13 +37,21 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     };
 
     // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. No other live
-    // `&`/`&mut` to these allocations exists in this frame at this point.
-    let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-    let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+    // contract is documented on `pending_part_range_prologue`. The `&mut`
+    // borrows below are scoped to the impl call so they do not overlap the
+    // raw slot write that follows. (Peer tasks still hold their own `&mut`
+    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
+    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    let result = {
+        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
+    };
 
-    chunk_mut.compile_results_for_chunk[part_range.i as usize] =
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i);
+    // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
+    // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
+    // never materializes `&mut Chunk` / `&mut [CompileResult]`.
+    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
 fn generate_compile_result_for_css_chunk_impl(

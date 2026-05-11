@@ -152,7 +152,11 @@ test("auth token applies to tarball URL when token path diverges from registry U
   // The stable signal for this regression is the recorded Authorization
   // header on the tarball request; the reporter-output assertions
   // (stdout progress, non-empty stderr) vary with install's reporter.
-  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
@@ -195,7 +199,11 @@ test("parent-path nerf-dart covers deeper scoped-registry URL (related: #28233)"
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
@@ -235,7 +243,11 @@ test("longest nerf-dart wins when multiple entries could match the request URL",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],

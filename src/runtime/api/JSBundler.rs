@@ -1403,14 +1403,16 @@ pub mod js_bundler {
             // points at a live `AnyEventLoop` owned by the bundle thread /
             // runtime for the duration of the bundle.
             unsafe {
-                let ctx = (*self.parse_task).ctx;
-                let any_loop = (*ctx)
+                let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
+                // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
+                let any_loop = ctx
+                    .assume_mut()
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { owner } => {
                         owner.enqueue_task_concurrent(
-                            ConcurrentTask::from_callback(ctx, on_notify_defer_raw),
+                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw),
                         );
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {

@@ -195,7 +195,7 @@ pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// each use site.
 #[derive(Clone, Copy)]
 pub struct CmdHandle {
-    pub interp: *mut Interpreter,
+    pub interp: bun_ptr::ParentRef<Interpreter>,
     pub id: NodeId,
 }
 
@@ -210,8 +210,9 @@ impl CmdHandle {
     /// `Cmd::deinit` recycles the slot.
     #[inline]
     pub unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
-        // SAFETY: per fn contract.
-        unsafe { (*self.interp).as_cmd_mut(self.id) }
+        // SAFETY: per fn contract — `interp` constructed via `from_raw_mut`
+        // (write provenance), single-threaded, no overlapping `&mut`.
+        unsafe { self.interp.assume_mut().as_cmd_mut(self.id) }
     }
 }
 

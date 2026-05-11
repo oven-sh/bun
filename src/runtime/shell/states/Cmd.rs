@@ -585,7 +585,12 @@ impl Cmd {
                 _ => unreachable!(),
             }
         };
-        let cmd_parent = crate::shell::subproc::CmdHandle { interp: interp_ptr, id: this };
+        let cmd_parent = crate::shell::subproc::CmdHandle {
+            // SAFETY: `interp_ptr` is the live owning Interpreter (from
+            // `&mut Interpreter` above); single-threaded, write provenance.
+            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            id: this,
+        };
 
         let mut did_exit_immediately = false;
         // `spawn_async` is re-entrant: `watch()`/`read_all()` may fire

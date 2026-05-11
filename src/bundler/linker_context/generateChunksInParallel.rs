@@ -70,7 +70,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
-        let ctx = GenerateChunkCtx { chunk: &raw mut chunks[0], c, chunks };
+        let ctx = GenerateChunkCtx {
+            chunk: &raw mut chunks[0],
+            // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
+            // write provenance preserved.
+            c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
+            chunks,
+        };
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -147,10 +153,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // PORT NOTE: `GenerateChunkCtx` fields are raw pointers; capture them
             // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
             // stored in every ctx (Zig stores `[]Chunk` by value).
-            let c_ptr: *mut LinkerContext = std::ptr::from_mut::<LinkerContext>(c);
+            // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
+            let c_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ptr: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) });
+                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();

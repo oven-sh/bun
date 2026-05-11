@@ -1960,7 +1960,7 @@ unsafe impl bun_threading::Linked for ResultListEntry {
 }
 
 pub struct ReaddirSubtask {
-    pub readdir_task: *mut AsyncReaddirRecursiveTask, // BACKREF
+    pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
     pub basename: PathString,
     pub task: WorkPoolTask,
 }
@@ -1983,8 +1983,11 @@ impl ReaddirSubtask {
             }
         });
         let mut buf = PathBuffer::uninit();
-        // SAFETY: readdir_task (BACKREF) outlives subtask via subtask_count refcount
-        unsafe { &mut *readdir_task }.perform_work(basename.slice_assume_z(), &mut buf, false);
+        // SAFETY: readdir_task (ParentRef) outlives subtask via subtask_count
+        // refcount. `from_raw_mut` was used at enqueue, so write provenance is
+        // present; this work-pool callback is the sole holder of `&mut` to the
+        // parent's per-result fields (it pushes to a lock-free queue).
+        unsafe { readdir_task.assume_mut() }.perform_work(basename.slice_assume_z(), &mut buf, false);
     }
 }
 
@@ -2040,7 +2043,10 @@ impl AsyncReaddirRecursiveTask {
         let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
         debug_assert!(prev > 0);
         WorkPool::schedule_new(ReaddirSubtask {
-            readdir_task: self,
+            // SAFETY: `self` is a `Box<AsyncReaddirRecursiveTask>` (stable
+            // address) and outlives every subtask via the `subtask_count`
+            // refcount it just bumped. Write provenance from `&mut self`.
+            readdir_task: unsafe { bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self)) },
             basename: basename_ps,
             task: WorkPoolTask::default(),
         });

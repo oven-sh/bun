@@ -71,9 +71,9 @@ pub struct NetworkTask {
     pub request_buffer: MutableString,
     pub response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // TODO(port): TSV classifies as *const, but Zig mutates through it (wake/log/push) —
-    // verify interior mutability on PackageManager or widen to *mut in Phase B.
-    pub package_manager: *const PackageManager,
+    // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
+    // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
+    pub package_manager: bun_ptr::ParentRef<PackageManager>,
     pub callback: Callback,
     /// Key in patchedDependencies in package.json
     // PORT NOTE: `'static` because NetworkTask is stored lifetime-less in
@@ -273,7 +273,7 @@ impl NetworkTask {
         // field access goes through `addr_of!` and the cross-thread
         // `wake_raw` path, mirroring `TarballStream::finish` /
         // `isolated_install::Installer::Task::callback`.
-        let pm = this.package_manager.cast_mut();
+        let pm = this.package_manager.as_mut_ptr();
         // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
 
@@ -391,7 +391,9 @@ impl NetworkTask {
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &mut *self.package_manager.cast_mut() };
+        // Constructed via `from_raw_mut` (write provenance); single-threaded
+        // main-thread setup path, so no overlapping `&mut PackageManager`.
+        let pm = unsafe { self.package_manager.assume_mut() };
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with; Zig dereferences `this.package_manager.log`.
         let log = pm.log_mut();
@@ -676,7 +678,8 @@ impl NetworkTask {
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &mut *self.package_manager.cast_mut() };
+        // Constructed via `from_raw_mut` (write provenance); single-threaded.
+        let pm = unsafe { self.package_manager.assume_mut() };
 
         let tarball_url = tarball_.url.slice();
         self.url_buf = if tarball_url.is_empty() {
@@ -871,13 +874,16 @@ impl NetworkTask {
     pub unsafe fn write_init(
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
-        package_manager: *const PackageManager,
+        package_manager: *mut PackageManager,
         apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
-            addr_of_mut!((*slot).package_manager).write(package_manager);
+            // SAFETY: `package_manager` is the live owner of this task; write
+            // provenance is required for `for_manifest`/`for_tarball`'s
+            // `assume_mut`, so callers pass `*mut` (not `*const`).
+            addr_of_mut!((*slot).package_manager).write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
             // Struct-default fields (Zig: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());

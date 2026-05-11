@@ -37,8 +37,9 @@ pub struct Task<'a> {
     pub id: Id,
     /// default: `None`
     pub err: Option<bun_core::Error>,
-    /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`
-    pub package_manager: *const PackageManager,
+    /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
+    /// `None` only in `uninit()`; every scheduled task overwrites it.
+    pub package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
     /// default: `None`
     pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -67,7 +68,7 @@ pub fn uninit() -> Task<'static> {
         // be a valid (empty) Log either way.
         log: Log::default(),
         id: Id(0),
-        package_manager: core::ptr::null(),
+        package_manager: None,
         // Real Zig field defaults:
         status: Status::Waiting,
         threadpool_task: thread_pool::Task {
@@ -276,7 +277,7 @@ impl<'a> Task<'a> {
         // inline at the call boundary only — same race as the Zig spec's
         // freely-aliased `*PackageManager`.
         let manager: *mut PackageManager =
-            unsafe { (*this).package_manager.cast_mut() };
+            unsafe { (*this).package_manager.expect("Task.package_manager unset").as_mut_ptr() };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
 

@@ -92,7 +92,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     };
 
     let result = Box::new(parse_task::Result {
-        ctx: task.ctx,
+        // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2 with
+        // write provenance (set in `bundle_v2.rs` from `ptr::from_mut(self)`).
+        ctx: unsafe { bun_ptr::ParentRef::from_raw_mut(task.ctx) },
         // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
         task: Default::default(),
         value,

@@ -120,7 +120,10 @@ pub struct ParseTask {
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    pub ctx: *mut BundleV2<'static>, // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
+    /// BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in
+    /// `on_complete`. `None` only in the `default()` placeholder; every
+    /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub package_version: ast::StoreStr,
     pub package_name: ast::StoreStr,
@@ -139,7 +142,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
     pub task: EventLoop::Task,
-    pub ctx: *mut BundleV2<'static>, // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
+    pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
     pub value: ResultValue,
     pub watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
@@ -223,9 +226,8 @@ impl ParseTask {
     /// (`init()` was called); debug-asserted.
     #[inline]
     pub unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
-        debug_assert!(!self.ctx.is_null(), "ParseTask.ctx accessed before init()");
-        // SAFETY: caller upholds: non-null (asserted) + bundle outlives `'r`.
-        unsafe { &*self.ctx }
+        // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
+        unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
     pub fn init(
@@ -253,8 +255,9 @@ impl ParseTask {
         // only read `transpiler().options.target` here.
         let known_target = unsafe { (*ctx).transpiler().options.target };
         ParseTask {
-            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF).
-            ctx: ctx.cast::<BundleV2<'static>>(),
+            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
+            // write provenance from the `*mut BundleV2` parameter.
+            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -304,7 +307,7 @@ impl ParseTask {
 impl Default for ParseTask {
     fn default() -> Self {
         ParseTask {
-            ctx: core::ptr::null_mut(),
+            ctx: None,
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
@@ -525,8 +528,8 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
     // if the extra match matters (it shouldn't — called once).
 
     let parse_task = ParseTask {
-        // TODO(port): Zig used `undefined` for ctx; using null ptr.
-        ctx: core::ptr::null_mut(),
+        // TODO(port): Zig used `undefined` for ctx; using None.
+        ctx: None,
         path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
         side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
         jsx: options::jsx::Pragma { parse: false, ..Default::default() },
@@ -2507,8 +2510,8 @@ pub fn run_from_thread_pool(this: &mut ParseTask) {
 }
 
 fn run_from_thread_pool_impl(this: &mut ParseTask) {
-    // SAFETY: ctx backref valid.
-    let ctx = unsafe { &*this.ctx };
+    // SAFETY: ctx backref valid for the bundle pass (outlives this task).
+    let ctx = unsafe { this.ctx() };
     let worker: &mut crate::Worker = crate::Worker::get(ctx);
     // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
     // would alias the `&mut worker` borrows below).
@@ -2606,7 +2609,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     };
 
     let result = Box::new(Result {
-        ctx: this.ctx,
+        ctx: this.ctx.expect("ParseTask.ctx unset"),
         // Zig `.task = .{}` (.zig:1407) — default-init, NOT `undefined`.
         task: EventLoop::Task::default(),
         value,
@@ -2661,11 +2664,11 @@ pub fn on_complete(result: *mut Result) {
     // SAFETY: result allocated via heap::alloc above; uniquely owned here.
     let r = unsafe { &mut *result };
     let ctx = r.ctx;
-    // SAFETY: `ctx` is a `*mut BundleV2` BACKREF (Zig `*BundleV2`) stored with
-    // write provenance in `ParseTask::init`; the BundleV2 outlives the bundle
+    // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
+    // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
     // pass and no other `&mut BundleV2` is live on this (main) thread when the
     // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
-    BundleV2::on_parse_task_complete(r, unsafe { &mut *ctx });
+    BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
 }
 } // end mod parse_worker
 

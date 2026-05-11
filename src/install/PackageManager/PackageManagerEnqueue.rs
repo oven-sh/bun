@@ -354,7 +354,7 @@ pub fn enqueue_parse_npm_package(
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
         task.write(Task::Task {
-            package_manager: std::ptr::from_ref::<PackageManager>(this),
+            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))),
             log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
             request: crate::package_manager_task::Request {
@@ -1130,7 +1130,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     NetworkTask::write_init(
                                         network_task,
                                         task_id,
-                                        this_ptr.cast(),
+                                        this_ptr,
                                         None,
                                     );
                                 }
@@ -1639,7 +1639,7 @@ fn init_extract_task(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: std::ptr::from_ref::<PackageManager>(this),
+            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))),
             log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
@@ -1703,7 +1703,11 @@ fn enqueue_git_clone(
     // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
     // `get_init` the slot is claimed only after the value is fully constructed.
     let value = Task::Task {
-        package_manager: std::ptr::from_ref::<PackageManager>(this),
+        // SAFETY: `this` is a live `&mut PackageManager`; the task is owned by
+        // `this.preallocated_resolve_tasks` and never outlives the manager.
+        package_manager: Some(unsafe {
+            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))
+        }),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1776,7 +1780,7 @@ pub fn enqueue_git_checkout(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: std::ptr::from_ref::<PackageManager>(this),
+            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))),
             log: bun_ast::Log::init(),
             tag: crate::package_manager_task::Tag::GitCheckout,
             request: crate::package_manager_task::Request {
@@ -1882,7 +1886,11 @@ fn enqueue_local_tarball(
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
     let value = Task::Task {
-        package_manager: std::ptr::from_ref::<PackageManager>(this),
+        // SAFETY: `this` is a live `&mut PackageManager`; the task is owned by
+        // `this.preallocated_resolve_tasks` and never outlives the manager.
+        package_manager: Some(unsafe {
+            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))
+        }),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {

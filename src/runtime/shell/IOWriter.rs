@@ -170,12 +170,11 @@ pub type Poll = WriterImpl;
 #[cfg(not(windows))]
 pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     use bun_io::pipe_writer::PosixPipeWriter;
-    let parent = writer.parent as *const IOWriter;
-    debug_assert!(!parent.is_null());
-    // SAFETY: `parent` is the backref stashed via `set_parent` in
-    // `IOWriter::init`; `writer` is a field of `*parent`, so the pointee is
-    // live. Re-enter via `&self` (UnsafeCell aliasing model).
-    let _keepalive = unsafe { &*parent }.keepalive();
+    let parent = writer.parent.expect("IOWriter writer.parent unset");
+    // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
+    // `writer` is a field of `*parent`, so the pointee is live. Re-enter via
+    // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
+    let _keepalive = parent.keepalive();
     writer.on_poll(size_hint, hup);
 }
 
@@ -223,10 +222,10 @@ struct State {
     /// `init()` (the sole constructor).
     self_weak: std::sync::Weak<IOWriter>,
     /// Backref to the owning interpreter for async-poll callbacks (which must
-    /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; null
+    /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
     /// until then. Spec: implicit in Zig (children held `*Interpreter` via
     /// `@fieldParentPtr`).
-    interp: *mut Interpreter,
+    interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
 pub struct IOWriter {
@@ -293,7 +292,7 @@ impl IOWriter {
                 started: false,
                 flags,
                 self_weak: w.clone(),
-                interp: core::ptr::null_mut(),
+                interp: None,
             }),
         });
         // Set the parent backref after Arc allocation so the address is stable.
@@ -313,7 +312,9 @@ impl IOWriter {
     /// `Yield::run`. Idempotent.
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
-        self.state().interp = interp;
+        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
+        // struct that holds this Arc); single-threaded.
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]
@@ -889,17 +890,16 @@ impl IOWriter {
     /// Drive a `Yield` from inside an async poll callback. Requires `interp`
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
     fn run_yield(&self, y: Yield) {
-        let interp = self.state().interp;
-        if interp.is_null() {
+        let Some(interp) = self.state().interp else {
             debug_assert!(
                 matches!(y, Yield::Done),
                 "IOWriter async callback fired without interp backref"
             );
             return;
-        }
+        };
         // SAFETY: interp outlives every IOWriter (it owns the IO struct that
-        // holds the Arc). Single-threaded.
-        y.run(unsafe { &mut *interp });
+        // holds the Arc). Single-threaded; constructed via `from_raw_mut`.
+        y.run(unsafe { interp.assume_mut() });
     }
 
     // ── enqueue ─────────────────────────────────────────────────────────

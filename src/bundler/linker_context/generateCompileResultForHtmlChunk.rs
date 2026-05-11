@@ -60,7 +60,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // `GenerateChunkCtx.c` is the embedded `LinkerContext` inside `BundleV2`.
     // The link step never mutates `LinkerContext` from this task, so a
     // `*const` (and the derived `&BundleV2` for `Worker::get`) suffices.
-    let c: *const LinkerContext = ctx.c.cast_const().cast();
+    let c: *const LinkerContext = ctx.c.as_ptr().cast();
     let worker = Worker::get(ctx.bundle());
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 

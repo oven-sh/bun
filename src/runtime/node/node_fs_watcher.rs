@@ -109,7 +109,10 @@ pub type FSWatchTask = FSWatchTaskPosix;
 // whole posix task to keep the Windows build sound.
 #[cfg(not(windows))]
 pub struct FSWatchTaskPosix {
-    ctx: *mut FSWatcher,
+    /// `None` only during `FSWatcher::init` two-phase construction (the task is
+    /// embedded as `current_task` before the boxed `FSWatcher` address is
+    /// known); patched to `Some` immediately after.
+    ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
     count: u8,
 
     entries: [MaybeUninit<Entry>; 8],
@@ -134,9 +137,17 @@ impl FSWatchTaskPosix {
     }
 
     fn ctx(&self) -> &mut FSWatcher {
-        // SAFETY: BACKREF — `ctx` always points to the live owning FSWatcher
-        // (set at `init`, line 674 in Zig); FSWatcher outlives all its tasks.
-        unsafe { &mut *self.ctx }
+        // SAFETY: BACKREF — `ctx` is the live owning FSWatcher (set right after
+        // boxing in `init`); FSWatcher outlives all its tasks. Single-JS-thread,
+        // so no overlapping borrow. Write provenance from `from_raw_mut`.
+        unsafe { self.ctx.expect("FSWatchTask.ctx unset").assume_mut() }
+    }
+
+    /// Raw owner pointer (write provenance) for `addr_of!` / re-entrant
+    /// `emit_error`-style helpers that take `*mut FSWatcher`.
+    #[inline]
+    fn ctx_ptr(&self) -> *mut FSWatcher {
+        self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()
     }
 
     pub fn append(&mut self, event: Event, needs_free: bool) {
@@ -164,10 +175,10 @@ impl FSWatchTaskPosix {
             match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                // SAFETY: `self.ctx` is the live owning FSWatcher (BACKREF); the
+                // SAFETY: `self.ctx` is the live owning FSWatcher (ParentRef); the
                 // `*mut Self` entry holds no `&mut FSWatcher` across the JS callback.
-                Event::Error(err) => unsafe { FSWatcher::emit_error(self.ctx, err.clone()) },
-                Event::Abort => unsafe { FSWatcher::emit_if_aborted(self.ctx) },
+                Event::Error(err) => unsafe { FSWatcher::emit_error(self.ctx_ptr(), err.clone()) },
+                Event::Abort => unsafe { FSWatcher::emit_if_aborted(self.ctx_ptr()) },
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             }
         }
@@ -244,9 +255,9 @@ impl FSWatchTaskPosix {
         this_ref.clean_entries();
         #[cfg(debug_assertions)]
         {
-            // SAFETY: ctx is valid for the lifetime of any task (BACKREF).
+            // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
             debug_assert!(!core::ptr::eq(
-                unsafe { core::ptr::addr_of!((*this_ref.ctx).current_task) },
+                unsafe { core::ptr::addr_of!((*this_ref.ctx_ptr()).current_task) },
                 this.cast_const()
             ));
         }
@@ -306,7 +317,7 @@ unsafe extern "C" {
 
 pub struct FSWatchTaskWindows {
     event: Event,
-    ctx: *mut FSWatcher,
+    ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
 
     /// Unused: To match the API of the posix version
     count: u8, // u0 in Zig
@@ -324,7 +335,7 @@ impl Default for FSWatchTaskWindows {
                 syscall: bun_sys::Tag::watch,
                 ..Default::default()
             }),
-            ctx: core::ptr::null_mut(),
+            ctx: None,
             count: 0,
         }
     }
@@ -373,13 +384,20 @@ impl core::fmt::Display for StringOrBytesToDecode {
 }
 
 impl FSWatchTaskWindows {
+    /// Raw owner pointer (write provenance) for re-entrant helpers that take
+    /// `*mut FSWatcher` and for `addr_of!` projections.
+    #[inline]
+    fn ctx_ptr(&self) -> *mut FSWatcher {
+        self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()
+    }
+
     pub fn append_abort(&mut self) {
         let ctx = self.ctx;
         // Balance the `ctx.unrefTask()` at the end of `run()` (matches
         // `onPathUpdateWindows` and the posix `enqueue()` path).
-        // SAFETY: BACKREF — `ctx` is the live owning FSWatcher set at
+        // SAFETY: ParentRef — `ctx` is the live owning FSWatcher set at
         // construction; FSWatcher outlives every task it enqueues.
-        if !unsafe { &mut *ctx }.ref_task() {
+        if !unsafe { ctx.expect("FSWatchTask.ctx unset").assume_mut() }.ref_task() {
             return;
         }
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
@@ -390,7 +408,7 @@ impl FSWatchTaskWindows {
 
         // SAFETY: event_loop() is the live JS-thread loop (BACKREF via `ctx`);
         // ownership of `task` transfers to the queue (drained on the same thread).
-        unsafe { (*(*ctx).event_loop()).enqueue_task(Task::init(task)) };
+        unsafe { (*(*self.ctx_ptr()).event_loop()).enqueue_task(Task::init(task)) };
     }
 
     /// this runs on JS Context Thread
@@ -400,7 +418,7 @@ impl FSWatchTaskWindows {
         // which then conflicts with `&mut self.event` below (and is unsound on
         // its own: two calls would alias the same `&mut`). Copy the raw backref
         // and deref it directly so no borrow of `*self` is held across the match.
-        let ctx_ptr = self.ctx;
+        let ctx_ptr = self.ctx_ptr();
         // PORT NOTE (noalias re-entrancy): do NOT hold a single `&mut FSWatcher`
         // across the match — `emit_error`/`emit_if_aborted` take `*mut Self` and
         // re-derive `&mut` internally; a live outer `&mut FSWatcher` would alias.
@@ -521,7 +539,9 @@ impl FSWatcher {
         }
 
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
-            ctx: this,
+            // SAFETY: `this` is a live `*mut FSWatcher` (BACKREF) recovered from
+            // the registered userdata; outlives every task it enqueues.
+            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
             event,
             count: 0,
         }));
@@ -716,7 +736,8 @@ impl FSWatcher {
             if s.aborted() {
                 // safely abort next tick
                 this_ref.current_task = FSWatchTask {
-                    ctx: this,
+                    // SAFETY: `this` is the live boxed FSWatcher; write provenance.
+                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
                     ..Default::default()
                 };
                 this_ref.current_task.append_abort();
@@ -1031,7 +1052,7 @@ impl FSWatcher {
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
             current_task: FSWatchTask {
-                ctx: core::ptr::null_mut(),
+                ctx: None,
                 count: 0,
                 ..Default::default()
             },
@@ -1054,7 +1075,8 @@ impl FSWatcher {
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         let ctx_ref = unsafe { &mut *ctx };
-        ctx_ref.current_task.ctx = ctx;
+        // SAFETY: `ctx` is the heap-stable Box address; write provenance.
+        ctx_ref.current_task.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) });
 
         ctx_ref.path_watcher = if args.signal.map_or(true, |s| !s.aborted()) {
             // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
@@ -1124,7 +1146,7 @@ impl FSWatcher {
 impl Default for FSWatchTaskPosix {
     fn default() -> Self {
         Self {
-            ctx: core::ptr::null_mut(),
+            ctx: None,
             count: 0,
             entries: [const { MaybeUninit::uninit() }; 8],
             concurrent_task: ConcurrentTask::default(),

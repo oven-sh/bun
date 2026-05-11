@@ -52,7 +52,10 @@ pub use ref_count::{
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{CellRefCounted, ThreadSafeRefCounted};
+pub use bun_core_macros::{Anchored, CellRefCounted, ThreadSafeRefCounted};
+
+pub mod parent_ref;
+pub use parent_ref::{Anchored, LiveMarker, ParentRef};
 // Compat aliases for Phase-A drafts that used pointer-typedef stubs.
 pub type IntrusiveRc<T> = RefPtr<T>;
 pub type IntrusiveArc<T> = RefPtr<T>;

@@ -302,7 +302,9 @@ pub trait PosixBufferedWriterParent {
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
-    pub parent: *mut Parent,
+    /// `None` only between `Default` and `set_parent`; every dispatch path
+    /// assumes it is set (see SAFETY comments at the call sites).
+    pub parent: Option<bun_ptr::ParentRef<Parent>>,
     pub is_done: bool,
     pub pollable: bool,
     pub closed_without_reporting: bool,
@@ -313,7 +315,7 @@ impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> 
     fn default() -> Self {
         Self {
             handle: PollOrFd::Closed,
-            parent: core::ptr::null_mut(), // Zig: undefined
+            parent: None, // Zig: undefined
             is_done: false,
             pollable: false,
             closed_without_reporting: false,
@@ -329,7 +331,7 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     fn get_buffer(&self) -> &[u8] {
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         // Raw-ptr dispatch — no `&Parent` materialized.
-        unsafe { Parent::get_buffer(self.parent) }
+        unsafe { Parent::get_buffer(self.parent()) }
     }
     fn on_write(&mut self, written: usize, status: WriteStatus) {
         self._on_write(written, status);
@@ -358,7 +360,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// dispatch goes through `Parent::method(ptr, ..)` which takes `*mut Self`.
     #[inline]
     fn parent(&self) -> *mut Parent {
-        self.parent
+        self.parent.map_or(core::ptr::null_mut(), bun_ptr::ParentRef::as_mut_ptr)
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -408,7 +410,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
         let was_done = unsafe { (*this).is_done } == true;
-        let parent = unsafe { (*this).parent };
+        let parent = unsafe { &*this }.parent();
 
         if status == WriteStatus::EndOfFile && !was_done {
             unsafe { (*this).close_without_reporting() };
@@ -500,7 +502,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 // SAFETY: parent BACKREF valid.
                 unsafe { Parent::on_close(self.parent()) };
             } else {
-                let parent = self.parent;
+                let parent = self.parent();
                 self.handle.close_impl(
                     Some(parent.cast()),
                     // SAFETY: parent was set via set_parent with a *mut Parent.
@@ -517,7 +519,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
-        self.parent = parent;
+        // SAFETY: caller passes the owning `Parent` (BACKREF); the writer is an
+        // intrusive field of `*parent`, so the parent strictly outlives it.
+        self.parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) };
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));

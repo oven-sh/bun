@@ -529,7 +529,12 @@ impl<'a> LinkerContext<'a> {
 
         // PORT NOTE: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
-        let ctx: *mut LinkerContext<'static> = std::ptr::from_mut::<LinkerContext<'a>>(self).cast();
+        // SAFETY: write provenance from `ptr::from_mut`; outlives every task.
+        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
+            bun_ptr::ParentRef::from_raw_mut(
+                std::ptr::from_mut::<LinkerContext<'a>>(self).cast(),
+            )
+        });
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
@@ -937,7 +942,7 @@ impl<'a> LinkerContext<'a> {
         // shared `*mut LinkerContext` — pass it raw so `rename_symbols_in_chunk` can deref
         // to `&LinkerContext` (shared) without asserting whole-context exclusivity while
         // peer renamer tasks run concurrently.
-        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c, chunk, &*files) }
+        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), chunk, &*files) }
             .expect("TODO: handle error");
     }
 
@@ -1202,7 +1207,9 @@ pub struct SourceMapData {
 }
 
 pub struct SourceMapDataTask {
-    pub ctx: *mut LinkerContext<'static>, // BACKREF — task stored in ctx.source_maps.*_tasks
+    /// `None` only in `Default` (the per-index slot is overwritten before
+    /// scheduling).
+    pub ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
     pub source_index: crate::IndexInt,
     pub thread_task: ThreadPoolLib::Task,
 }
@@ -1217,7 +1224,7 @@ unsafe impl Send for SourceMapDataTask {}
 impl Default for SourceMapDataTask {
     fn default() -> Self {
         Self {
-            ctx: core::ptr::null_mut(),
+            ctx: None,
             source_index: 0,
             // Spec `LinkerContext.zig:101`: default task callback is `&runLineOffset`.
             thread_task: ThreadPoolLib::Task {
@@ -1241,7 +1248,7 @@ impl SourceMapDataTask {
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
-        let ctx: *mut LinkerContext = task.ctx;
+        let ctx: *mut LinkerContext = task.ctx.expect("SourceMapDataTask.ctx").as_mut_ptr();
         scopeguard::defer! {
             // SAFETY: ctx backref valid for task lifetime
             unsafe {
@@ -1274,7 +1281,7 @@ impl SourceMapDataTask {
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
-        let ctx: *mut LinkerContext = task.ctx;
+        let ctx: *mut LinkerContext = task.ctx.expect("SourceMapDataTask.ctx").as_mut_ptr();
         scopeguard::defer! {
             // SAFETY: ctx backref
             unsafe {
@@ -1431,7 +1438,7 @@ pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// `c`/`chunks` are disjoint or read-only per the Zig spec.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
-    pub c: *mut LinkerContext<'a>,
+    pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
     pub chunks: *mut [Chunk],
     pub chunk: *mut Chunk,
 }
@@ -1451,7 +1458,7 @@ impl<'a> GenerateChunkCtx<'a> {
         // SAFETY: `self.c` is `&raw mut bundle.linker` set in
         // `generate_chunks_in_parallel`; container_of recovers the parent.
         // The bundle is valid for the link step.
-        unsafe { &*LinkerContext::bundle_v2_ptr(self.c) }
+        unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
 
     /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
@@ -1462,9 +1469,11 @@ impl<'a> GenerateChunkCtx<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn c(&self) -> &mut LinkerContext<'a> {
-        // SAFETY: non-null backref into `BundleV2.linker`, valid for the
+        // SAFETY: ParentRef into `BundleV2.linker`, valid for the
         // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        unsafe { &mut *self.c }
+        // Constructed via `from_raw_mut` (write provenance) in
+        // `generate_chunks_in_parallel`.
+        unsafe { self.c.assume_mut() }
     }
 }
 
@@ -1514,7 +1523,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
         &*bun_core::from_field_ptr!(PendingPartRange, task, task)
     };
     let ctx = part_range.ctx;
-    let c_ptr: *mut LinkerContext = ctx.c.cast();
+    let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
     let chunk_ptr: *mut Chunk = ctx.chunk;
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());

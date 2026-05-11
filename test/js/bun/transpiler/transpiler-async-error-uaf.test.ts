@@ -5,10 +5,12 @@ describe("Transpiler async transform() error lifetime", () => {
     const transpiler = new Bun.Transpiler();
     const promises: Promise<unknown>[] = [];
     for (let i = 0; i < 50; i++) {
-      promises.push(transpiler.transform("const x = @@@", "js").then(
-        () => null,
-        e => e,
-      ));
+      promises.push(
+        transpiler.transform("const x = @@@", "js").then(
+          () => null,
+          e => e,
+        ),
+      );
     }
     const results = await Promise.all(promises);
     for (const r of results) {

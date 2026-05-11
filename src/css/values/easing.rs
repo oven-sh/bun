@@ -62,28 +62,38 @@ enum EasingKeyword {
     StepEnd,
 }
 
-static EASING_MAP: phf::Map<&'static [u8], EasingKeyword> = phf::phf_map! {
-    b"linear" => EasingKeyword::Linear,
-    b"ease" => EasingKeyword::Ease,
-    b"ease-in" => EasingKeyword::EaseIn,
-    b"ease-out" => EasingKeyword::EaseOut,
-    b"ease-in-out" => EasingKeyword::EaseInOut,
-    b"step-start" => EasingKeyword::StepStart,
-    b"step-end" => EasingKeyword::StepEnd,
-};
-
-/// Zig: `Map.getASCIIICaseInsensitive(ident)` — phf's `get` is byte-exact, so
-/// lowercase into a stack buffer first (same pattern as `CalcUnit::get_any_case`).
+/// Zig: `Map.getASCIIICaseInsensitive(ident)`.
+///
+/// PERF(port): was `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
+/// 7 keys with near-unique lengths (only len 8 collides: `ease-out` /
+/// `step-end`), so a length-gated byte match is cheaper than phf's
+/// hash+displace+verify — one `usize` compare rejects almost every miss
+/// before any byte work, and hits resolve in a single slice compare. Same
+/// pattern as `clap::find_param` (12577e958d71).
 fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
-    // Longest key is "ease-in-out" / "step-start" (11 bytes).
-    if ident.len() > 11 {
+    // Longest key is "ease-in-out" (11 bytes).
+    let len = ident.len();
+    if len < 4 || len > 11 {
         return None;
     }
     let mut buf = [0u8; 11];
     for (i, b) in ident.iter().enumerate() {
         buf[i] = b.to_ascii_lowercase();
     }
-    EASING_MAP.get(&buf[..ident.len()]).copied()
+    let lower = &buf[..len];
+    match len {
+        4 if lower == b"ease" => Some(EasingKeyword::Ease),
+        6 if lower == b"linear" => Some(EasingKeyword::Linear),
+        7 if lower == b"ease-in" => Some(EasingKeyword::EaseIn),
+        8 => match lower {
+            b"ease-out" => Some(EasingKeyword::EaseOut),
+            b"step-end" => Some(EasingKeyword::StepEnd),
+            _ => None,
+        },
+        10 if lower == b"step-start" => Some(EasingKeyword::StepStart),
+        11 if lower == b"ease-in-out" => Some(EasingKeyword::EaseInOut),
+        _ => None,
+    }
 }
 
 impl EasingFunction {
@@ -258,17 +268,14 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-static STEP_POSITION_MAP: phf::Map<&'static [u8], StepPositionKeyword> = phf::phf_map! {
-    b"start" => StepPositionKeyword::Start,
-    b"end" => StepPositionKeyword::End,
-    b"jump-none" => StepPositionKeyword::JumpNone,
-    b"jump-both" => StepPositionKeyword::JumpBoth,
-    b"jump-start" => StepPositionKeyword::JumpStart,
-    b"jump-end" => StepPositionKeyword::JumpEnd,
-};
-
-/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer
-/// before the phf lookup (same pattern as `CalcUnit::get_any_case`).
+/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer,
+/// then a length-gated byte match.
+///
+/// PERF(port): was `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
+/// before a single bucket compare; with 6 keys spread across 5 distinct
+/// lengths (3/5/8/9/9/10), gating on `len()` rejects every miss with one
+/// `usize` compare and resolves every hit with at most one slice compare
+/// (two at len 9). See `clap::find_param` for the same shape.
 fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
     // Longest key is "jump-start" (10 bytes).
     if ident.len() > 10 {
@@ -278,7 +285,19 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
     for (i, b) in ident.iter().enumerate() {
         buf[i] = b.to_ascii_lowercase();
     }
-    STEP_POSITION_MAP.get(&buf[..ident.len()]).copied()
+    let key = &buf[..ident.len()];
+    match key.len() {
+        3 if key == b"end" => Some(StepPositionKeyword::End),
+        5 if key == b"start" => Some(StepPositionKeyword::Start),
+        8 if key == b"jump-end" => Some(StepPositionKeyword::JumpEnd),
+        9 => match key {
+            b"jump-none" => Some(StepPositionKeyword::JumpNone),
+            b"jump-both" => Some(StepPositionKeyword::JumpBoth),
+            _ => None,
+        },
+        10 if key == b"jump-start" => Some(StepPositionKeyword::JumpStart),
+        _ => None,
+    }
 }
 
 impl StepPosition {

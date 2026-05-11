@@ -9,7 +9,7 @@ use crate::p::P;
 use crate::lexer::T;
 use bun_ast::ts::Metadata;
 use crate::typescript::SkipTypeOptions;
-use crate::typescript::identifier::{Kind as TsIdentKind, IMAP};
+use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -388,9 +388,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     )?;
                 }
                 T::TIdentifier => {
-                    let kind = IMAP
-                        .get(self.lexer.identifier)
-                        .copied()
+                    let kind = kind_for_identifier(self.lexer.identifier)
                         .unwrap_or(TsIdentKind::Normal);
 
                     let mut check_type_parameters = true;

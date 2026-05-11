@@ -580,11 +580,21 @@ pub enum SubscriptionPushMessage {
 }
 
 impl SubscriptionPushMessage {
-    pub const MAP: phf::Map<&'static [u8], SubscriptionPushMessage> = phf::phf_map! {
-        b"message" => SubscriptionPushMessage::Message,
-        b"subscribe" => SubscriptionPushMessage::Subscribe,
-        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
-    };
+    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
+    // length-then-bytes switch at compile time. The Phase-A port used
+    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
+    // for three keys whose lengths are all distinct (7/9/11). A length-gated
+    // match rejects the miss case on a single `usize` compare and confirms the
+    // hit with one fixed-size byte compare, matching the Zig codegen.
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        match bytes.len() {
+            7 if bytes == b"message" => Some(Self::Message),
+            9 if bytes == b"subscribe" => Some(Self::Subscribe),
+            11 if bytes == b"unsubscribe" => Some(Self::Unsubscribe),
+            _ => None,
+        }
+    }
 }
 
 // ported from: src/valkey/valkey_protocol.zig

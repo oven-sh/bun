@@ -28,9 +28,8 @@ type JavascriptString<'s> = &'s [u16];
 
 pub use tables::{
     PropertyModifierKeyword, T, TypescriptStmtKeyword,
-    is_strict_mode_reserved_word, keyword,
+    is_strict_mode_reserved_word, is_type_script_accessibility_modifier, keyword,
     KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
-    TYPE_SCRIPT_ACCESSIBILITY_MODIFIER as TypeScriptAccessibilityModifier,
     TOKEN_TO_STRING as tokenToString,
 };
 

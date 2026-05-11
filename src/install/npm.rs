@@ -619,7 +619,6 @@ impl ExternVersionMap {
 
 pub use bun_install_types::resolver_hooks::{
     Architecture, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
-    ARCHITECTURE_NAME_MAP, LIBC_NAME_MAP, OPERATING_SYSTEM_NAME_MAP,
 };
 
 /// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in

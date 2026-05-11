@@ -267,7 +267,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     loop {
                         match p.lexer.token {
                             T::TIdentifier | T::TOpenBrace | T::TOpenBracket => {
-                                if !js_lexer::TypeScriptAccessibilityModifier.contains(text) {
+                                if !js_lexer::is_type_script_accessibility_modifier(text) {
                                     break;
                                 }
 

@@ -14,8 +14,7 @@ pub use resolver_hooks::{
     NpmInfo, OldV2VersionedURL, OperatingSystem, PackageID, PackageJsonView, PackageNameHash,
     PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag, ResolutionValue,
     TagInfo, TarballInfo, TaskCallbackContext, TruncatedPackageNameHash, VersionSlice,
-    VersionedURL, VersionedURLType, WakeHandler, ARCHITECTURE_NAME_MAP,
-    INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, LIBC_NAME_MAP, OPERATING_SYSTEM_NAME_MAP, URI,
+    VersionedURL, VersionedURLType, WakeHandler, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, URI,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

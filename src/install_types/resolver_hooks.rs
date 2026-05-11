@@ -543,7 +543,8 @@ pub trait NegatableEnum: Copy + Eq {
     const NONE: Self;
     const ALL: Self;
     const ALL_VALUE: Self::Int;
-    fn name_map() -> &'static phf::Map<&'static [u8], Self::Int>;
+    /// Zig: `ComptimeStringMap.get` — length-gated exact match.
+    fn lookup_name(key: &[u8]) -> Option<Self::Int>;
     fn name_map_kvs() -> &'static [(&'static [u8], Self::Int)];
     fn has(self, other: Self::Int) -> bool;
     fn to_raw(self) -> Self::Int;
@@ -622,7 +623,7 @@ impl<T: NegatableEnum> Negatable<T> {
         let is_not = str[0] == b'!';
         let offset: usize = is_not as usize;
 
-        let Some(&field) = T::name_map().get(&str[offset..]) else {
+        let Some(field) = T::lookup_name(&str[offset..]) else {
             if !is_not {
                 self.had_unrecognized_values = true;
             }
@@ -778,23 +779,42 @@ impl OperatingSystem {
     ];
 }
 
-pub static OPERATING_SYSTEM_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
-    b"aix" => OperatingSystem::AIX,
-    b"darwin" => OperatingSystem::DARWIN,
-    b"freebsd" => OperatingSystem::FREEBSD,
-    b"linux" => OperatingSystem::LINUX,
-    b"openbsd" => OperatingSystem::OPENBSD,
-    b"sunos" => OperatingSystem::SUNOS,
-    b"win32" => OperatingSystem::WIN32,
-    b"android" => OperatingSystem::ANDROID,
-};
-
 impl NegatableEnum for OperatingSystem {
     type Int = u16;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u16 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &OPERATING_SYSTEM_NAME_MAP }
+    // PERF(port): Zig `ComptimeStringMap` length-gates then byte-compares within
+    // the matching length bucket. 8 keys / 4 length buckets — a `phf::Map` here
+    // costs a hash + indirect load + slice compare for what is at most three
+    // candidate strings. Hand-roll the same gate so the miss path (most npm
+    // metadata never sets `"os"`) is a single `usize` compare.
+    #[inline]
+    fn lookup_name(key: &[u8]) -> Option<u16> {
+        match key.len() {
+            3 => match key {
+                b"aix" => Some(Self::AIX),
+                _ => None,
+            },
+            5 => match key {
+                b"linux" => Some(Self::LINUX),
+                b"sunos" => Some(Self::SUNOS),
+                b"win32" => Some(Self::WIN32),
+                _ => None,
+            },
+            6 => match key {
+                b"darwin" => Some(Self::DARWIN),
+                _ => None,
+            },
+            7 => match key {
+                b"android" => Some(Self::ANDROID),
+                b"freebsd" => Some(Self::FREEBSD),
+                b"openbsd" => Some(Self::OPENBSD),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
     fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
     fn has(self, other: u16) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u16 { self.0 }
@@ -832,17 +852,21 @@ impl Libc {
     ];
 }
 
-pub static LIBC_NAME_MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
-    b"glibc" => Libc::GLIBC,
-    b"musl" => Libc::MUSL,
-};
-
 impl NegatableEnum for Libc {
     type Int = u8;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u8 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u8> { &LIBC_NAME_MAP }
+    // PERF(port): two keys with distinct lengths — `phf::Map` is pure overhead
+    // (hash + table probe) for what is one `usize` compare + one word compare.
+    #[inline]
+    fn lookup_name(key: &[u8]) -> Option<u8> {
+        match key.len() {
+            4 if key == b"musl" => Some(Self::MUSL),
+            5 if key == b"glibc" => Some(Self::GLIBC),
+            _ => None,
+        }
+    }
     fn name_map_kvs() -> &'static [(&'static [u8], u8)] { Self::NAME_MAP_KVS }
     fn has(self, other: u8) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u8 { self.0 }
@@ -920,26 +944,44 @@ impl Architecture {
     ];
 }
 
-pub static ARCHITECTURE_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
-    b"arm" => Architecture::ARM,
-    b"arm64" => Architecture::ARM64,
-    b"ia32" => Architecture::IA32,
-    b"mips" => Architecture::MIPS,
-    b"mipsel" => Architecture::MIPSEL,
-    b"ppc" => Architecture::PPC,
-    b"ppc64" => Architecture::PPC64,
-    b"s390" => Architecture::S390,
-    b"s390x" => Architecture::S390X,
-    b"x32" => Architecture::X32,
-    b"x64" => Architecture::X64,
-};
-
 impl NegatableEnum for Architecture {
     type Int = u16;
     const NONE: Self = Self::NONE;
     const ALL: Self = Self::ALL;
     const ALL_VALUE: u16 = Self::ALL_VALUE;
-    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &ARCHITECTURE_NAME_MAP }
+    // PERF(port): 11 keys across 4 length buckets (≤4 per bucket). Gate on
+    // `len()` first, then exact-match within the bucket — same shape as Zig
+    // `ComptimeStringMap.get`, and cheaper than `phf::Map`'s hash + probe at
+    // this size.
+    #[inline]
+    fn lookup_name(key: &[u8]) -> Option<u16> {
+        match key.len() {
+            3 => match key {
+                b"arm" => Some(Self::ARM),
+                b"ppc" => Some(Self::PPC),
+                b"x32" => Some(Self::X32),
+                b"x64" => Some(Self::X64),
+                _ => None,
+            },
+            4 => match key {
+                b"ia32" => Some(Self::IA32),
+                b"mips" => Some(Self::MIPS),
+                b"s390" => Some(Self::S390),
+                _ => None,
+            },
+            5 => match key {
+                b"arm64" => Some(Self::ARM64),
+                b"ppc64" => Some(Self::PPC64),
+                b"s390x" => Some(Self::S390X),
+                _ => None,
+            },
+            6 => match key {
+                b"mipsel" => Some(Self::MIPSEL),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
     fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
     fn has(self, other: u16) -> bool { Self::has(self, other) }
     fn to_raw(self) -> u16 { self.0 }

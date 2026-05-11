@@ -911,7 +911,7 @@ impl ValkeyClient {
                 let p = self.parent();
                 let sub_count = p._subscription_ctx.channels_subscribed_to_count(&global_this)?;
 
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::MAP.get(&push.kind) {
+                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
                             self.on_valkey_message(&mut push.data);
@@ -1090,7 +1090,7 @@ impl ValkeyClient {
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if self.parent().is_subscriber() {
             if let RESPValue::Push(push) = value {
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::MAP.get(&push.kind) {
+                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
                             // Message pushes never need promise pairs
@@ -1132,7 +1132,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
                 RESPValue::Push(push) => {
-                    if protocol::SubscriptionPushMessage::MAP.get(&push.kind).is_some() {
+                    if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
                         if self.handle_subscribe_response(value, pair_maybe.as_mut())?
                             == SubscribeHandled::Handled
                         {

@@ -907,30 +907,104 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
 #[cfg(windows)]
 const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh)];
 
-// TODO(port): Zig concatenated tuples at comptime; in Rust we expose a function or two slices.
-#[cfg(windows)]
-pub static DEFAULT_LOADERS: phf::Map<&'static [u8], Loader> = phf::phf_map! {
-    b".jsx" => Loader::Jsx, b".json" => Loader::Json, b".js" => Loader::Jsx,
-    b".mjs" => Loader::Js, b".cjs" => Loader::Js, b".css" => Loader::Css,
-    b".ts" => Loader::Ts, b".tsx" => Loader::Tsx, b".mts" => Loader::Ts,
-    b".cts" => Loader::Ts, b".toml" => Loader::Toml, b".yaml" => Loader::Yaml,
-    b".yml" => Loader::Yaml, b".wasm" => Loader::Wasm, b".node" => Loader::Napi,
-    b".txt" => Loader::Text, b".text" => Loader::Text, b".html" => Loader::Html,
-    b".jsonc" => Loader::Jsonc, b".json5" => Loader::Json5, b".md" => Loader::Md,
-    b".markdown" => Loader::Md, b".sh" => Loader::Bunsh,
-};
+/// File-extension → default [`Loader`] map (options.zig `defaultLoaders`).
+///
+/// PERF(port): was `phf::Map<&[u8], Loader>`. phf hashes the full key (SipHash
+/// over up to 9 bytes) + probes a displacement table + does a final memcmp on
+/// every lookup. With only 22 keys bucketing into 5 distinct lengths
+/// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
+/// `usize` compare rejects every wrong-length probe, and within each bucket
+/// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
+/// memcmp loop). This sits on the resolver hot path (`loaderFromPath` per
+/// import) and on CLI startup (`arguments::parse`, `run_command`). Same
+/// pattern as `clap::find_param` (12577e958d71). Unit struct keeps the
+/// `DEFAULT_LOADERS.get(ext)` / `.contains_key(ext)` call-site shape so
+/// callers in `run_command.rs` / `NodeModuleModule.rs` / `arguments.rs` /
+/// `init_command.rs` / `multi_run.rs` are untouched.
+pub struct DefaultLoaders;
 
-#[cfg(not(windows))]
-pub static DEFAULT_LOADERS: phf::Map<&'static [u8], Loader> = phf::phf_map! {
-    b".jsx" => Loader::Jsx, b".json" => Loader::Json, b".js" => Loader::Jsx,
-    b".mjs" => Loader::Js, b".cjs" => Loader::Js, b".css" => Loader::Css,
-    b".ts" => Loader::Ts, b".tsx" => Loader::Tsx, b".mts" => Loader::Ts,
-    b".cts" => Loader::Ts, b".toml" => Loader::Toml, b".yaml" => Loader::Yaml,
-    b".yml" => Loader::Yaml, b".wasm" => Loader::Wasm, b".node" => Loader::Napi,
-    b".txt" => Loader::Text, b".text" => Loader::Text, b".html" => Loader::Html,
-    b".jsonc" => Loader::Jsonc, b".json5" => Loader::Json5, b".md" => Loader::Md,
-    b".markdown" => Loader::Md,
-};
+pub static DEFAULT_LOADERS: DefaultLoaders = DefaultLoaders;
+
+impl DefaultLoaders {
+    #[inline]
+    pub fn get(&self, ext: &[u8]) -> Option<&'static Loader> {
+        // Length-gate first: almost every miss falls out on the single `usize`
+        // compare. Within each arm, keys are fixed-width so `==` is a single
+        // word compare (no memcmp loop).
+        match ext.len() {
+            3 => match ext {
+                b".js" => Some(&Loader::Jsx),
+                b".ts" => Some(&Loader::Ts),
+                b".md" => Some(&Loader::Md),
+                #[cfg(windows)]
+                b".sh" => Some(&Loader::Bunsh),
+                _ => None,
+            },
+            4 => match ext {
+                b".jsx" => Some(&Loader::Jsx),
+                b".tsx" => Some(&Loader::Tsx),
+                b".mjs" => Some(&Loader::Js),
+                b".cjs" => Some(&Loader::Js),
+                b".mts" => Some(&Loader::Ts),
+                b".cts" => Some(&Loader::Ts),
+                b".css" => Some(&Loader::Css),
+                b".yml" => Some(&Loader::Yaml),
+                b".txt" => Some(&Loader::Text),
+                _ => None,
+            },
+            5 => match ext {
+                b".json" => Some(&Loader::Json),
+                b".toml" => Some(&Loader::Toml),
+                b".yaml" => Some(&Loader::Yaml),
+                b".wasm" => Some(&Loader::Wasm),
+                b".node" => Some(&Loader::Napi),
+                b".text" => Some(&Loader::Text),
+                b".html" => Some(&Loader::Html),
+                _ => None,
+            },
+            6 => match ext {
+                b".jsonc" => Some(&Loader::Jsonc),
+                b".json5" => Some(&Loader::Json5),
+                _ => None,
+            },
+            9 if ext == b".markdown" => Some(&Loader::Md),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn contains_key(&self, ext: &[u8]) -> bool {
+        self.get(ext).is_some()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn default_loaders_match_table() {
+    // Guard against drift between the length-gated match and the canonical
+    // tuple list above (Zig source of truth).
+    for (ext, loader) in DEFAULT_LOADERS_POSIX {
+        assert_eq!(DEFAULT_LOADERS.get(ext), Some(loader), "ext {:?}", ext);
+    }
+    #[cfg(windows)]
+    for (ext, loader) in DEFAULT_LOADERS_WIN32_EXTRA {
+        assert_eq!(DEFAULT_LOADERS.get(ext), Some(loader), "ext {:?}", ext);
+    }
+    // Spot-check misses across each length bucket.
+    for ext in [
+        b"".as_slice(),
+        b".",
+        b".rs",
+        b".zig",
+        b".json6",
+        b".markdow",
+        b".markdownn",
+    ] {
+        assert_eq!(DEFAULT_LOADERS.get(ext), None, "ext {:?}", ext);
+    }
+    #[cfg(not(windows))]
+    assert_eq!(DEFAULT_LOADERS.get(b".sh"), None);
+}
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub struct ESMConditions {

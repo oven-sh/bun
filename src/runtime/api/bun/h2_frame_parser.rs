@@ -21,7 +21,6 @@ use bun_http::lshpack;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::socket::NativeCallbacks;
 use bstr::BStr;
-use phf::phf_map;
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -636,69 +635,144 @@ pub trait WireWriter {
 // Static header maps
 // ──────────────────────────────────────────────────────────────────────────
 
-static VALID_RESPONSE_PSEUDO_HEADERS: phf::Map<&'static [u8], ()> = phf_map! {
-    b":status" => (),
-};
+// PERF(port): was phf::Map<&[u8], ()> used only via .contains_key() on a 1-entry
+// set. A single slice compare is strictly cheaper than a SipHash + compare.
+#[inline]
+fn is_valid_response_pseudo_header(name: &[u8]) -> bool {
+    name == b":status"
+}
 
-static VALID_REQUEST_PSEUDO_HEADERS: phf::Map<&'static [u8], ()> = phf_map! {
-    b":method" => (),
-    b":authority" => (),
-    b":scheme" => (),
-    b":path" => (),
-    b":protocol" => (),
-};
+// PERF(port): was phf::Map<&[u8], ()> used only via .contains_key() on a 5-entry
+// set. phf hashes the full key (SipHash) before compare; with 5 keys whose
+// lengths are {5,7,7,9,10} a length-gated match rejects most misses on a single
+// usize compare and hits in ≤2 slice compares — cheaper than the hash.
+#[inline]
+fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
+    match name.len() {
+        5 => name == b":path",
+        7 => name == b":method" || name == b":scheme",
+        9 => name == b":protocol",
+        10 => name == b":authority",
+        _ => false,
+    }
+}
 
-static SINGLE_VALUE_HEADERS: phf::Map<&'static [u8], ()> = phf_map! {
-    b":status" => (),
-    b":method" => (),
-    b":authority" => (),
-    b":scheme" => (),
-    b":path" => (),
-    b":protocol" => (),
-    b"access-control-allow-credentials" => (),
-    b"access-control-max-age" => (),
-    b"access-control-request-method" => (),
-    b"age" => (),
-    b"authorization" => (),
-    b"content-encoding" => (),
-    b"content-language" => (),
-    b"content-length" => (),
-    b"content-location" => (),
-    b"content-md5" => (),
-    b"content-range" => (),
-    b"content-type" => (),
-    b"date" => (),
-    b"dnt" => (),
-    b"etag" => (),
-    b"expires" => (),
-    b"from" => (),
-    b"host" => (),
-    b"if-match" => (),
-    b"if-modified-since" => (),
-    b"if-none-match" => (),
-    b"if-range" => (),
-    b"if-unmodified-since" => (),
-    b"last-modified" => (),
-    b"location" => (),
-    b"max-forwards" => (),
-    b"proxy-authorization" => (),
-    b"range" => (),
-    b"referer" => (),
-    b"retry-after" => (),
-    b"tk" => (),
-    b"upgrade-insecure-requests" => (),
-    b"user-agent" => (),
-    b"x-content-type-options" => (),
-};
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
-// TODO(port): phf custom hasher — Zig ComptimeStringMap exposes indexOf(); phf::Map does not.
-// Provide a small linear lookup over the key list for index_of() semantics.
+/// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
+/// must carry only a single value, or `None` otherwise. The index is used
+/// solely to address a per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset
+/// for duplicate detection — the concrete numeric value has no other meaning.
+///
+/// PERF(port): Zig used `ComptimeStringMap.indexOf`, which compiles to a
+/// length-gated switch. The Phase-A draft used a `phf::Map` but, because phf
+/// does not expose stable indices, had to fall back to a *linear*
+/// `.entries().position()` scan — 40 slice compares per header per HTTP/2
+/// request. The hand-rolled match below restores the Zig dispatch shape: one
+/// `usize` length compare rejects every miss whose length has no entries, and
+/// the largest same-length bucket is 5 entries (len 7), so a hit costs at
+/// most 5 short slice compares and a miss typically costs 0–2.
 fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
-    // PERF(port): was ComptimeStringMap.indexOf — profile in Phase B
-    SINGLE_VALUE_HEADERS
-        .entries()
-        .position(|(k, _)| *k == name)
+    match name.len() {
+        2 => match name {
+            b"tk" => Some(36),
+            _ => None,
+        },
+        3 => match name {
+            b"age" => Some(9),
+            b"dnt" => Some(19),
+            _ => None,
+        },
+        4 => match name {
+            b"date" => Some(18),
+            b"etag" => Some(20),
+            b"from" => Some(22),
+            b"host" => Some(23),
+            _ => None,
+        },
+        5 => match name {
+            b":path" => Some(4),
+            b"range" => Some(33),
+            _ => None,
+        },
+        7 => match name {
+            b":status" => Some(0),
+            b":method" => Some(1),
+            b":scheme" => Some(3),
+            b"expires" => Some(21),
+            b"referer" => Some(34),
+            _ => None,
+        },
+        8 => match name {
+            b"if-match" => Some(24),
+            b"if-range" => Some(27),
+            b"location" => Some(30),
+            _ => None,
+        },
+        9 => match name {
+            b":protocol" => Some(5),
+            _ => None,
+        },
+        10 => match name {
+            b":authority" => Some(2),
+            b"user-agent" => Some(38),
+            _ => None,
+        },
+        11 => match name {
+            b"content-md5" => Some(15),
+            b"retry-after" => Some(35),
+            _ => None,
+        },
+        12 => match name {
+            b"content-type" => Some(17),
+            b"max-forwards" => Some(31),
+            _ => None,
+        },
+        13 => match name {
+            b"authorization" => Some(10),
+            b"content-range" => Some(16),
+            b"if-none-match" => Some(26),
+            b"last-modified" => Some(29),
+            _ => None,
+        },
+        14 => match name {
+            b"content-length" => Some(13),
+            _ => None,
+        },
+        16 => match name {
+            b"content-encoding" => Some(11),
+            b"content-language" => Some(12),
+            b"content-location" => Some(14),
+            _ => None,
+        },
+        17 => match name {
+            b"if-modified-since" => Some(25),
+            _ => None,
+        },
+        19 => match name {
+            b"if-unmodified-since" => Some(28),
+            b"proxy-authorization" => Some(32),
+            _ => None,
+        },
+        22 => match name {
+            b"access-control-max-age" => Some(7),
+            b"x-content-type-options" => Some(39),
+            _ => None,
+        },
+        25 => match name {
+            b"upgrade-insecure-requests" => Some(37),
+            _ => None,
+        },
+        29 => match name {
+            b"access-control-request-method" => Some(8),
+            _ => None,
+        },
+        32 => match name {
+            b"access-control-allow-credentials" => Some(6),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5053,14 +5127,14 @@ impl H2FrameParser {
                     }
 
                     if this.is_server {
-                        if !VALID_RESPONSE_PSEUDO_HEADERS.contains_key(validated_name) {
+                        if !is_valid_response_pseudo_header(validated_name) {
                             if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
                             return Ok(JSValue::ZERO);
                         }
                     } else {
-                        if !VALID_REQUEST_PSEUDO_HEADERS.contains_key(validated_name) {
+                        if !is_valid_request_pseudo_header(validated_name) {
                             if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }

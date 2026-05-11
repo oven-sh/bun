@@ -294,27 +294,75 @@ pub mod identifier {
         }
     }
 
-    pub static IMAP: phf::Map<&'static [u8], Kind> = phf::phf_map! {
-        b"unique" => Kind::Unique,
-        b"abstract" => Kind::Abstract,
-        b"asserts" => Kind::Asserts,
-
-        b"keyof" => Kind::PrefixKeyof,
-        b"readonly" => Kind::PrefixReadonly,
-
-        b"any" => Kind::PrimitiveAny,
-        b"never" => Kind::PrimitiveNever,
-        b"unknown" => Kind::PrimitiveUnknown,
-        b"undefined" => Kind::PrimitiveUndefined,
-        b"object" => Kind::PrimitiveObject,
-        b"number" => Kind::PrimitiveNumber,
-        b"string" => Kind::PrimitiveString,
-        b"boolean" => Kind::PrimitiveBoolean,
-        b"bigint" => Kind::PrimitiveBigint,
-        b"symbol" => Kind::PrimitiveSymbol,
-
-        b"infer" => Kind::Infer,
-    };
+    // PERF(port): was `phf::Map<&[u8], Kind>`. phf hashes the full identifier
+    // (SipHash) on every TIdentifier in a TS type position — including the
+    // overwhelmingly-common miss case (a user-defined type name). With only
+    // 16 entries spanning lengths 3..=9, a length gate rejects almost every
+    // miss on a single usize compare, and hits resolve in ≤2 slice compares.
+    // Length 6 is the only cluster (6 entries) so it gets a first-byte
+    // sub-dispatch. Mirrors the `clap::find_param` pattern (12577e958d71).
+    #[inline]
+    pub fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
+        match ident.len() {
+            3 => {
+                if ident == b"any" {
+                    return Some(Kind::PrimitiveAny);
+                }
+            }
+            5 => {
+                if ident == b"keyof" {
+                    return Some(Kind::PrefixKeyof);
+                }
+                if ident == b"never" {
+                    return Some(Kind::PrimitiveNever);
+                }
+                if ident == b"infer" {
+                    return Some(Kind::Infer);
+                }
+            }
+            6 => match ident[0] {
+                b'u' if ident == b"unique" => return Some(Kind::Unique),
+                b'o' if ident == b"object" => return Some(Kind::PrimitiveObject),
+                b'n' if ident == b"number" => return Some(Kind::PrimitiveNumber),
+                b'b' if ident == b"bigint" => return Some(Kind::PrimitiveBigint),
+                b's' => {
+                    if ident == b"string" {
+                        return Some(Kind::PrimitiveString);
+                    }
+                    if ident == b"symbol" {
+                        return Some(Kind::PrimitiveSymbol);
+                    }
+                }
+                _ => {}
+            },
+            7 => {
+                if ident == b"unknown" {
+                    return Some(Kind::PrimitiveUnknown);
+                }
+                if ident == b"boolean" {
+                    return Some(Kind::PrimitiveBoolean);
+                }
+                if ident == b"asserts" {
+                    return Some(Kind::Asserts);
+                }
+            }
+            8 => {
+                if ident == b"abstract" {
+                    return Some(Kind::Abstract);
+                }
+                if ident == b"readonly" {
+                    return Some(Kind::PrefixReadonly);
+                }
+            }
+            9 => {
+                if ident == b"undefined" {
+                    return Some(Kind::PrimitiveUndefined);
+                }
+            }
+            _ => {}
+        }
+        None
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum Kind {

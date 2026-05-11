@@ -83,7 +83,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));
         }
 
-        let Some(&algorithm) = evp::MAP.get(name) else {
+        let Some(algorithm) = evp::lookup(name) else {
             return None;
         };
 
@@ -490,12 +490,21 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                let chosen_algorithm: evp::Algorithm = algorithm_name.to_enum_from_map(
-                    global,
-                    "algorithm",
-                    &evp::MAP,
-                    evp::ALGORITHM_ONE_OF,
-                )?;
+                // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
+                // already ran above) so the lookup goes through the
+                // length-gated `evp::lookup` instead of a `phf::Map`.
+                let chosen_algorithm: evp::Algorithm = {
+                    let slice = algorithm_name.to_slice(global)?;
+                    match evp::lookup(slice.slice()) {
+                        Some(v) => v,
+                        None => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "algorithm must be one of {}",
+                                evp::ALGORITHM_ONE_OF
+                            )));
+                        }
+                    }
+                };
 
                 break 'brk CryptoHasher::Hmac(Some(match HMAC::init(chosen_algorithm, key.slice()) {
                     Some(h) => h,

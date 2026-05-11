@@ -1215,36 +1215,47 @@ impl<'a> SelectorParser<'a> {
         // `::CUE(..)` / `::View-Transition-Group(..)` therefore fall through to
         // `CustomFunction` in the spec — match that here by looking up `name`
         // verbatim with no case folding.
-        static MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
-            b"cue" => 0,
-            b"cue-region" => 1,
-            b"view-transition-group" => 2,
-            b"view-transition-image-pair" => 3,
-            b"view-transition-old" => 4,
-            b"view-transition-new" => 5,
-        };
-        if let Some(v) = MAP.get(name) {
-            return match v {
-                0 => Ok(PseudoElement::CueFunction {
+        //
+        // PERF(port): 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // a length-gated `match` rejects the overwhelmingly-common miss path
+        // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
+        // versus phf's hash + 2 table loads + slice compare. Only len==19 has
+        // two candidates, disambiguated by one full slice compare each.
+        match name.len() {
+            3 if name == b"cue" => {
+                return Ok(PseudoElement::CueFunction {
                     selector: Box::new(Selector::parse(self, input)?),
-                }),
-                1 => Ok(PseudoElement::CueRegionFunction {
+                });
+            }
+            10 if name == b"cue-region" => {
+                return Ok(PseudoElement::CueRegionFunction {
                     selector: Box::new(Selector::parse(self, input)?),
-                }),
-                2 => Ok(PseudoElement::ViewTransitionGroup {
+                });
+            }
+            19 => match name {
+                b"view-transition-old" => {
+                    return Ok(PseudoElement::ViewTransitionOld {
+                        part_name: ViewTransitionPartName::parse(input)?,
+                    });
+                }
+                b"view-transition-new" => {
+                    return Ok(PseudoElement::ViewTransitionNew {
+                        part_name: ViewTransitionPartName::parse(input)?,
+                    });
+                }
+                _ => {}
+            },
+            21 if name == b"view-transition-group" => {
+                return Ok(PseudoElement::ViewTransitionGroup {
                     part_name: ViewTransitionPartName::parse(input)?,
-                }),
-                3 => Ok(PseudoElement::ViewTransitionImagePair {
+                });
+            }
+            26 if name == b"view-transition-image-pair" => {
+                return Ok(PseudoElement::ViewTransitionImagePair {
                     part_name: ViewTransitionPartName::parse(input)?,
-                }),
-                4 => Ok(PseudoElement::ViewTransitionOld {
-                    part_name: ViewTransitionPartName::parse(input)?,
-                }),
-                5 => Ok(PseudoElement::ViewTransitionNew {
-                    part_name: ViewTransitionPartName::parse(input)?,
-                }),
-                _ => unreachable!(),
-            };
+                });
+            }
+            _ => {}
         }
         if !strings::starts_with(name, b"-") {
             self.options.warn(input.new_custom_error(
@@ -3873,24 +3884,94 @@ impl AttributeFlags {
             AttributeFlags::AsciiCaseInsensitive => attrs::ParsedCaseSensitivity::AsciiCaseInsensitive,
             AttributeFlags::CaseSensitivityDependsOnName => {
                 // <https://html.spec.whatwg.org/multipage/#selectors>
-                // TODO(port): phf custom hasher — Zig used `ComptimeEnumMap.has` (case-sensitive).
-                static MAP: phf::Set<&'static [u8]> = phf::phf_set! {
-                    b"dir", b"http_equiv", b"rel", b"enctype", b"align", b"accept",
-                    b"nohref", b"lang", b"bgcolor", b"direction", b"valign", b"checked",
-                    b"frame", b"link", b"accept_charset", b"hreflang", b"text",
-                    b"valuetype", b"language", b"nowrap", b"vlink", b"disabled",
-                    b"noshade", b"codetype", b"defer", b"noresize", b"target",
-                    b"scrolling", b"rules", b"scope", b"rev", b"media", b"method",
-                    b"charset", b"alink", b"selected", b"multiple", b"color", b"shape",
-                    b"type", b"clear", b"compact", b"face", b"declare", b"axis",
-                    b"readonly",
-                };
-                if !have_namespace && MAP.contains(local_name) {
+                if !have_namespace && is_html_case_insensitive_attribute(local_name) {
                     return attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument;
                 }
                 attrs::ParsedCaseSensitivity::CaseSensitive
             }
         }
+    }
+}
+
+/// HTML attributes whose value is matched ASCII-case-insensitively when no
+/// explicit `s`/`i` flag is given on the attribute selector.
+/// <https://html.spec.whatwg.org/multipage/#selectors>
+///
+/// PERF(port): Zig used `ComptimeEnumMap.has` (zero-cost membership at
+/// comptime). The Phase-A port lowered that to a `phf::Set`, which on every
+/// `[attr=val]` selector pays a 32-bit FNV-ish hash over the name plus a
+/// bounds check, indirect load, and full key compare — measurable in CSS
+/// bundling profiles where the dominant inputs (`class`, `href`, `data-*`,
+/// `aria-*`) are *misses*. A 2-level open-coded dispatch (length →
+/// first-byte → exact bytes) rejects those misses in ≤2 scalar compares and
+/// resolves hits in ≤3 short slice compares; the 46-entry table is small
+/// enough that LLVM unrolls each leaf into a single word/SIMD compare.
+#[inline]
+fn is_html_case_insensitive_attribute(name: &[u8]) -> bool {
+    // 46 entries, lengths 3..=14. Buckets at len 5/7/8 are dense (11/7/8
+    // entries) so a flat `matches!` per length would degrade to a linear
+    // scan there; the inner first-byte gate keeps every leaf at ≤3 candidates.
+    match name.len() {
+        3 => match name[0] {
+            b'd' => name == b"dir",
+            b'r' => matches!(name, b"rel" | b"rev"),
+            _ => false,
+        },
+        4 => match name[0] {
+            b'a' => name == b"axis",
+            b'f' => name == b"face",
+            b'l' => matches!(name, b"lang" | b"link"),
+            b't' => matches!(name, b"text" | b"type"),
+            _ => false,
+        },
+        5 => match name[0] {
+            b'a' => matches!(name, b"align" | b"alink"),
+            b'c' => matches!(name, b"clear" | b"color"),
+            b'd' => name == b"defer",
+            b'f' => name == b"frame",
+            b'm' => name == b"media",
+            b'r' => name == b"rules",
+            b's' => matches!(name, b"scope" | b"shape"),
+            b'v' => name == b"vlink",
+            _ => false,
+        },
+        6 => match name[0] {
+            b'a' => name == b"accept",
+            b'm' => name == b"method",
+            b'n' => matches!(name, b"nohref" | b"nowrap"),
+            b't' => name == b"target",
+            b'v' => name == b"valign",
+            _ => false,
+        },
+        7 => match name[0] {
+            b'b' => name == b"bgcolor",
+            b'c' => matches!(name, b"charset" | b"checked" | b"compact"),
+            b'd' => name == b"declare",
+            b'e' => name == b"enctype",
+            b'n' => name == b"noshade",
+            _ => false,
+        },
+        8 => match name[0] {
+            // All 8 entries have distinct first bytes — single compare each.
+            b'c' => name == b"codetype",
+            b'd' => name == b"disabled",
+            b'h' => name == b"hreflang",
+            b'l' => name == b"language",
+            b'm' => name == b"multiple",
+            b'n' => name == b"noresize",
+            b'r' => name == b"readonly",
+            b's' => name == b"selected",
+            _ => false,
+        },
+        9 => match name[0] {
+            b'd' => name == b"direction",
+            b's' => name == b"scrolling",
+            b'v' => name == b"valuetype",
+            _ => false,
+        },
+        10 => name == b"http_equiv",
+        14 => name == b"accept_charset",
+        _ => false,
     }
 }
 

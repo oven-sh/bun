@@ -2190,17 +2190,38 @@ pub mod lexer {
 }
 
 pub mod lexer_tables {
-    pub static STRICT_MODE_RESERVED_WORDS_REMAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
-        b"implements" => b"_implements".as_slice(),
-        b"interface" => b"_interface".as_slice(),
-        b"let" => b"_let".as_slice(),
-        b"package" => b"_package".as_slice(),
-        b"private" => b"_private".as_slice(),
-        b"protected" => b"_protected".as_slice(),
-        b"public" => b"_public".as_slice(),
-        b"static" => b"_static".as_slice(),
-        b"yield" => b"_yield".as_slice(),
-    };
+    /// Remap a strict-mode reserved word to its `_`-prefixed identifier, or
+    /// `None` if `s` is not reserved.
+    ///
+    /// PERF(port): replaces the former `phf::Map<&[u8], &[u8]>`. 9 keys with
+    /// ≤2 per length bucket — a `match` on `len()` then exact bytes rejects
+    /// the overwhelming miss case on a single `usize` compare, vs. phf's
+    /// hash + index + verify. See clap::find_param (12577e958d71) for the
+    /// reference length-gated pattern.
+    #[inline]
+    pub fn strict_mode_reserved_words_remap(s: &[u8]) -> Option<&'static [u8]> {
+        match s.len() {
+            3 if s == b"let" => Some(b"_let"),
+            5 if s == b"yield" => Some(b"_yield"),
+            6 => match s {
+                b"public" => Some(b"_public"),
+                b"static" => Some(b"_static"),
+                _ => None,
+            },
+            7 => match s {
+                b"package" => Some(b"_package"),
+                b"private" => Some(b"_private"),
+                _ => None,
+            },
+            9 => match s {
+                b"interface" => Some(b"_interface"),
+                b"protected" => Some(b"_protected"),
+                _ => None,
+            },
+            10 if s == b"implements" => Some(b"_implements"),
+            _ => None,
+        }
+    }
 }
 
 /// `jsc::VirtualMachine::string_allocation_limit` (VirtualMachine.zig:14) —

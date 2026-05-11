@@ -318,17 +318,41 @@ pub static STRICT_MODE_RESERVED_WORDS: phf::Set<&'static [u8]> = phf_set! {
     b"yield",
 };
 
-pub static STRICT_MODE_RESERVED_WORDS_REMAP: phf::Map<&'static [u8], &'static [u8]> = phf_map! {
-    b"implements" => b"_implements",
-    b"interface" => b"_interface",
-    b"let" => b"_let",
-    b"package" => b"_package",
-    b"private" => b"_private",
-    b"protected" => b"_protected",
-    b"public" => b"_public",
-    b"static" => b"_static",
-    b"yield" => b"_yield",
-};
+/// Same key set as [`is_strict_mode_reserved_word`], mapped to an
+/// underscore-prefixed replacement. Used by `MutableString::ensure_valid_identifier`
+/// to mangle a name that is already a syntactically valid identifier but would
+/// collide with a strict-mode reserved word. 9 entries, lengths 3/5/6/7/9/10 —
+/// length-gate rejects almost every miss in one `usize` compare, no SipHash.
+#[inline]
+pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
+    macro_rules! by_len {
+        ($n:literal: $($lit:literal => $out:literal,)*) => {{
+            let arr: &[u8; $n] = s.try_into().unwrap();
+            match arr {
+                $($lit => Some($out.as_slice()),)*
+                _ => None,
+            }
+        }};
+    }
+    match s.len() {
+        3 => by_len!(3: b"let" => b"_let",),
+        5 => by_len!(5: b"yield" => b"_yield",),
+        6 => by_len!(6:
+            b"public" => b"_public",
+            b"static" => b"_static",
+        ),
+        7 => by_len!(7:
+            b"package" => b"_package",
+            b"private" => b"_private",
+        ),
+        9 => by_len!(9:
+            b"interface" => b"_interface",
+            b"protected" => b"_protected",
+        ),
+        10 => by_len!(10: b"implements" => b"_implements",),
+        _ => None,
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropertyModifierKeyword {
@@ -409,13 +433,26 @@ impl PropertyModifierKeyword {
     }
 }
 
-pub static TYPE_SCRIPT_ACCESSIBILITY_MODIFIER: phf::Set<&'static [u8]> = phf_set! {
-    b"override",
-    b"private",
-    b"protected",
-    b"public",
-    b"readonly",
-};
+/// TypeScript "parameter property" modifier check (constructor args). Same
+/// strategy as [`is_strict_mode_reserved_word`]: length-bucketed fixed-array
+/// compare to avoid the SipHash inside `phf::Set::contains`. All entries are
+/// 6..=9 ASCII bytes and lengths are unique except 8 (override/readonly).
+#[inline]
+pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
+    macro_rules! by_len {
+        ($n:literal: $($lit:literal,)*) => {{
+            let arr: &[u8; $n] = s.try_into().unwrap();
+            matches!(arr, $($lit)|*)
+        }};
+    }
+    match s.len() {
+        6 => by_len!(6: b"public",),
+        7 => by_len!(7: b"private",),
+        8 => by_len!(8: b"override", b"readonly",),
+        9 => by_len!(9: b"protected",),
+        _ => false,
+    }
+}
 
 pub type TokenEnumType = EnumMap<T, &'static [u8]>;
 
@@ -560,15 +597,44 @@ pub enum TypescriptStmtKeyword {
 }
 
 impl TypescriptStmtKeyword {
-    pub const LIST: phf::Map<&'static [u8], TypescriptStmtKeyword> = phf_map! {
-        b"type" => TypescriptStmtKeyword::TsStmtType,
-        b"namespace" => TypescriptStmtKeyword::TsStmtNamespace,
-        b"module" => TypescriptStmtKeyword::TsStmtModule,
-        b"interface" => TypescriptStmtKeyword::TsStmtInterface,
-        b"abstract" => TypescriptStmtKeyword::TsStmtAbstract,
-        b"global" => TypescriptStmtKeyword::TsStmtGlobal,
-        b"declare" => TypescriptStmtKeyword::TsStmtDeclare,
-    };
+    /// Length-gated match. Same strategy as [`keyword`]: 7 entries, max 2 per
+    /// length bucket, so gating on `len()` first lets LLVM lower each inner
+    /// compare to a fixed-width integer compare instead of phf's SipHash +
+    /// index + slice-compare. Almost every miss (every non-TS-keyword
+    /// identifier at statement position) falls out on the single `usize`
+    /// compare without touching bytes.
+    #[inline]
+    pub fn from_bytes(s: &[u8]) -> Option<Self> {
+        macro_rules! by_len {
+            ($n:literal: $($lit:literal => $kw:expr,)*) => {{
+                let arr: &[u8; $n] = s.try_into().unwrap();
+                match arr {
+                    $($lit => Some($kw),)*
+                    _ => None,
+                }
+            }};
+        }
+        match s.len() {
+            4 => by_len!(4:
+                b"type" => Self::TsStmtType,
+            ),
+            6 => by_len!(6:
+                b"module" => Self::TsStmtModule,
+                b"global" => Self::TsStmtGlobal,
+            ),
+            7 => by_len!(7:
+                b"declare" => Self::TsStmtDeclare,
+            ),
+            8 => by_len!(8:
+                b"abstract" => Self::TsStmtAbstract,
+            ),
+            9 => by_len!(9:
+                b"namespace" => Self::TsStmtNamespace,
+                b"interface" => Self::TsStmtInterface,
+            ),
+            _ => None,
+        }
+    }
 }
 
 // In a microbenchmark, this outperforms

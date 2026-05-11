@@ -4,7 +4,7 @@ use bun_str::strings::EncodingNonAscii;
 use bun_sys::UV_E;
 
 use bun_dotenv::env_loader as envloader;
-use crate::node::types::{Encoding, ENCODING_MAP};
+use crate::node::types::Encoding;
 use crate::node::util::validators;
 
 #[bun_jsc::host_fn]
@@ -234,7 +234,7 @@ pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if str.length() == 0 {
         return Ok(Encoding::Utf8.to_js(global));
     }
-    if let Some(enc) = str.in_map_case_insensitive(&ENCODING_MAP) {
+    if let Some(enc) = Encoding::from_bun_string(&str) {
         return Ok(enc.to_js(global));
     }
     Ok(JSValue::UNDEFINED)

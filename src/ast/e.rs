@@ -666,18 +666,27 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
-// Associated `static` items aren't allowed; hoist to module level (Zig nested
-// `pub const Map = ComptimeStringMap(...)` was a namespacing convenience).
-pub static JSX_SPECIAL_PROP_MAP: phf::Map<&'static [u8], JSXSpecialProp> = phf_map! {
-    b"__self" => JSXSpecialProp::UnderscoreSelf,
-    b"__source" => JSXSpecialProp::UnderscoreSource,
-    b"key" => JSXSpecialProp::Key,
-    b"ref" => JSXSpecialProp::Ref,
-};
 impl JSXSpecialProp {
+    // PERF(port): Zig used `ComptimeStringMap` (length-prefix lookup, all
+    // resolved at comptime). Phase A reached for `phf::Map`, which on every
+    // JSX prop name computes a full SipHash + index + slice compare even
+    // though the overwhelming majority of inputs (`className`, `onClick`,
+    // `style`, ...) miss. With only 4 keys at 3 distinct lengths, a
+    // length-gated `match` rejects almost every miss on a single `usize`
+    // compare and never hashes. See clap::find_param (12577e958d71) for the
+    // same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        JSX_SPECIAL_PROP_MAP.get(s).copied()
+        match s.len() {
+            3 => match s {
+                b"key" => Some(Self::Key),
+                b"ref" => Some(Self::Ref),
+                _ => None,
+            },
+            6 if s == b"__self" => Some(Self::UnderscoreSelf),
+            8 if s == b"__source" => Some(Self::UnderscoreSource),
+            _ => None,
+        }
     }
 }
 

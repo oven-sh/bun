@@ -31,30 +31,73 @@ pub enum KnownGlobal {
 }
 
 // `pub const map = bun.ComptimeEnumMap(KnownGlobal);`
-// phf::Map<&'static [u8], KnownGlobal> built from @tagName(E)
-pub static MAP: phf::Map<&'static [u8], KnownGlobal> = phf::phf_map! {
-    b"WeakSet" => KnownGlobal::WeakSet,
-    b"WeakMap" => KnownGlobal::WeakMap,
-    b"Date" => KnownGlobal::Date,
-    b"Set" => KnownGlobal::Set,
-    b"Map" => KnownGlobal::Map,
-    b"Headers" => KnownGlobal::Headers,
-    b"Response" => KnownGlobal::Response,
-    b"TextEncoder" => KnownGlobal::TextEncoder,
-    b"TextDecoder" => KnownGlobal::TextDecoder,
-    b"Error" => KnownGlobal::Error,
-    b"TypeError" => KnownGlobal::TypeError,
-    b"SyntaxError" => KnownGlobal::SyntaxError,
-    b"RangeError" => KnownGlobal::RangeError,
-    b"ReferenceError" => KnownGlobal::ReferenceError,
-    b"EvalError" => KnownGlobal::EvalError,
-    b"URIError" => KnownGlobal::URIError,
-    b"AggregateError" => KnownGlobal::AggregateError,
-    b"Array" => KnownGlobal::Array,
-    b"Object" => KnownGlobal::Object,
-    b"Function" => KnownGlobal::Function,
-    b"RegExp" => KnownGlobal::RegExp,
-};
+//
+// PERF(port): Zig's `ComptimeEnumMap` lowers to a comptime-generated switch.
+// Phase A used `phf::Map<&[u8], _>`, which on every probe computes a 128-bit
+// SipHash of the name, two modular reductions, a bounds check, and a final
+// slice compare. `minify_global_constructor` calls this for every `new Ident`
+// expression in the input, and the overwhelming majority of probes are
+// *misses* (any user-defined class). A length-gated match rejects those on a
+// single `usize` compare and at most 1-3 fixed-size byte compares — no hash,
+// no indirection. 21 keys, ≤3 per length bucket: well within the range where
+// open-coded dispatch beats `phf`.
+#[inline]
+pub fn lookup(name: &[u8]) -> Option<KnownGlobal> {
+    match name.len() {
+        3 => match name {
+            b"Set" => Some(KnownGlobal::Set),
+            b"Map" => Some(KnownGlobal::Map),
+            _ => None,
+        },
+        4 => match name {
+            b"Date" => Some(KnownGlobal::Date),
+            _ => None,
+        },
+        5 => match name {
+            b"Error" => Some(KnownGlobal::Error),
+            b"Array" => Some(KnownGlobal::Array),
+            _ => None,
+        },
+        6 => match name {
+            b"Object" => Some(KnownGlobal::Object),
+            b"RegExp" => Some(KnownGlobal::RegExp),
+            _ => None,
+        },
+        7 => match name {
+            b"WeakSet" => Some(KnownGlobal::WeakSet),
+            b"WeakMap" => Some(KnownGlobal::WeakMap),
+            b"Headers" => Some(KnownGlobal::Headers),
+            _ => None,
+        },
+        8 => match name {
+            b"Response" => Some(KnownGlobal::Response),
+            b"URIError" => Some(KnownGlobal::URIError),
+            b"Function" => Some(KnownGlobal::Function),
+            _ => None,
+        },
+        9 => match name {
+            b"TypeError" => Some(KnownGlobal::TypeError),
+            b"EvalError" => Some(KnownGlobal::EvalError),
+            _ => None,
+        },
+        10 => match name {
+            b"RangeError" => Some(KnownGlobal::RangeError),
+            _ => None,
+        },
+        11 => match name {
+            b"TextEncoder" => Some(KnownGlobal::TextEncoder),
+            b"TextDecoder" => Some(KnownGlobal::TextDecoder),
+            b"SyntaxError" => Some(KnownGlobal::SyntaxError),
+            _ => None,
+        },
+        14 => match name {
+            b"ReferenceError" => Some(KnownGlobal::ReferenceError),
+            b"AggregateError" => Some(KnownGlobal::AggregateError),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 impl KnownGlobal {
     #[inline(always)]
@@ -93,7 +136,7 @@ impl KnownGlobal {
         // lifetime of the symbol table (set at declaration time, never freed
         // before `P` teardown).
         let original_name = symbol.original_name.slice();
-        let Some(constructor) = MAP.get(original_name).copied() else {
+        let Some(constructor) = lookup(original_name) else {
             return None;
         };
 
@@ -452,6 +495,60 @@ impl KnownGlobal {
                 }
                 None
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_exhaustive() {
+        // Round-trip every variant through its tag name.
+        for v in [
+            KnownGlobal::WeakSet,
+            KnownGlobal::WeakMap,
+            KnownGlobal::Date,
+            KnownGlobal::Set,
+            KnownGlobal::Map,
+            KnownGlobal::Headers,
+            KnownGlobal::Response,
+            KnownGlobal::TextEncoder,
+            KnownGlobal::TextDecoder,
+            KnownGlobal::Error,
+            KnownGlobal::TypeError,
+            KnownGlobal::SyntaxError,
+            KnownGlobal::RangeError,
+            KnownGlobal::ReferenceError,
+            KnownGlobal::EvalError,
+            KnownGlobal::URIError,
+            KnownGlobal::AggregateError,
+            KnownGlobal::Array,
+            KnownGlobal::Object,
+            KnownGlobal::Function,
+            KnownGlobal::RegExp,
+        ] {
+            let name: &'static str = v.into();
+            assert!(lookup(name.as_bytes()) == Some(v), "{}", name);
+        }
+        // Misses at every interesting length, including a length with no bucket.
+        for miss in [
+            b"".as_slice(),
+            b"Se",
+            b"Sat",
+            b"Math",
+            b"Arrow",
+            b"String",
+            b"Promise",
+            b"Function_",
+            b"TypeErrorr",
+            b"SyntaxErrro",
+            b"SyntaxErrorX",
+            b"ReferenceErrro",
+            b"AggregateErrorX",
+        ] {
+            assert!(lookup(miss).is_none(), "{:?}", bstr::BStr::new(miss));
         }
     }
 }

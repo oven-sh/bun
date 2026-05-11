@@ -5,7 +5,6 @@ use bun_boringssl_sys as boringssl;
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
 
 use crate::jsc::JSGlobalObject;
-use phf::phf_map;
 
 pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
@@ -18,8 +17,8 @@ pub struct EVP {
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `MAP`, `tag_cstr`, `map()`) that
-// need bun_str / phf live below as an extension trait on the re-exported type.
+// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
+// bun_str live below as an extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_sha_hmac::evp::Algorithm;
 
@@ -36,12 +35,6 @@ pub trait AlgorithmExt: Copy + Sized {
     /// the enum is foreign and cannot derive `enum_map::Enum`.
     fn names() -> &'static [BunString];
 
-    /// Case-insensitive name → `Algorithm` lookup table (Rust port of the Zig
-    /// `ComptimeStringMap`). Returned by reference for the
-    /// `comptime_string_map_jsc::from_js*` helpers.
-    fn map() -> &'static phf::Map<&'static [u8], Algorithm> {
-        &MAP
-    }
 }
 
 impl AlgorithmExt for Algorithm {
@@ -112,40 +105,77 @@ pub const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'm
 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
-pub static MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
-    b"blake2b256" => Algorithm::Blake2b256,
-    b"blake2b512" => Algorithm::Blake2b512,
-    b"blake2s256" => Algorithm::Blake2s256,
-    b"ripemd160" => Algorithm::Ripemd160,
-    b"rmd160" => Algorithm::Ripemd160,
-    b"md4" => Algorithm::Md4,
-    b"md5" => Algorithm::Md5,
-    b"sha1" => Algorithm::Sha1,
-    b"sha128" => Algorithm::Sha1,
-    b"sha224" => Algorithm::Sha224,
-    b"sha256" => Algorithm::Sha256,
-    b"sha384" => Algorithm::Sha384,
-    b"sha512" => Algorithm::Sha512,
-    b"sha-1" => Algorithm::Sha1,
-    b"sha-224" => Algorithm::Sha224,
-    b"sha-256" => Algorithm::Sha256,
-    b"sha-384" => Algorithm::Sha384,
-    b"sha-512" => Algorithm::Sha512,
-    b"sha-512/224" => Algorithm::Sha512_224,
-    b"sha-512_224" => Algorithm::Sha512_224,
-    b"sha-512224" => Algorithm::Sha512_224,
-    b"sha512-224" => Algorithm::Sha512_224,
-    b"sha-512/256" => Algorithm::Sha512_256,
-    b"sha-512_256" => Algorithm::Sha512_256,
-    b"sha-512256" => Algorithm::Sha512_256,
-    b"sha512-256" => Algorithm::Sha512_256,
-    // duplicate "sha384" entry in Zig source omitted (phf rejects duplicate keys)
-    b"sha3-224" => Algorithm::Sha3_224,
-    b"sha3-256" => Algorithm::Sha3_256,
-    b"sha3-384" => Algorithm::Sha3_384,
-    b"sha3-512" => Algorithm::Sha3_512,
-    b"shake128" => Algorithm::Shake128,
-    b"shake256" => Algorithm::Shake256,
+/// Case-sensitive name → `Algorithm` (Rust port of the Zig `ComptimeStringMap`).
+///
+/// PERF(port): replaces a `phf::Map`. 32 keys spread across lengths 3..=11
+/// (max bucket = 7) — a length-gated `match` rejects misses on a single `usize`
+/// compare and lets LLVM lower the per-bucket arms to fixed-width loads. The two
+/// densest buckets (len 6 / len 10) get an extra first-byte gate so common
+/// inputs (`"sha256"`, `"sha512"`) hit ≤5 short compares instead of phf's
+/// SipHash + index probe. Semantics are identical to `MAP.get(k).copied()`.
+pub fn lookup(bytes: &[u8]) -> Option<Algorithm> {
+    match bytes.len() {
+        3 => match bytes {
+            b"md4" => Some(Algorithm::Md4),
+            b"md5" => Some(Algorithm::Md5),
+            _ => None,
+        },
+        4 => (bytes == b"sha1").then_some(Algorithm::Sha1),
+        5 => (bytes == b"sha-1").then_some(Algorithm::Sha1),
+        6 => match bytes[0] {
+            b's' => match bytes {
+                b"sha128" => Some(Algorithm::Sha1),
+                b"sha224" => Some(Algorithm::Sha224),
+                b"sha256" => Some(Algorithm::Sha256),
+                b"sha384" => Some(Algorithm::Sha384),
+                b"sha512" => Some(Algorithm::Sha512),
+                _ => None,
+            },
+            b'r' => (bytes == b"rmd160").then_some(Algorithm::Ripemd160),
+            _ => None,
+        },
+        7 => match bytes {
+            b"sha-224" => Some(Algorithm::Sha224),
+            b"sha-256" => Some(Algorithm::Sha256),
+            b"sha-384" => Some(Algorithm::Sha384),
+            b"sha-512" => Some(Algorithm::Sha512),
+            _ => None,
+        },
+        8 => match bytes {
+            b"sha3-224" => Some(Algorithm::Sha3_224),
+            b"sha3-256" => Some(Algorithm::Sha3_256),
+            b"sha3-384" => Some(Algorithm::Sha3_384),
+            b"sha3-512" => Some(Algorithm::Sha3_512),
+            b"shake128" => Some(Algorithm::Shake128),
+            b"shake256" => Some(Algorithm::Shake256),
+            _ => None,
+        },
+        9 => (bytes == b"ripemd160").then_some(Algorithm::Ripemd160),
+        10 => match bytes[0] {
+            b'b' => match bytes {
+                b"blake2b256" => Some(Algorithm::Blake2b256),
+                b"blake2b512" => Some(Algorithm::Blake2b512),
+                b"blake2s256" => Some(Algorithm::Blake2s256),
+                _ => None,
+            },
+            b's' => match bytes {
+                b"sha-512224" => Some(Algorithm::Sha512_224),
+                b"sha512-224" => Some(Algorithm::Sha512_224),
+                b"sha-512256" => Some(Algorithm::Sha512_256),
+                b"sha512-256" => Some(Algorithm::Sha512_256),
+                _ => None,
+            },
+            _ => None,
+        },
+        11 => match bytes {
+            b"sha-512/224" => Some(Algorithm::Sha512_224),
+            b"sha-512_224" => Some(Algorithm::Sha512_224),
+            b"sha-512/256" => Some(Algorithm::Sha512_256),
+            b"sha-512_256" => Some(Algorithm::Sha512_256),
+            _ => None,
+        },
+        _ => None,
+    }
     // b"md5-sha1" => .@"MD5-SHA1",
     // b"dsa-sha" => .@"DSA-SHA",
     // b"dsa-sha1" => .@"DSA-SHA1",
@@ -158,7 +188,21 @@ pub static MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
     // b"rsa-sha384" => .@"RSA-SHA384",
     // b"rsa-sha512" => .@"RSA-SHA512",
     // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
-};
+}
+
+/// ASCII-case-insensitive `lookup`. All keys are already lower-case, so
+/// lower the probe into a stack buffer (longest key is 11 bytes) and forward.
+/// Replaces `comptime_string_map_jsc::from_js_case_insensitive`'s linear scan.
+pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
+    if bytes.len() > 11 {
+        return None;
+    }
+    let mut buf = [0u8; 11];
+    for (i, b) in bytes.iter().enumerate() {
+        buf[i] = b.to_ascii_lowercase();
+    }
+    lookup(&buf[..bytes.len()])
+}
 
 impl EVP {
     pub fn init(algorithm: Algorithm, md: *const boringssl::EVP_MD, engine: *mut boringssl::ENGINE) -> EVP {
@@ -245,20 +289,8 @@ impl EVP {
     }
 
     pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
-        // TODO(port): phf custom hasher — Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
-        // Phase B: either lowercase `name` before lookup or switch to a case-insensitive phf.
-        // Stack-lowercase: longest key in MAP is 11 bytes ("sha-512/256" / "blake2b256");
-        // 32 is comfortable headroom.
-        let mut buf = [0u8; 32];
-        let lookup_key: &[u8] = if name.len() <= buf.len() {
-            for (i, &b) in name.iter().enumerate() {
-                buf[i] = b.to_ascii_lowercase();
-            }
-            &buf[..name.len()]
-        } else {
-            name
-        };
-        if let Some(&algorithm) = MAP.get(lookup_key) {
+        // Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
+        if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
                 // and returns that crate's opaque `EVP_MD`; both name the same C

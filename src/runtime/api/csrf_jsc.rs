@@ -7,7 +7,7 @@ use bun_boringssl_sys as boring;
 use bun_csrf as csrf;
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
-use crate::crypto::evp::AlgorithmExt as _;
+use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
 // ── local shims ──────────────────────────────────────────────────────────
@@ -20,16 +20,7 @@ fn algorithm_from_js_case_insensitive(
     input: JSValue,
 ) -> JsResult<Option<EvpAlgorithm>> {
     let slice = input.to_slice(global)?;
-    let bytes = slice.slice();
-    // Longest key is "sha-512/224" (11 bytes); 32 is a comfortable upper bound.
-    if bytes.len() > 32 {
-        return Ok(None);
-    }
-    let mut buf = [0u8; 32];
-    for (i, b) in bytes.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    Ok(EvpAlgorithm::map().get(&buf[..bytes.len()]).copied())
+    Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
 /// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`

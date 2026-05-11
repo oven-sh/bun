@@ -5267,7 +5267,7 @@ impl<'a> Resolver<'a> {
             // If you use cjs or cts, then you're using cjs
             // This should win out over the module type from package.json
             if !kind.is_from_css() && module_type == options::ModuleType::Unknown && path.name.ext.len() == 4 {
-                module_type = MODULE_TYPE_MAP.get(path.name.ext).copied().unwrap_or(options::ModuleType::Unknown);
+                module_type = module_type_from_ext(path.name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
             if let Some(entries) = dir.get_entries(self.generation) {
@@ -9318,12 +9318,23 @@ fn is_dot_slash(path: &[u8]) -> bool {
 }
 
 // ModuleTypeMap = bun.ComptimeStringMap(options.ModuleType, .{...})
-static MODULE_TYPE_MAP: phf::Map<&'static [u8], options::ModuleType> = phf::phf_map! {
-    b".mjs" => options::ModuleType::Esm,
-    b".mts" => options::ModuleType::Esm,
-    b".cjs" => options::ModuleType::Cjs,
-    b".cts" => options::ModuleType::Cjs,
-};
+//
+// PERF(port): was `phf::Map<&[u8], ModuleType>`. With only 4 keys — all
+// length 4 — the phf hash + index probe is strictly more work than a single
+// length gate followed by 4-byte compares (which LLVM lowers to one u32
+// load + compare per arm once `len == 4` is established). Mirrors the
+// length-gated dispatch used in `clap::find_param`.
+#[inline]
+fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+    if ext.len() != 4 {
+        return None;
+    }
+    match ext {
+        b".mjs" | b".mts" => Some(options::ModuleType::Esm),
+        b".cjs" | b".cts" => Some(options::ModuleType::Cjs),
+        _ => None,
+    }
+}
 
 const NODE_MODULE_ROOT_STRING: &[u8] = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
 

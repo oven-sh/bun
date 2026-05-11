@@ -1603,7 +1603,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::LIST.get(name) {
+                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
                     match ts_stmt {
                         js_lexer::TypescriptStmtKeyword::TsStmtType => {
                             if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {

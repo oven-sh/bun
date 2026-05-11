@@ -50,18 +50,51 @@ enum KnownCommand {
     Copy,
 }
 
-// Zig: bun.ComptimeEnumMap(KnownCommand) — phf over @tagName bytes.
-// (associated `static` is not allowed in `impl`; lives at module scope.)
-static KNOWN_COMMAND_MAP: phf::Map<&'static [u8], KnownCommand> = phf::phf_map! {
-    b"INSERT" => KnownCommand::Insert,
-    b"DELETE" => KnownCommand::Delete,
-    b"UPDATE" => KnownCommand::Update,
-    b"MERGE"  => KnownCommand::Merge,
-    b"SELECT" => KnownCommand::Select,
-    b"MOVE"   => KnownCommand::Move,
-    b"FETCH"  => KnownCommand::Fetch,
-    b"COPY"   => KnownCommand::Copy,
-};
+impl KnownCommand {
+    // Zig: bun.ComptimeEnumMap(KnownCommand) — comptime perfect hash over
+    // @tagName bytes. 8 keys is too small for `phf` to pay for itself (its
+    // SipHash + double indirect dominate); a length-gated byte compare is
+    // branch-predictable and lets LLVM lower each arm to a single wide
+    // integer compare. Within every length bucket the first byte is already
+    // unique, so each `==` short-circuits on the first word anyway.
+    #[inline]
+    fn from_bytes(bytes: &[u8]) -> Option<KnownCommand> {
+        match bytes.len() {
+            4 => {
+                if bytes == b"COPY" {
+                    Some(KnownCommand::Copy)
+                } else if bytes == b"MOVE" {
+                    Some(KnownCommand::Move)
+                } else {
+                    None
+                }
+            }
+            5 => {
+                if bytes == b"FETCH" {
+                    Some(KnownCommand::Fetch)
+                } else if bytes == b"MERGE" {
+                    Some(KnownCommand::Merge)
+                } else {
+                    None
+                }
+            }
+            6 => {
+                if bytes == b"SELECT" {
+                    Some(KnownCommand::Select)
+                } else if bytes == b"INSERT" {
+                    Some(KnownCommand::Insert)
+                } else if bytes == b"UPDATE" {
+                    Some(KnownCommand::Update)
+                } else if bytes == b"DELETE" {
+                    Some(KnownCommand::Delete)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
 
 impl<'a> CommandTag<'a> {
     pub fn init(tag: &'a [u8]) -> CommandTag<'a> {
@@ -69,7 +102,7 @@ impl<'a> CommandTag<'a> {
             return CommandTag::Other(tag);
         };
         let first_space_index = first_space_index as usize;
-        let Some(&cmd) = KNOWN_COMMAND_MAP.get(&tag[0..first_space_index]) else {
+        let Some(cmd) = KnownCommand::from_bytes(&tag[0..first_space_index]) else {
             return CommandTag::Other(tag);
         };
 

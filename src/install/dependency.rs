@@ -735,17 +735,35 @@ impl VersionExt for Version {
 // ──────────────────────────────────────────────────────────────────────────
 
 
-pub static TAG_MAP: phf::Map<&'static [u8], Tag> = phf::phf_map! {
-    b"npm" => Tag::Npm,
-    b"dist_tag" => Tag::DistTag,
-    b"tarball" => Tag::Tarball,
-    b"folder" => Tag::Folder,
-    b"symlink" => Tag::Symlink,
-    b"workspace" => Tag::Workspace,
-    b"git" => Tag::Git,
-    b"github" => Tag::Github,
-    b"catalog" => Tag::Catalog,
-};
+// PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
+// in the Phase-A draft; rewritten as a length-gated match (cf. 12577e958d71
+// clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
+// compare rejects almost every miss before touching bytes, and hits resolve in
+// ≤3 slice compares with no hashing or static-init overhead.
+#[inline]
+pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
+    match bytes.len() {
+        3 => match bytes {
+            b"npm" => Some(Tag::Npm),
+            b"git" => Some(Tag::Git),
+            _ => None,
+        },
+        6 => match bytes {
+            b"folder" => Some(Tag::Folder),
+            b"github" => Some(Tag::Github),
+            _ => None,
+        },
+        7 => match bytes {
+            b"tarball" => Some(Tag::Tarball),
+            b"symlink" => Some(Tag::Symlink),
+            b"catalog" => Some(Tag::Catalog),
+            _ => None,
+        },
+        8 if bytes == b"dist_tag" => Some(Tag::DistTag),
+        9 if bytes == b"workspace" => Some(Tag::Workspace),
+        _ => None,
+    }
+}
 
 pub trait TagExt {
     fn cmp(self, other: Tag) -> Ordering;

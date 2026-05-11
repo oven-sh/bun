@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::StringOrBuffer;
 
 use crate::crypto::create_crypto_error;
-use crate::crypto::evp::{Algorithm, AlgorithmExt as _};
+use crate::crypto::evp::{self, Algorithm};
 
 // BoringSSL error code; not yet exported by `bun_boringssl_sys`
 // (Zig: src/boringssl_sys/boringssl.zig:6422).
@@ -159,11 +159,8 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                match bun_jsc::comptime_string_map_jsc::from_js_case_insensitive(
-                    Algorithm::map(),
-                    global_this,
-                    arg4,
-                )? {
+                let slice = arg4.to_slice(global_this)?;
+                match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
                         other => break 'brk other,

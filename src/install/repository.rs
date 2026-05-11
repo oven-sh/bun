@@ -257,11 +257,22 @@ impl SharedEnv {
     }
 }
 
-pub static HOSTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
-    b"bitbucket" => b".org",
-    b"github" => b".com",
-    b"gitlab" => b".com",
-};
+/// Zig: `Repository.Hosts` (a `ComptimeStringMap`). Length-gated match beats
+/// `phf::Map` for 3 entries — phf hashes the full key + does a confirming
+/// memcmp; this rejects on a single `usize` compare for everything that isn't
+/// 6 or 9 bytes (the common case: real hostnames like `git.company.io`).
+#[inline]
+pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
+    match host.len() {
+        6 => match host {
+            b"github" => Some(b".com"),
+            b"gitlab" => Some(b".com"),
+            _ => None,
+        },
+        9 if host == b"bitbucket" => Some(b".org"),
+        _ => None,
+    }
+}
 
 /// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
 /// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
@@ -530,7 +541,7 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = HOSTS.get(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon]) {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';
@@ -578,7 +589,7 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = HOSTS.get(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon]) {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';

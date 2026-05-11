@@ -6927,7 +6927,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         ctx.hasher.update(original_name);
 
-        if let Some(built_in_hook) = crate::BUILT_IN_HOOKS.get(original_name) {
+        if let Some(built_in_hook) = crate::BuiltInHook::from_bytes(original_name) {
             'hash_arg: {
                 let arg_index: usize = match built_in_hook {
                     // useState first argument is initial state.

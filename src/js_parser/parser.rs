@@ -2363,30 +2363,46 @@ pub enum BuiltInHook {
     useOptimistic,
 }
 
-// TODO(port): bun.ComptimeEnumMap → phf::Map<&'static [u8], BuiltInHook> built
-// from variant names. `strum::EnumString` above is a stand-in; for hot-path
-// lookups Phase B should switch to `phf_map!` keyed on byte slices.
-pub static BUILT_IN_HOOKS: phf::Map<&'static [u8], BuiltInHook> = phf::phf_map! {
-    b"useState" => BuiltInHook::useState,
-    b"useReducer" => BuiltInHook::useReducer,
-    b"useEffect" => BuiltInHook::useEffect,
-    b"useLayoutEffect" => BuiltInHook::useLayoutEffect,
-    b"useMemo" => BuiltInHook::useMemo,
-    b"useCallback" => BuiltInHook::useCallback,
-    b"useRef" => BuiltInHook::useRef,
-    b"useContext" => BuiltInHook::useContext,
-    b"useImperativeHandle" => BuiltInHook::useImperativeHandle,
-    b"useDebugValue" => BuiltInHook::useDebugValue,
-    b"useId" => BuiltInHook::useId,
-    b"useDeferredValue" => BuiltInHook::useDeferredValue,
-    b"useTransition" => BuiltInHook::useTransition,
-    b"useInsertionEffect" => BuiltInHook::useInsertionEffect,
-    b"useSyncExternalStore" => BuiltInHook::useSyncExternalStore,
-    b"useFormStatus" => BuiltInHook::useFormStatus,
-    b"useFormState" => BuiltInHook::useFormState,
-    b"useActionState" => BuiltInHook::useActionState,
-    b"useOptimistic" => BuiltInHook::useOptimistic,
-};
+impl BuiltInHook {
+    /// Length-gated lookup (formerly a `phf::Map<&[u8], BuiltInHook>`).
+    ///
+    /// All 19 keys share the `b"use"` prefix, so a perfect hash spends most of
+    /// its work mixing identical leading bytes. Gating on `len()` alone yields a
+    /// unique bucket for 13 of the 15 occupied lengths; the two collisions
+    /// (len 10 → 2 keys, len 13 → 4 keys) disambiguate on `id[3]` — the first
+    /// byte after the shared prefix — before the confirming slice compare.
+    #[inline]
+    pub fn from_bytes(id: &[u8]) -> Option<Self> {
+        match id.len() {
+            5 if id == b"useId" => Some(Self::useId),
+            6 if id == b"useRef" => Some(Self::useRef),
+            7 if id == b"useMemo" => Some(Self::useMemo),
+            8 if id == b"useState" => Some(Self::useState),
+            9 if id == b"useEffect" => Some(Self::useEffect),
+            10 => match id[3] {
+                b'R' if id == b"useReducer" => Some(Self::useReducer),
+                b'C' if id == b"useContext" => Some(Self::useContext),
+                _ => None,
+            },
+            11 if id == b"useCallback" => Some(Self::useCallback),
+            12 if id == b"useFormState" => Some(Self::useFormState),
+            13 => match id[3] {
+                b'D' if id == b"useDebugValue" => Some(Self::useDebugValue),
+                b'T' if id == b"useTransition" => Some(Self::useTransition),
+                b'F' if id == b"useFormStatus" => Some(Self::useFormStatus),
+                b'O' if id == b"useOptimistic" => Some(Self::useOptimistic),
+                _ => None,
+            },
+            14 if id == b"useActionState" => Some(Self::useActionState),
+            15 if id == b"useLayoutEffect" => Some(Self::useLayoutEffect),
+            16 if id == b"useDeferredValue" => Some(Self::useDeferredValue),
+            18 if id == b"useInsertionEffect" => Some(Self::useInsertionEffect),
+            19 if id == b"useImperativeHandle" => Some(Self::useImperativeHandle),
+            20 if id == b"useSyncExternalStore" => Some(Self::useSyncExternalStore),
+            _ => None,
+        }
+    }
+}
 
 /// Equivalent of esbuild's js_ast_helpers.ToInt32
 pub fn float_to_int32(f: f64) -> i32 {

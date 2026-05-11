@@ -114,11 +114,10 @@ impl Qpack {
     /// name is neither forbidden nor in the static table; lowercase it and
     /// send with no index hint.
     pub fn classify(name: &[u8]) -> Option<Class> {
-        // phf::Map is case-sensitive, but `build_request` produces mixed-case
-        // names ("Transfer-Encoding", "Host", …). Lowercase into a small stack
-        // buffer first — every key in MAP is ≤ 19 bytes, so anything longer
-        // is a guaranteed miss.
-        let mut buf = [0u8; 32];
+        // `build_request` produces mixed-case names ("Transfer-Encoding",
+        // "Host", …). Lowercase into a small stack buffer first — every known
+        // key is ≤ 19 bytes, so anything longer is a guaranteed miss.
+        let mut buf = [0u8; 19];
         if name.len() > buf.len() {
             return None;
         }
@@ -126,46 +125,173 @@ impl Qpack {
         for (d, s) in lower.iter_mut().zip(name) {
             *d = s.to_ascii_lowercase();
         }
-        MAP.get(lower).copied()
+        // PERF(port): length-gated match instead of phf::Map. 34 keys spread
+        // over 14 distinct lengths (max 5 per bucket, first bytes mostly
+        // unique within a bucket), so the outer length dispatch rejects most
+        // misses on a single usize compare and the inner byte-slice match
+        // compiles to a handful of word compares — cheaper than phf's hash +
+        // displacement-table probe + verify on every header.
+        Some(match name.len() {
+            4 => match &*lower {
+                b"host" => Class::Host,
+                b"date" => Class::idx(b"date", Qpack::Date),
+                b"etag" => Class::idx(b"etag", Qpack::Etag),
+                b"link" => Class::idx(b"link", Qpack::Link),
+                b"vary" => Class::idx(b"vary", Qpack::Vary),
+                _ => return None,
+            },
+            5 => match &*lower {
+                b"range" => Class::idx(b"range", Qpack::Range),
+                _ => return None,
+            },
+            6 => match &*lower {
+                b"accept" => Class::idx(b"accept", Qpack::Accept),
+                b"cookie" => Class::idx(b"cookie", Qpack::Cookie),
+                b"origin" => Class::idx(b"origin", Qpack::Origin),
+                b"server" => Class::idx(b"server", Qpack::Server),
+                _ => return None,
+            },
+            7 => match &*lower {
+                b"referer" => Class::idx(b"referer", Qpack::Referer),
+                b"upgrade" => Class::Forbidden,
+                _ => return None,
+            },
+            8 => match &*lower {
+                b"if-range" => Class::idx(b"if-range", Qpack::IfRange),
+                b"location" => Class::idx(b"location", Qpack::Location),
+                _ => return None,
+            },
+            9 => match &*lower {
+                b"forwarded" => Class::idx(b"forwarded", Qpack::Forwarded),
+                _ => return None,
+            },
+            10 => match &*lower {
+                b"connection" => Class::Forbidden,
+                b"keep-alive" => Class::Forbidden,
+                b"set-cookie" => Class::idx(b"set-cookie", Qpack::SetCookie),
+                b"user-agent" => Class::idx(b"user-agent", Qpack::UserAgent),
+                _ => return None,
+            },
+            12 => match &*lower {
+                b"content-type" => Class::idx(b"content-type", Qpack::ContentType),
+                _ => return None,
+            },
+            13 => match &*lower {
+                b"accept-ranges" => Class::idx(b"accept-ranges", Qpack::AcceptRanges),
+                b"authorization" => Class::idx(b"authorization", Qpack::Authorization),
+                b"cache-control" => Class::idx(b"cache-control", Qpack::CacheControl),
+                b"if-none-match" => Class::idx(b"if-none-match", Qpack::IfNoneMatch),
+                b"last-modified" => Class::idx(b"last-modified", Qpack::LastModified),
+                _ => return None,
+            },
+            14 => match &*lower {
+                b"content-length" => Class::idx(b"content-length", Qpack::ContentLength),
+                _ => return None,
+            },
+            15 => match &*lower {
+                b"accept-encoding" => Class::idx(b"accept-encoding", Qpack::AcceptEncoding),
+                b"accept-language" => Class::idx(b"accept-language", Qpack::AcceptLanguage),
+                b"x-forwarded-for" => Class::idx(b"x-forwarded-for", Qpack::XForwardedFor),
+                _ => return None,
+            },
+            16 => match &*lower {
+                b"content-encoding" => Class::idx(b"content-encoding", Qpack::ContentEncoding),
+                b"proxy-connection" => Class::Forbidden,
+                _ => return None,
+            },
+            17 => match &*lower {
+                b"if-modified-since" => Class::idx(b"if-modified-since", Qpack::IfModifiedSince),
+                b"transfer-encoding" => Class::Forbidden,
+                _ => return None,
+            },
+            19 => match &*lower {
+                b"content-disposition" => Class::idx(b"content-disposition", Qpack::ContentDisposition),
+                _ => return None,
+            },
+            _ => return None,
+        })
     }
 }
 
-static MAP: phf::Map<&'static [u8], Class> = phf::phf_map! {
-    b"connection" => Class::Forbidden,
-    b"host" => Class::Host,
-    b"keep-alive" => Class::Forbidden,
-    b"proxy-connection" => Class::Forbidden,
-    b"transfer-encoding" => Class::Forbidden,
-    b"upgrade" => Class::Forbidden,
+#[cfg(test)]
+mod classify_tests {
+    use super::{Class, Qpack};
 
-    b"accept" => Class::idx(b"accept", Qpack::Accept),
-    b"accept-encoding" => Class::idx(b"accept-encoding", Qpack::AcceptEncoding),
-    b"accept-language" => Class::idx(b"accept-language", Qpack::AcceptLanguage),
-    b"accept-ranges" => Class::idx(b"accept-ranges", Qpack::AcceptRanges),
-    b"authorization" => Class::idx(b"authorization", Qpack::Authorization),
-    b"cache-control" => Class::idx(b"cache-control", Qpack::CacheControl),
-    b"content-disposition" => Class::idx(b"content-disposition", Qpack::ContentDisposition),
-    b"content-encoding" => Class::idx(b"content-encoding", Qpack::ContentEncoding),
-    b"content-length" => Class::idx(b"content-length", Qpack::ContentLength),
-    b"content-type" => Class::idx(b"content-type", Qpack::ContentType),
-    b"cookie" => Class::idx(b"cookie", Qpack::Cookie),
-    b"date" => Class::idx(b"date", Qpack::Date),
-    b"etag" => Class::idx(b"etag", Qpack::Etag),
-    b"forwarded" => Class::idx(b"forwarded", Qpack::Forwarded),
-    b"if-modified-since" => Class::idx(b"if-modified-since", Qpack::IfModifiedSince),
-    b"if-none-match" => Class::idx(b"if-none-match", Qpack::IfNoneMatch),
-    b"if-range" => Class::idx(b"if-range", Qpack::IfRange),
-    b"last-modified" => Class::idx(b"last-modified", Qpack::LastModified),
-    b"link" => Class::idx(b"link", Qpack::Link),
-    b"location" => Class::idx(b"location", Qpack::Location),
-    b"origin" => Class::idx(b"origin", Qpack::Origin),
-    b"range" => Class::idx(b"range", Qpack::Range),
-    b"referer" => Class::idx(b"referer", Qpack::Referer),
-    b"server" => Class::idx(b"server", Qpack::Server),
-    b"set-cookie" => Class::idx(b"set-cookie", Qpack::SetCookie),
-    b"user-agent" => Class::idx(b"user-agent", Qpack::UserAgent),
-    b"vary" => Class::idx(b"vary", Qpack::Vary),
-    b"x-forwarded-for" => Class::idx(b"x-forwarded-for", Qpack::XForwardedFor),
-};
+    // Exhaustive check that the length-gated match preserves the exact
+    // (key → Class) mapping the phf::Map encoded, including case-folding.
+    const ENTRIES: &[(&[u8], Class)] = &[
+        (b"connection", Class::Forbidden),
+        (b"host", Class::Host),
+        (b"keep-alive", Class::Forbidden),
+        (b"proxy-connection", Class::Forbidden),
+        (b"transfer-encoding", Class::Forbidden),
+        (b"upgrade", Class::Forbidden),
+        (b"accept", Class::idx(b"accept", Qpack::Accept)),
+        (b"accept-encoding", Class::idx(b"accept-encoding", Qpack::AcceptEncoding)),
+        (b"accept-language", Class::idx(b"accept-language", Qpack::AcceptLanguage)),
+        (b"accept-ranges", Class::idx(b"accept-ranges", Qpack::AcceptRanges)),
+        (b"authorization", Class::idx(b"authorization", Qpack::Authorization)),
+        (b"cache-control", Class::idx(b"cache-control", Qpack::CacheControl)),
+        (b"content-disposition", Class::idx(b"content-disposition", Qpack::ContentDisposition)),
+        (b"content-encoding", Class::idx(b"content-encoding", Qpack::ContentEncoding)),
+        (b"content-length", Class::idx(b"content-length", Qpack::ContentLength)),
+        (b"content-type", Class::idx(b"content-type", Qpack::ContentType)),
+        (b"cookie", Class::idx(b"cookie", Qpack::Cookie)),
+        (b"date", Class::idx(b"date", Qpack::Date)),
+        (b"etag", Class::idx(b"etag", Qpack::Etag)),
+        (b"forwarded", Class::idx(b"forwarded", Qpack::Forwarded)),
+        (b"if-modified-since", Class::idx(b"if-modified-since", Qpack::IfModifiedSince)),
+        (b"if-none-match", Class::idx(b"if-none-match", Qpack::IfNoneMatch)),
+        (b"if-range", Class::idx(b"if-range", Qpack::IfRange)),
+        (b"last-modified", Class::idx(b"last-modified", Qpack::LastModified)),
+        (b"link", Class::idx(b"link", Qpack::Link)),
+        (b"location", Class::idx(b"location", Qpack::Location)),
+        (b"origin", Class::idx(b"origin", Qpack::Origin)),
+        (b"range", Class::idx(b"range", Qpack::Range)),
+        (b"referer", Class::idx(b"referer", Qpack::Referer)),
+        (b"server", Class::idx(b"server", Qpack::Server)),
+        (b"set-cookie", Class::idx(b"set-cookie", Qpack::SetCookie)),
+        (b"user-agent", Class::idx(b"user-agent", Qpack::UserAgent)),
+        (b"vary", Class::idx(b"vary", Qpack::Vary)),
+        (b"x-forwarded-for", Class::idx(b"x-forwarded-for", Qpack::XForwardedFor)),
+    ];
+
+    fn eq(a: Class, b: Class) -> bool {
+        match (a, b) {
+            (Class::Forbidden, Class::Forbidden) | (Class::Host, Class::Host) => true,
+            (Class::Indexed { name: an, index: ai }, Class::Indexed { name: bn, index: bi }) => {
+                an == bn && ai == bi
+            }
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn all_entries_hit() {
+        for &(k, v) in ENTRIES {
+            let got = Qpack::classify(k).expect("known key must hit");
+            assert!(eq(got, v), "mismatch for {:?}", core::str::from_utf8(k));
+            // Mixed-case must fold.
+            let upper: Vec<u8> = k.iter().map(u8::to_ascii_uppercase).collect();
+            let got = Qpack::classify(&upper).expect("uppercase must hit");
+            assert!(eq(got, v), "case-fold mismatch for {:?}", core::str::from_utf8(k));
+        }
+    }
+
+    #[test]
+    fn misses() {
+        for k in [
+            b"" as &[u8],
+            b"hos",
+            b"hosts",
+            b"content-typ",
+            b"content-types",
+            b"x-custom-header",
+            b"a-very-long-header-name-that-exceeds-nineteen",
+        ] {
+            assert!(Qpack::classify(k).is_none(), "expected miss for {:?}", k);
+        }
+    }
+}
 
 // ported from: src/uws_sys/quic/Header.zig

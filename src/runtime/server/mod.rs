@@ -2694,10 +2694,14 @@ mod trampoline {
 // ─── per-monomorphization request pools ──────────────────────────────────────
 // Zig: `pub threadlocal var pool: ?*RequestContextStackAllocator = null` per
 // `NewRequestContext(..)` instantiation. Rust generics cannot own statics, so
-// declare one `OnceLock` per concrete (SSL, DEBUG, H3) combo at the call site
-// and hand the leaked pointer back through a trait. PERF(port): was threadlocal
-// — `Bun.serve` is single-threaded so a process-static is equivalent today;
-// revisit if servers ever span worker threads.
+// declare one `thread_local!` per concrete (SSL, DEBUG, H3) combo via macro and
+// hand the leaked pointer back through a trait.
+//
+// THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
+// Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
+// a process-static would race when two `Bun.serve` instances run on distinct
+// Worker threads (each Worker has its own event loop and may host a server).
+// The Zig spec used `threadlocal` for exactly this reason — preserve it.
 pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
     fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
@@ -2707,20 +2711,35 @@ macro_rules! impl_server_pools {
     ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
         impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
             fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
-                static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-                *POOL.get_or_init(|| {
-                    bun_core::heap::into_raw(Box::new(
-                        request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, false>::init(),
-                    )) as usize
-                }) as *mut _
+                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
+                thread_local! {
+                    // Zig: `threadlocal var pool: ?*RequestContextStackAllocator = null`
+                    static POOL: core::cell::Cell<*mut Pool> =
+                        const { core::cell::Cell::new(core::ptr::null_mut()) };
+                }
+                POOL.with(|cell| {
+                    let mut p = cell.get();
+                    if p.is_null() {
+                        p = bun_core::heap::into_raw(Box::new(Pool::init()));
+                        cell.set(p);
+                    }
+                    p
+                })
             }
             fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
-                static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-                *POOL.get_or_init(|| {
-                    bun_core::heap::into_raw(Box::new(
-                        request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, true>::init(),
-                    )) as usize
-                }) as *mut _
+                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, true>;
+                thread_local! {
+                    static POOL: core::cell::Cell<*mut Pool> =
+                        const { core::cell::Cell::new(core::ptr::null_mut()) };
+                }
+                POOL.with(|cell| {
+                    let mut p = cell.get();
+                    if p.is_null() {
+                        p = bun_core::heap::into_raw(Box::new(Pool::init()));
+                        cell.set(p);
+                    }
+                    p
+                })
             }
         }
     )*};

@@ -521,22 +521,22 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(listener.handlers.as_ptr()),
-            socket: uws::NewSocketHandler::<SSL>::DETACHED,
-            protos: listener.protos.clone(),
+            handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
+            socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
+            protos: JsCell::new(listener.protos.clone()),
             // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
             // here `protos` is `Option<Box<[u8]>>` so we clone instead of borrow.
-            flags: SocketFlags::empty(),
-            owned_ssl_ctx: None,
-            this_value: jsc::JsRef::empty(),
-            poll_ref: KeepAlive::init(),
-            ref_pollref_on_connect: true,
-            connection: None,
-            server_name: None,
+            flags: Cell::new(SocketFlags::empty()),
+            owned_ssl_ctx: Cell::new(None),
+            this_value: JsCell::new(jsc::JsRef::empty()),
+            poll_ref: JsCell::new(KeepAlive::init()),
+            ref_pollref_on_connect: Cell::new(true),
+            connection: JsCell::new(None),
+            server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
-            bytes_written: 0,
-            native_callback: crate::socket::NativeCallbacks::None,
-            twin: None,
+            bytes_written: Cell::new(0),
+            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+            twin: JsCell::new(None),
         });
         // SAFETY: NewSocket::new returns a valid heap pointer.
         unsafe { (*this_socket).ref_() };
@@ -567,21 +567,21 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(listener.handlers.as_ptr()),
-            socket,
-            protos: listener.protos.clone(),
+            handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
+            socket: Cell::new(socket),
+            protos: JsCell::new(listener.protos.clone()),
             // TODO(port): protos borrow semantics — Zig shared the listener's slice; here we clone.
-            flags: SocketFlags::empty(), // owned_protos = false (cloned above)
-            owned_ssl_ctx: None,
-            this_value: jsc::JsRef::empty(),
-            poll_ref: KeepAlive::init(),
-            ref_pollref_on_connect: true,
-            connection: None,
-            server_name: None,
+            flags: Cell::new(SocketFlags::empty()), // owned_protos = false (cloned above)
+            owned_ssl_ctx: Cell::new(None),
+            this_value: JsCell::new(jsc::JsRef::empty()),
+            poll_ref: JsCell::new(KeepAlive::init()),
+            ref_pollref_on_connect: Cell::new(true),
+            connection: JsCell::new(None),
+            server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
-            bytes_written: 0,
-            native_callback: crate::socket::NativeCallbacks::None,
-            twin: None,
+            bytes_written: Cell::new(0),
+            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+            twin: JsCell::new(None),
         });
         // SAFETY: NewSocket::new returns a valid heap pointer
         unsafe { (*this_socket).ref_() };
@@ -1046,46 +1046,46 @@ impl Listener {
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket
-                        let prev = unsafe { &mut *prev_ptr };
-                        if let Some(prev_handlers) = prev.handlers {
+                        let prev = unsafe { &*prev_ptr };
+                        if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated
                             unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
-                        debug_assert!(!prev.this_value.is_empty());
-                        prev.handlers = NonNull::new(handlers_ptr);
-                        debug_assert!(matches!(prev.socket.socket, uws::InternalSocket::Detached));
+                        debug_assert!(!prev.this_value.get().is_empty());
+                        prev.handlers.set(NonNull::new(handlers_ptr));
+                        debug_assert!(matches!(prev.socket.get().socket, uws::InternalSocket::Detached));
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
-                        prev.connection = Some(connection);
-                        if prev.flags.contains(SocketFlags::OWNED_PROTOS) {
-                            prev.protos = None;
+                        prev.connection.set(Some(connection));
+                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
+                            prev.protos.set(None);
                         }
-                        prev.protos = ssl_taken.as_mut().and_then(|s| s.take_protos());
-                        prev.server_name = ssl_taken.as_mut().and_then(|s| s.take_server_name());
+                        prev.protos.set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
+                        prev.server_name.set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
                         prev_ptr
                     } else {
                         TLSSocket::new(TLSSocket {
                             ref_count: bun_ptr::RefCount::init(),
-                            handlers: NonNull::new(handlers_ptr),
-                            socket: uws::NewSocketHandler::<true>::DETACHED,
-                            connection: Some(connection),
-                            protos: ssl_taken.as_mut().and_then(|s| s.take_protos()),
-                            server_name: ssl_taken.as_mut().and_then(|s| s.take_server_name()),
-                            owned_ssl_ctx: None,
-                            flags: SocketFlags::default(),
-                            this_value: jsc::JsRef::empty(),
-                            poll_ref: KeepAlive::init(),
-                            ref_pollref_on_connect: true,
+                            handlers: Cell::new(NonNull::new(handlers_ptr)),
+                            socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
+                            connection: JsCell::new(Some(connection)),
+                            protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
+                            server_name: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_server_name())),
+                            owned_ssl_ctx: Cell::new(None),
+                            flags: Cell::new(SocketFlags::default()),
+                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            poll_ref: JsCell::new(KeepAlive::init()),
+                            ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
-                            bytes_written: 0,
-                            native_callback: crate::socket::NativeCallbacks::None,
-                            twin: None,
+                            bytes_written: Cell::new(0),
+                            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+                            twin: JsCell::new(None),
                         })
                     };
                     // SAFETY: tls is a valid heap pointer
-                    let tls_ref = unsafe { &mut *tls };
+                    let tls_ref = unsafe { &*tls };
                     TLSSocket::data_set_cached(tls_ref.get_this_value(global), global, default_data);
-                    tls_ref.poll_ref.ref_(vm_event_loop_ctx());
+                    tls_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
                     tls_ref.ref_();
 
                     // Transfer the borrowed CTX into the pipe's SSLWrapper. From
@@ -1096,7 +1096,7 @@ impl Listener {
                         core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
                     // PORT NOTE: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above (single allocation in Zig, aliased read).
-                    let named_pipe_result = match tls_ref.connection.as_ref().unwrap() {
+                    let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
                             &buf[..pipe_name_len.unwrap()],
@@ -1117,54 +1117,54 @@ impl Listener {
                         Ok(p) => p,
                         Err(_) => return Ok(promise_value),
                     };
-                    tls_ref.socket = uws::NewSocketHandler {
+                    tls_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
-                    };
+                    });
                 } else {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
                         // SAFETY: caller passes a live TCPSocket
-                        let prev = unsafe { &mut *prev_ptr };
-                        debug_assert!(!prev.this_value.is_empty());
-                        if let Some(prev_handlers) = prev.handlers {
+                        let prev = unsafe { &*prev_ptr };
+                        debug_assert!(!prev.this_value.get().is_empty());
+                        if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated
                             unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
-                        prev.handlers = NonNull::new(handlers_ptr);
-                        debug_assert!(matches!(prev.socket.socket, uws::InternalSocket::Detached));
+                        prev.handlers.set(NonNull::new(handlers_ptr));
+                        debug_assert!(matches!(prev.socket.get().socket, uws::InternalSocket::Detached));
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
-                        prev.connection = Some(connection);
-                        debug_assert!(prev.protos.is_none());
-                        debug_assert!(prev.server_name.is_none());
+                        prev.connection.set(Some(connection));
+                        debug_assert!(prev.protos.get().is_none());
+                        debug_assert!(prev.server_name.get().is_none());
                         prev_ptr
                     } else {
                         TCPSocket::new(TCPSocket {
                             ref_count: bun_ptr::RefCount::init(),
-                            handlers: NonNull::new(handlers_ptr),
-                            socket: uws::NewSocketHandler::<false>::DETACHED,
-                            connection: Some(connection),
-                            protos: None,
-                            server_name: None,
-                            owned_ssl_ctx: None,
-                            flags: SocketFlags::default(),
-                            this_value: jsc::JsRef::empty(),
-                            poll_ref: KeepAlive::init(),
-                            ref_pollref_on_connect: true,
+                            handlers: Cell::new(NonNull::new(handlers_ptr)),
+                            socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
+                            connection: JsCell::new(Some(connection)),
+                            protos: JsCell::new(None),
+                            server_name: JsCell::new(None),
+                            owned_ssl_ctx: Cell::new(None),
+                            flags: Cell::new(SocketFlags::default()),
+                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            poll_ref: JsCell::new(KeepAlive::init()),
+                            ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
-                            bytes_written: 0,
-                            native_callback: crate::socket::NativeCallbacks::None,
-                            twin: None,
+                            bytes_written: Cell::new(0),
+                            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+                            twin: JsCell::new(None),
                         })
                     };
                     // SAFETY: tcp is a valid heap pointer
-                    let tcp_ref = unsafe { &mut *tcp };
+                    let tcp_ref = unsafe { &*tcp };
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(tcp_ref.get_this_value(global), global, default_data);
-                    tcp_ref.poll_ref.ref_(vm_event_loop_ctx());
+                    tcp_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
 
-                    let named_pipe_result = match tcp_ref.connection.as_ref().unwrap() {
+                    let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
                             &buf[..pipe_name_len.unwrap()],
@@ -1185,9 +1185,9 @@ impl Listener {
                         Ok(p) => p,
                         Err(_) => return Ok(promise_value),
                     };
-                    tcp_ref.socket = uws::NewSocketHandler {
+                    tcp_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
-                    };
+                    });
                 }
                 return Ok(promise_value);
             }
@@ -1349,51 +1349,51 @@ fn connect_finish<const IS_SSL: bool>(
 ) -> JsResult<JSValue> {
     let socket: *mut NewSocket<IS_SSL> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>
-        let prev = unsafe { &mut *prev_ptr };
+        let prev = unsafe { &*prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
-        if let Some(prev_handlers) = prev.handlers {
+        if let Some(prev_handlers) = prev.handlers.get() {
             // SAFETY: prev_handlers was heap-allocated
             unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
         }
-        prev.handlers = NonNull::new(handlers_ptr);
-        // TODO(port): debug_assert!(matches!(prev.socket.socket, InternalSocket::Detached))
+        prev.handlers.set(NonNull::new(handlers_ptr));
+        // TODO(port): debug_assert!(matches!(prev.socket.get().socket, InternalSocket::Detached))
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
-        prev.connection = Some(connection);
-        if prev.flags.contains(SocketFlags::OWNED_PROTOS) {
-            prev.protos = None; // drop old Box
+        prev.connection.set(Some(connection));
+        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
+            prev.protos.set(None); // drop old Box
         }
-        prev.protos = ssl.as_mut().and_then(|s| s.take_protos());
-        prev.server_name = ssl.as_mut().and_then(|s| s.take_server_name());
-        if let Some(old) = prev.owned_ssl_ctx {
+        prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
+        prev.server_name.set(ssl.as_mut().and_then(|s| s.take_server_name()));
+        if let Some(old) = prev.owned_ssl_ctx.get() {
             // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
             unsafe { boring_sys::SSL_CTX_free(old) };
         }
-        prev.owned_ssl_ctx = owned_ssl_ctx.map(|p| p.as_ptr());
+        prev.owned_ssl_ctx.set(owned_ssl_ctx.map(|p| p.as_ptr()));
         prev_ptr
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(handlers_ptr),
-            socket: uws::NewSocketHandler::<IS_SSL>::DETACHED,
-            connection: Some(connection),
-            protos: ssl.as_mut().and_then(|s| s.take_protos()),
-            server_name: ssl.as_mut().and_then(|s| s.take_server_name()),
-            owned_ssl_ctx: owned_ssl_ctx.map(|p| p.as_ptr()),
-            flags: SocketFlags::default(),
-            this_value: jsc::JsRef::empty(),
-            poll_ref: KeepAlive::init(),
-            ref_pollref_on_connect: true,
+            handlers: Cell::new(NonNull::new(handlers_ptr)),
+            socket: Cell::new(uws::NewSocketHandler::<IS_SSL>::DETACHED),
+            connection: JsCell::new(Some(connection)),
+            protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
+            server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
+            owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
+            flags: Cell::new(SocketFlags::default()),
+            this_value: JsCell::new(jsc::JsRef::empty()),
+            poll_ref: JsCell::new(KeepAlive::init()),
+            ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
-            bytes_written: 0,
-            native_callback: crate::socket::NativeCallbacks::None,
-            twin: None,
+            bytes_written: Cell::new(0),
+            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+            twin: JsCell::new(None),
         })
     };
     // Ownership moved into `socket`; disarm the errdefer.
     // (owned_ssl_ctx consumed above)
     // SAFETY: socket is a valid heap pointer
-    let socket_ref = unsafe { &mut *socket };
+    let socket_ref = unsafe { &*socket };
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
@@ -1409,10 +1409,14 @@ fn connect_finish<const IS_SSL: bool>(
     // on the fresh-allocation path where `get_this_value` already
     // `set_strong`'d.) Intentionally diverges from the Zig spec, which has
     // the same race.
-    if socket_ref.this_value.is_not_empty() {
-        socket_ref.this_value.upgrade(global);
+    if socket_ref.this_value.get().is_not_empty() {
+        socket_ref.this_value.with_mut(|r| r.upgrade(global));
     }
-    socket_ref.flags.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+    {
+        let mut f = socket_ref.flags.get();
+        f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        socket_ref.flags.set(f);
+    }
     // PORT NOTE: Zig stored `connection` in the socket field and passed the same
     // value to doConnect (single allocation, aliased read). `do_connect` now
     // reads `self.connection` directly so no second borrow is needed here.
@@ -1435,8 +1439,8 @@ fn connect_finish<const IS_SSL: bool>(
 
     // if this is from node:net there's surface where the user can .ref() and .deref()
     // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect {
-        socket_ref.poll_ref.ref_(vm_event_loop_ctx());
+    if socket_ref.ref_pollref_on_connect.get() {
+        socket_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
     }
 
     Ok(promise_value)

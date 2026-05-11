@@ -2585,11 +2585,11 @@ impl H2FrameParser {
         let mut written = match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 // SAFETY: socket pointer is kept alive by attach_native_callback / IntrusiveArc until detach
-                self._generic_flush(unsafe { &mut *socket })
+                self._generic_flush(unsafe { &*socket })
             }
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
                 // SAFETY: socket pointer is kept alive by attach_native_callback / IntrusiveArc until detach
-                self._generic_flush(unsafe { &mut *socket })
+                self._generic_flush(unsafe { &*socket })
             }
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
@@ -2631,11 +2631,11 @@ impl H2FrameParser {
         let result = match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 // SAFETY: socket pointer is kept alive by attach_native_callback / IntrusiveArc until detach
-                self._generic_write(unsafe { &mut *socket }, bytes)
+                self._generic_write(unsafe { &*socket }, bytes)
             }
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
                 // SAFETY: socket pointer is kept alive by attach_native_callback / IntrusiveArc until detach
-                self._generic_write(unsafe { &mut *socket }, bytes)
+                self._generic_write(unsafe { &*socket }, bytes)
             }
             BunSocket::None => {
                 let global = self.global();
@@ -2809,17 +2809,16 @@ impl Payload {
 pub trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
-impl NativeSocketWrite for &mut TLSSocket {
+impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
-        // Forward to the inherent NewSocket<true>::write_maybe_corked. UFCS to avoid
-        // resolving back to this trait impl (the trait is implemented on `&mut TLSSocket`,
-        // the inherent method is on `TLSSocket`).
-        TLSSocket::write_maybe_corked(&mut **self, buf)
+        // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
+        // takes `&self`). UFCS to avoid resolving back to this trait impl.
+        TLSSocket::write_maybe_corked(*self, buf)
     }
 }
-impl NativeSocketWrite for &mut TCPSocket {
+impl NativeSocketWrite for &TCPSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
-        TCPSocket::write_maybe_corked(&mut **self, buf)
+        TCPSocket::write_maybe_corked(*self, buf)
     }
 }
 

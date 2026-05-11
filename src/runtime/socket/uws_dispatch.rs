@@ -212,8 +212,8 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     type TLSSocket = super::NewSocket<true>;
     // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
     // (stamped at construction); deref of both the slot and the pointer is sound.
-    let tls: &mut TLSSocket = unsafe { &mut **(*s).ext::<*mut TLSSocket>() };
-    if let Some(raw) = tls.twin.as_ref() {
+    let tls: &TLSSocket = unsafe { &**(*s).ext::<*mut TLSSocket>() };
+    if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();

@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
 use crate::node::util::validators;
@@ -123,22 +123,22 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     // specified; the rest take their struct defaults (see `NewSocket` field decls in socket.zig).
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
-            socket: uws::NewSocketHandler::<SSL>::DETACHED,
+            socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
-            protos: None,
-            handlers: None,
+            protos: JsCell::new(None),
+            handlers: Cell::new(None),
             // — defaults —
-            owned_ssl_ctx: None,
-            flags: SocketFlags::default(),
-            this_value: jsc::JsRef::empty(),
-            poll_ref: KeepAlive::init(),
-            ref_pollref_on_connect: true,
-            connection: None,
-            server_name: None,
+            owned_ssl_ctx: Cell::new(None),
+            flags: Cell::new(SocketFlags::default()),
+            this_value: JsCell::new(jsc::JsRef::empty()),
+            poll_ref: JsCell::new(KeepAlive::init()),
+            ref_pollref_on_connect: Cell::new(true),
+            connection: JsCell::new(None),
+            server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
-            bytes_written: 0,
-            native_callback: NativeCallbacks::None,
-            twin: None,
+            bytes_written: Cell::new(0),
+            native_callback: JsCell::new(NativeCallbacks::None),
+            twin: JsCell::new(None),
         });
         // SAFETY: `NewSocket::new` returns a live heap pointer (`heap::alloc`).
         unsafe { (*socket).get_this_value(global) }

@@ -295,6 +295,23 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
 
+#ifdef _WIN32
+        /* On Windows, closesocket() with SO_LINGER{1,0} does an abortive RST,
+         * but a loopback peer's uv_poll_t AFD ioctl can miss AFD_POLL_ABORT
+         * when the RST lands in the gap between poll-req completion and
+         * re-submission — unlike AFD_POLL_DISCONNECT, the aborted state is
+         * not reliably level-triggered. fetch().abort() on the http-client
+         * thread hits this against an in-process Bun.serve()/node:http server,
+         * leaving the server's IncomingMessage 'close' event un-fired. Send a
+         * FIN first so the peer observes the disconnect via AFD_POLL_DISCONNECT
+         * / recv()==0; the SO_LINGER{1,0} close that follows still avoids
+         * TIME_WAIT. WSAENOTCONN on a never-connected SEMI_SOCKET is harmless,
+         * but skip it anyway to keep WSAGetLastError() clean for callers. */
+        if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
+            bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
+        }
+#endif
+
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         /* Mark the socket as closed */

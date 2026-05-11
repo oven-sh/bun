@@ -1654,7 +1654,7 @@ impl FrameworkRouter {
                 ZigStringHashContext,
             > = Default::default();
             for (k, &v) in entries.data.iter() {
-                let _ = zig_order.put(k.clone(), v);
+                let _ = zig_order.put(Box::from(&**k), v);
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {

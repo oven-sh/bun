@@ -228,7 +228,7 @@ pub fn filter<'a>(
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
         // PERF(port): was putAssumeCapacity — profile in Phase B
-        path_to_index.insert(Box::<[u8]>::from(path_text), u32::try_from(idx).unwrap());
+        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         // PERF(port): was appendAssumeCapacity — profile in Phase B
@@ -265,7 +265,7 @@ pub fn filter<'a>(
     {
         // TODO(port): StringSet iteration API — Zig accesses `.map.iterator()`
         for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path) {
+            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
                     affected.set(idx as usize);
                     queue.push(idx);

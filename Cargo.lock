@@ -137,6 +137,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "bitflags",
  "bstr",
  "bumpalo",
@@ -504,6 +505,7 @@ dependencies = [
 name = "bun_collections"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "bun_alloc",
  "bun_core",
  "bun_ptr",
@@ -3117,6 +3119,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
  "foldhash 0.1.5",
 ]
 

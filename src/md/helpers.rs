@@ -582,8 +582,7 @@ pub fn generate_slug<'a>(
     }
 
     // First occurrence — store an owned key so the map owns it
-    let base_slug: Box<[u8]> = Box::from(&text_buf[..out_len]);
-    slug_counts.insert(base_slug, 0);
+    slug_counts.put_assume_capacity(&text_buf[..out_len], 0);
     &text_buf[..out_len]
 }
 

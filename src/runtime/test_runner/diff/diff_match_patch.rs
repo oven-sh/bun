@@ -899,7 +899,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
             // Unit == u8 verified above; bytemuck statically checks the layout.
             let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
             // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
-            line_hash.insert(line_u8.into(), line_array.len() - 1);
+            line_hash.put_assume_capacity(line_u8, line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
         line_start = line_end + 1;

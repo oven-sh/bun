@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
 use bun_logger as logger;
 
@@ -8,7 +9,14 @@ use crate::ast::base::Ref;
 use crate::ast::symbol::{self, Symbol};
 use crate::ast::ts::TSNamespaceScope;
 
-pub type MemberHashMap = StringHashMap<Member>;
+/// Backed by `AstAlloc` so the table allocation *and* the per-key boxes land
+/// in the thread-local AST `mi_heap` and are reclaimed by the same
+/// `mi_heap_destroy` that frees the arena-allocated `Scope` holding the map.
+/// In Zig this was `bun.StringHashMapUnmanaged(Member)` whose backing array
+/// lived in the parser arena; the original Rust port placed both on the
+/// global heap, and since `Scope` itself sits in an arena slot whose `Drop`
+/// never runs, every member map leaked.
+pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
 // PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
 // hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
@@ -19,9 +27,12 @@ pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`; raw back-pointer.
     pub parent: Option<NonNull<Scope>>,
-    pub children: Vec<NonNull<Scope>>,
+    /// `AstVec` for the same reason as `members` above — Zig's
+    /// `ArrayListUnmanaged(*Scope)` was arena-backed.
+    pub children: AstVec<NonNull<Scope>>,
     pub members: MemberHashMap,
-    pub generated: Vec<Ref>,
+    /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
+    pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     pub label_ref: Option<Ref>,
@@ -50,9 +61,9 @@ impl Default for Scope {
             id: 0,
             kind: Kind::Block,
             parent: None,
-            children: Vec::default(),
+            children: AstAlloc::vec(),
             members: MemberHashMap::default(),
-            generated: Vec::default(),
+            generated: AstAlloc::vec(),
             label_ref: None,
             label_stmt_is_loop: false,
             contains_direct_eval: false,

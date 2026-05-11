@@ -190,7 +190,16 @@ getrandom = "0.4"
 parking_lot = "0.12"
 strum = { version = "0.26", features = ["derive"] }
 phf = { version = "0.11", features = ["macros"] }
-hashbrown = { version = "0.15", default-features = false, features = ["inline-more"] }
+# `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
+# implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
+# would bind `A` to `core::alloc::Allocator` directly) because it also enables
+# `min_specialization` on `T: Copy`, which our pinned nightly rejects with
+# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
+# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
+# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
+# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"

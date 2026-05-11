@@ -234,7 +234,7 @@ impl DefineExt for Define {
             let mut list: Vec<DotDefine> = Vec::with_capacity(1);
             // PERF(port): was appendAssumeCapacity — profile in Phase B
             list.push(DotDefine { parts, data: value_define.clone() });
-            self.dots.insert(key.into(), list);
+            self.dots.put_assume_capacity(key, list);
         }
         Ok(())
     }
@@ -285,9 +285,7 @@ impl DefineExt for Define {
         // At this stage, user data has already been validated.
         if let Some(user_defines) = &_user_defines {
             define.insert_from_iterator(
-                user_defines
-                    .iter()
-                    .map(|(k, v): (&Box<[u8]>, &DefineData)| (k.as_ref(), v)),
+                user_defines.iter().map(|(k, v)| (k.as_ref(), v)),
             )?;
         }
 
@@ -348,8 +346,8 @@ impl DefineDataExt for DefineData {
         bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error> {
         // PERF(port): was putAssumeCapacity — profile in Phase B
-        user_defines.insert(
-            key.into(),
+        user_defines.put_assume_capacity(
+            key,
             <Self as DefineDataExt>::parse(
                 key,
                 value_str,

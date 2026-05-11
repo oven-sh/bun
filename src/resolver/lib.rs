@@ -2158,7 +2158,11 @@ pub mod dir_entry_accessor {
     // PORT NOTE: Zig `FS.DirEntry.EntryMap.Iterator` (key_ptr/value_ptr shape).
     // `dir_entry::EntryMap` = `StringHashMap<*mut Entry>` which derefs to
     // `std::collections::HashMap<Box<[u8]>, *mut Entry>`; iterate that directly.
-    type EntryMapIter = std::collections::hash_map::Iter<'static, Box<[u8]>, *mut Entry>;
+    type EntryMapIter = bun_collections::hashbrown::hash_map::Iter<
+        'static,
+        bun_collections::StringHashMapKey,
+        *mut Entry,
+    >;
 
     pub struct DirEntryDirIter {
         value: Option<EntryMapIter>,

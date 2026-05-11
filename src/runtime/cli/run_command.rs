@@ -3243,16 +3243,14 @@ impl RunCommand {
                 continue;
             }
             // Dupe d.url for the map key — `collector.urls` owns the backing
-            // bytes and gets freed when this function returns.
-            let key = d.url.to_vec().into_boxed_slice();
             // PORT NOTE: reshaped — Zig frees `key`/`path` and unlinks on
-            // `put` failure. `put_owned` consumes both, so check capacity
-            // first while `path` is still borrowable for `unlink_staged_path`.
+            // `put` failure. Check capacity first while `path` is still
+            // borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.insert(key, path.into_boxed_slice());
+            out_map.put_assume_capacity(&d.url, path.into_boxed_slice());
         }
     }
 

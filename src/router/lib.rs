@@ -672,12 +672,10 @@ impl<'a> RouteLoader<'a> {
                     return;
                 }
 
-                self.static_list
-                    .insert(Box::from(&new_route.name[1..]), new_route_ptr);
+                self.static_list.put_assume_capacity(&new_route.name[1..], new_route_ptr);
             }
 
-            self.static_list
-                .insert(Box::from(new_route.match_name.slice()), new_route_ptr);
+            self.static_list.put_assume_capacity(new_route.match_name.slice(), new_route_ptr);
             self.all_routes.push(new_route);
 
             return;

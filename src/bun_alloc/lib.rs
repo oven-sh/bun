@@ -246,6 +246,11 @@ pub mod mimalloc_arena;
 
 pub mod ast_alloc;
 pub use ast_alloc::{AstAlloc, AstVec};
+mod hashbrown_bridge;
+/// Re-export so `bun_collections` can name the polyfill trait in
+/// `StringHashMap`'s `A` bound without taking its own direct dep on
+/// `allocator-api2`.
+pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the

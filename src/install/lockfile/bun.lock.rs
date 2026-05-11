@@ -234,7 +234,7 @@ impl Stringifier {
                             bstr::BStr::new(dep.name.slice(buf)),
                         ).ok();
                     }
-                    pkg_map.put(key.into_boxed_slice(), ());
+                    pkg_map.put(&key, ());
                 }
             }
 
@@ -1296,8 +1296,8 @@ impl<T> PkgMap<T> {
         self.map.get_or_put(name)
     }
 
-    pub fn put(&mut self, name: impl Into<Box<[u8]>>, value: T) {
-        self.map.insert(name.into(), value);
+    pub fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
+        self.map.put_assume_capacity(name.as_ref(), value);
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&T> {

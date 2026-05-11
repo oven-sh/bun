@@ -154,8 +154,17 @@ pub use array_hash_map::{
     string_hash_map, ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
     CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
     GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
-    StringHashMapContext, StringHashMapUnownedKey, StringSet, VacantEntry,
+    StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,
+    VacantEntry,
 };
+/// Downstream crates name hashbrown's iterator/entry types in struct fields
+/// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a
+/// `hashbrown::HashMap`, so those iterators are the API surface; re-export
+/// the crate so callers don't grow their own direct dep just to spell the
+/// type. (A type alias per iterator would work too, but every `.iter()` /
+/// `.values()` / `.entry()` returns a distinct hashbrown type — re-exporting
+/// the crate is the smaller surface.)
+pub use hashbrown;
 /// Explicit-context alias; `ArrayHashMap<K, V>` already has `C = AutoContext`
 /// as a default, this just gives the three-param spelling a distinct name.
 pub type ArrayHashMapWithContext<K, V, C> = ArrayHashMap<K, V, C>;

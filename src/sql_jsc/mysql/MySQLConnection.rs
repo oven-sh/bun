@@ -979,12 +979,11 @@ impl MySQLConnection {
         };
 
         // Add some basic connect attributes like mysql2
-        response.connect_attrs.insert(
-            Box::<[u8]>::from(b"_client_name".as_slice()),
-            Box::<[u8]>::from(b"Bun".as_slice()),
-        );
-        response.connect_attrs.insert(
-            Box::<[u8]>::from(b"_client_version".as_slice()),
+        response
+            .connect_attrs
+            .put_assume_capacity(b"_client_name", Box::<[u8]>::from(b"Bun".as_slice()));
+        response.connect_attrs.put_assume_capacity(
+            b"_client_version",
             Box::<[u8]>::from(bun_core::Global::package_json_version_with_revision.as_bytes()),
         );
 

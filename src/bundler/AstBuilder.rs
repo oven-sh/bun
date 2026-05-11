@@ -94,7 +94,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             kind: ScopeKind::Entry,
             label_ref: None,
             parent: None,
-            generated: Default::default(),
             ..Default::default()
         });
         let mut ab = AstBuilder {
@@ -135,7 +134,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             kind,
             label_ref: None,
             parent: NonNull::new(self.current_scope),
-            generated: Default::default(),
             ..Default::default()
         });
         // SAFETY: `current_scope` is a live bump-arena allocation and uniquely accessed

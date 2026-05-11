@@ -19,7 +19,12 @@
 //! `ordered_remove`) drop and immediately rebuild it so lookups never
 //! silently degrade to O(n).
 
+use core::alloc::Allocator;
 use core::hash::{Hash, Hasher};
+// See workspace `Cargo.toml` hashbrown comment + `bun_alloc/hashbrown_bridge.rs`
+// for why `StringHashMap`'s `A` must implement *both* allocator traits and why
+// the default is `DefaultAlloc` rather than `std::alloc::Global`.
+use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
@@ -1308,50 +1313,92 @@ impl<V, C> ArrayHashMapExt for StringArrayHashMap<V, C> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMap<V> — unordered `[]const u8`-keyed map
+// StringHashMap<V, A> — unordered `[]const u8`-keyed map
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `std.StringHashMap(V)`. Thin newtype over `std::collections::HashMap` that
-/// adds the Zig `getOrPut` / `getOrPutValue` entry points while keeping the
-/// std surface (`.get`, `.contains_key`, `.reserve`, `.insert`, …) reachable
-/// via `Deref`.
+/// `std.StringHashMap(V)`. Thin newtype over `hashbrown::HashMap` that adds
+/// the Zig `getOrPut` / `getOrPutValue` entry points while keeping the
+/// `hashbrown` surface (`.get`, `.contains_key`, `.reserve`, `.insert`, …)
+/// reachable via `Deref`.
+///
+/// Allocator-generic so AST containers (`Scope::members` &c.) can route both
+/// the table *and* the owned-key boxes through `bun_alloc::AstAlloc`,
+/// matching Zig's `Unmanaged` semantics where the map's backing store lives
+/// in the same arena as the AST nodes that hold it. The `A = Global` default
+/// keeps every existing `StringHashMap<V>` site source-compatible.
 // Hashed with seed-0 wyhash (matches Zig's `std.hash_map.StringContext`) —
 // deterministic across runs and ~3-5× faster than `RandomState`/SipHash on
 // the short identifier keys the parser/printer/renamer churn.
+//
+// The `A: Default` bound is the substitute for Zig's per-call `Allocator`
+// parameter: hashbrown's `HashMap<_, _, _, A>` stores the allocator by value,
+// and every key `Box<[u8], A>` needs its own `A` too. For zero-sized
+// allocators (`Global`, `AstAlloc`) `A::default()` is a no-op constant; if a
+// stateful allocator is ever needed, add `*_in(alloc: A)` constructors and
+// loosen the bound there.
 #[derive(Clone)]
-pub struct StringHashMap<V> {
-    inner: std::collections::HashMap<Box<[u8]>, V, bun_wyhash::BuildHasher>,
+pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone = DefaultAlloc> {
+    inner: hashbrown::HashMap<Box<[u8], A>, V, bun_wyhash::BuildHasher, A>,
 }
 
-impl<V> Default for StringHashMap<V> {
+/// Public alias for the underlying `hashbrown` map so downstream signatures
+/// (and `Deref::Target`) don't repeat the four-argument spelling.
+pub type StringHashMapInner<V, A = DefaultAlloc> =
+    hashbrown::HashMap<Box<[u8], A>, V, bun_wyhash::BuildHasher, A>;
+
+/// Owned-key type stored in `StringHashMap`. Exposed so callers that name
+/// hashbrown's iterator types in their own struct fields don't have to spell
+/// `Box<[u8], A>` (which would force `#![feature(allocator_api)]` into every
+/// such crate).
+pub type StringHashMapKey<A = DefaultAlloc> = Box<[u8], A>;
+
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringHashMap<V, A> {
     fn default() -> Self {
-        Self { inner: std::collections::HashMap::default() }
+        Self {
+            inner: hashbrown::HashMap::with_hasher_in(
+                bun_wyhash::BuildHasher::default(),
+                A::default(),
+            ),
+        }
     }
 }
 
-impl<V> Deref for StringHashMap<V> {
-    type Target = std::collections::HashMap<Box<[u8]>, V, bun_wyhash::BuildHasher>;
+impl<V, A: Allocator + HashbrownAllocator + Clone> Deref for StringHashMap<V, A> {
+    type Target = StringHashMapInner<V, A>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<V> DerefMut for StringHashMap<V> {
+impl<V, A: Allocator + HashbrownAllocator + Clone> DerefMut for StringHashMap<V, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<V> StringHashMap<V> {
+/// Clone `key` into a `Box<[u8], A>` using `A::default()`. The previous
+/// `Box::from(key)` spelling is `Global`-only; this is the allocator-generic
+/// equivalent. For `AstAlloc` the buffer lands in the thread-local AST
+/// `mi_heap` so the key is reclaimed by the same `mi_heap_destroy` that frees
+/// the table and the AST node holding the map.
+#[inline]
+fn box_key<A: Allocator + Default>(key: &[u8]) -> Box<[u8], A> {
+    let mut v = Vec::with_capacity_in(key.len(), A::default());
+    v.extend_from_slice(key);
+    v.into_boxed_slice()
+}
+
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn with_capacity(n: usize) -> Self {
         Self {
-            inner: std::collections::HashMap::with_capacity_and_hasher(
+            inner: hashbrown::HashMap::with_capacity_and_hasher_in(
                 n,
                 bun_wyhash::BuildHasher::default(),
+                A::default(),
             ),
         }
     }
@@ -1364,12 +1411,12 @@ impl<V> StringHashMap<V> {
     /// Zig `valueIterator()`. Inherent forwarder so callers can name
     /// `StringHashMap::values` without relying on `Deref` resolution.
     #[inline]
-    pub fn values(&self) -> std::collections::hash_map::Values<'_, Box<[u8]>, V> {
+    pub fn values(&self) -> hashbrown::hash_map::Values<'_, Box<[u8], A>, V> {
         self.inner.values()
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, Box<[u8]>, V> {
+    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, Box<[u8], A>, V> {
         self.inner.values_mut()
     }
 
@@ -1385,14 +1432,14 @@ impl<V> StringHashMap<V> {
     }
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        self.inner.insert(Box::from(key), value);
+        self.inner.insert(box_key::<A>(key), value);
         Ok(())
     }
 
     /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
     /// OOM surfaces as `Err` instead of aborting (matches Zig `put` returning
     /// `error.OutOfMemory`); callers can roll back side effects on failure.
-    pub fn put_owned(&mut self, key: Box<[u8]>, value: V) -> Result<(), AllocError> {
+    pub fn put_owned(&mut self, key: Box<[u8], A>, value: V) -> Result<(), AllocError> {
         self.inner.try_reserve(1).map_err(|_| AllocError)?;
         self.inner.insert(key, value);
         Ok(())
@@ -1402,12 +1449,12 @@ impl<V> StringHashMap<V> {
     /// just `put` without the `Result`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        self.inner.insert(Box::from(key), value);
+        self.inner.insert(box_key::<A>(key), value);
     }
 
     /// Zig `putNoClobber` — asserts the key was not already present.
     pub fn put_no_clobber(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        let prev = self.inner.insert(Box::from(key), value);
+        let prev = self.inner.insert(box_key::<A>(key), value);
         debug_assert!(prev.is_none(), "put_no_clobber: key already present");
         Ok(())
     }
@@ -1422,13 +1469,13 @@ impl<V> StringHashMap<V> {
     /// Restore once `StringHashMap` is moved off `std::HashMap` onto a
     /// wyhash-backed table that accepts a raw u64.
     #[inline]
-    pub fn get_adapted<A>(&self, key: &[u8], _adapter: &A) -> Option<&V> {
+    pub fn get_adapted<C>(&self, key: &[u8], _adapter: &C) -> Option<&V> {
         self.inner.get(key)
     }
 
     /// See `get_adapted` for the PERF(port) caveat.
     #[inline]
-    pub fn contains_adapted<A>(&self, key: &[u8], _adapter: &A) -> bool {
+    pub fn contains_adapted<C>(&self, key: &[u8], _adapter: &C) -> bool {
         self.inner.contains_key(key)
     }
 }
@@ -1439,7 +1486,7 @@ impl<V> StringHashMap<V> {
 /// `StringArrayHashMap` instead.
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
-impl<V: Default> StringHashMap<V> {
+impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     /// PERF(port): the previous shape (`contains_key` + `entry(Box::from(key))`)
     /// hashed `key` twice and unconditionally heap-allocated the `Box` even on
     /// hit. `Scope::members` calls this once per declared identifier during
@@ -1457,23 +1504,23 @@ impl<V: Default> StringHashMap<V> {
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        Ok(self.inner.entry(Box::from(key)).or_insert(value))
+        Ok(self.inner.entry(box_key::<A>(key)).or_insert(value))
     }
 
     /// Zig `getOrPutContextAdapted` on `StringHashMap` — see `get_adapted` for
     /// why the adapter's precomputed hash is currently ignored.
-    pub fn get_or_put_context_adapted<A>(
+    pub fn get_or_put_context_adapted<C>(
         &mut self,
         key: &[u8],
-        _adapter: A,
+        _adapter: C,
     ) -> StringHashMapGetOrPut<'_, V> {
-        use std::collections::hash_map::Entry as StdEntry;
-        match self.inner.entry(Box::from(key)) {
-            StdEntry::Occupied(o) => StringHashMapGetOrPut {
+        use hashbrown::hash_map::Entry as HbEntry;
+        match self.inner.entry(box_key::<A>(key)) {
+            HbEntry::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,
                 value_ptr: o.into_mut(),
             },
-            StdEntry::Vacant(v) => StringHashMapGetOrPut {
+            HbEntry::Vacant(v) => StringHashMapGetOrPut {
                 found_existing: false,
                 value_ptr: v.insert(V::default()),
             },

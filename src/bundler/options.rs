@@ -2303,7 +2303,7 @@ impl TransformOptions {
         let mut define = StringHashMap::<Box<[u8]>>::default();
         define.reserve(1);
         // PERF(port): was assume_capacity
-        define.insert(b"process.env.NODE_ENV".as_slice().into(), b"development".as_slice().into());
+        define.put_assume_capacity(b"process.env.NODE_ENV", b"development".as_slice().into());
 
         let mut loader = Loader::File;
         if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point.path.name.ext) {

@@ -52,8 +52,7 @@ impl PathToSourceIndexMap {
         // PERF(port): Zig used StringHashMapUnmanaged with arena-borrowed keys (no copy);
         // bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        self.map.insert(Box::<[u8]>::from(text), value);
-        Ok(())
+        self.map.put(text, value)
     }
 
     pub fn get_or_put_path(&mut self, path: &impl PathLike) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
@@ -61,14 +60,8 @@ impl PathToSourceIndexMap {
     }
 
     pub fn get_or_put(&mut self, text: impl AsRef<[u8]>) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        // `Map` derefs to `std::collections::HashMap`, so this is std's Entry —
-        // not `bun_collections::hash_map::Entry` (which is `ArrayHashMap`'s).
-        use std::collections::hash_map::Entry;
         // PERF(port): see note in `put` re: key duplication.
-        match self.map.entry(Box::<[u8]>::from(text.as_ref())) {
-            Entry::Occupied(e) => Ok(GetOrPutResult { value_ptr: e.into_mut(), found_existing: true }),
-            Entry::Vacant(e) => Ok(GetOrPutResult { value_ptr: e.insert(0), found_existing: false }),
-        }
+        self.map.get_or_put(text.as_ref())
     }
 
     pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {

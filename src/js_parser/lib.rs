@@ -1948,10 +1948,10 @@ pub mod defines {
                     list.extend_from_slice(initial_values);
                 }
                 list.push(DotDefine { data: value, parts });
-                self.dots.insert(tail.into(), list);
+                self.dots.put_assume_capacity(tail, list);
             } else {
                 // e.g. IS_BROWSER
-                self.identifiers.insert(key.into(), value);
+                self.identifiers.put_assume_capacity(key, value);
             }
             Ok(())
         }
@@ -2336,7 +2336,7 @@ pub mod defines_full_draft {
                 parts.push(Box::from(tail));
 
                 // "NODE_ENV"
-                let entry = self.dots.entry(tail.into()).or_default();
+                let entry = self.dots.get_or_put(tail).unwrap().value_ptr;
                 for part in entry.iter_mut() {
                     // ["process", "env"] === ["process", "env"]
                     if are_parts_equal(&part.parts, &parts) {
@@ -2347,7 +2347,7 @@ pub mod defines_full_draft {
                 entry.push(DotDefine { data: value, parts });
             } else {
                 // e.g. IS_BROWSER
-                self.identifiers.insert(key.into(), value);
+                self.identifiers.put_assume_capacity(key, value);
             }
             Ok(())
         }

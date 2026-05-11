@@ -907,7 +907,7 @@ pub fn migrate_npm_lockfile<'a>(
             if let Some(wksp) = &workspace_map {
                 debug_assert_eq!(wksp.keys().len(), wksp.values().len());
                 for (key, value) in wksp.keys().iter().zip(wksp.values()) {
-                    let entry1 = id_map.get(key).copied().ok_or(err!("InvalidNPMLockfile"))?;
+                    let entry1 = id_map.get(key.as_ref()).copied().ok_or(err!("InvalidNPMLockfile"))?;
                     let name_hash = string_hash(&value.name);
                     let mut sb = this.string_buf();
                     let wksp_name = sb.append(&value.name)?;

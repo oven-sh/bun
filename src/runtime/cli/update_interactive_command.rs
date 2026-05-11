@@ -596,14 +596,13 @@ impl UpdateInteractiveCommand {
                 // (or the workspace root where the catalog is defined)
                 let catalog_workspace_path: Box<[u8]> = Box::default(); // Always root for now
 
-                catalog_updates
-                    .insert(
-                        catalog_key,
-                        CatalogUpdate {
-                            version: Box::from(target_version),
-                            workspace_path: catalog_workspace_path,
-                        },
-                    );
+                catalog_updates.put_assume_capacity(
+                    &catalog_key,
+                    CatalogUpdate {
+                        version: Box::from(target_version),
+                        workspace_path: catalog_workspace_path,
+                    },
+                );
                 continue;
             }
 

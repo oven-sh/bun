@@ -119,8 +119,8 @@ fn init_modules() {
         let modules_ref: &'static [FallbackEntry] =
             (*MODULES.get()).as_deref().unwrap();
         for (name, pkg, path, code) in modules_ref.iter() {
-            m.insert(
-                Box::from(*name),
+            m.put_assume_capacity(
+                name,
                 FallbackModule { path: path.clone(), package_json: pkg, code: *code },
             );
         }

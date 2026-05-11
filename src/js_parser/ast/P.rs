@@ -3158,7 +3158,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             kind: KIND,
             label_ref: None,
             parent: Some(parent_nn),
-            generated: Default::default(),
+            generated: bun_alloc::AstAlloc::vec(),
             ..Default::default()
         });
         // SAFETY: `arena.alloc` returns `&mut Scope` (non-null, arena-owned for `'a`).
@@ -7717,8 +7717,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
         let scope: *mut Scope = arena.alloc(Scope {
             members: Default::default(),
-            children: Default::default(),
-            generated: Default::default(),
+            children: bun_alloc::AstAlloc::vec(),
+            generated: bun_alloc::AstAlloc::vec(),
             kind: js_ast::scope::Kind::Entry,
             label_ref: None,
             parent: None,

@@ -109,7 +109,7 @@ pub mod js_bundler {
             );
 
             // PERF(port): was assume_capacity
-            this.map.insert(key.into_boxed_slice(), bytes);
+            this.map.put_assume_capacity(&key, bytes);
         }
 
         Ok(this)

@@ -87,14 +87,21 @@ impl<const B: bool> WrappedSelect<B> for () {}
 mod platform {
     use super::*;
     use bun_sys::darwin as posix_system;
+    use core::ptr::addr_of;
 
-    #[repr(C)] // buf must be aligned to dirent
+    /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
+    /// Darwin's `struct dirent` (64-bit ino) leads with `d_ino: u64` (align 8);
+    /// a bare `[u8; N]` field has alignment 1, so wrap it to force 8-byte
+    /// alignment for the *first* record. Subsequent records are only 4-byte
+    /// aligned by the kernel (`d_reclen` rounds to 4), so reads still go
+    /// through `read_unaligned`.
+    #[repr(C, align(8))]
+    pub struct DirentBuf(pub [u8; 8192]);
+
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
         pub seek: i64,
-        // TODO(port): Zig used `align(@alignOf(std.posix.system.dirent))`; #[repr(align)] on a
-        // wrapper or an aligned newtype may be needed in Phase B.
-        pub buf: [u8; 8192],
+        pub buf: DirentBuf,
         pub index: usize,
         pub end_index: usize,
         pub received_eof: bool,
@@ -133,15 +140,15 @@ mod platform {
                     self.received_eof = false;
                     // Always zero the bytes where the flag will be written
                     // so we don't confuse garbage with EOF.
-                    let len = self.buf.len();
-                    self.buf[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
+                    let len = self.buf.0.len();
+                    self.buf.0[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
 
                     // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
                     let rc = unsafe {
                         __getdirentries64(
                             self.dir.native(),
-                            self.buf.as_mut_ptr(),
-                            self.buf.len(),
+                            self.buf.0.as_mut_ptr(),
+                            self.buf.0.len(),
                             &mut self.seek,
                         )
                     };
@@ -160,30 +167,45 @@ mod platform {
                     self.index = 0;
                     self.end_index = usize::try_from(rc).expect("int cast");
                     let eof_flag =
-                        u32::from_ne_bytes(self.buf[len - 4..len].try_into().expect("infallible: size matches"));
+                        u32::from_ne_bytes(self.buf.0[len - 4..len].try_into().expect("infallible: size matches"));
                     self.received_eof =
-                        self.end_index <= (self.buf.len() - 4) && eof_flag == 1;
+                        self.end_index <= (self.buf.0.len() - 4) && eof_flag == 1;
                 }
-                // SAFETY: self.index < self.end_index <= buf.len(); buf holds packed dirent records
-                let darwin_entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index).cast::<libc::dirent>())
+                // Records are variable-length; the kernel rounds `d_reclen` to
+                // 4 bytes, not 8, so subsequent entries are NOT aligned to
+                // `align_of::<libc::dirent>() == 8`. Additionally each on-disk
+                // record is shorter than `size_of::<libc::dirent>()` (1048),
+                // so forming a `&libc::dirent` would assert validity past the
+                // record / buffer end. Never materialize a reference — read
+                // each field through the raw pointer (Zig spec:
+                // `*align(1) posix.system.dirent`).
+                // SAFETY: self.index < self.end_index <= buf.len(); kernel
+                // wrote a valid (possibly 4-aligned) dirent record here.
+                let entry = unsafe {
+                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>()
                 };
-                let next_index = self.index + darwin_entry.d_reclen as usize;
-                self.index = next_index;
+                // SAFETY: `entry` points at a valid (possibly unaligned)
+                // dirent; addr_of! avoids creating intermediate references.
+                let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
+                let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
+                let d_ino: u64 = unsafe { addr_of!((*entry).d_ino).read_unaligned() };
+                let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                self.index += d_reclen as usize;
 
-                // SAFETY: dirent.d_name is a [*]u8 of length d_namlen within the record
+                // SAFETY: d_name is d_namlen initialized bytes within the
+                // record; the slice borrows `self.buf` until the next call.
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        darwin_entry.d_name.as_ptr().cast::<u8>(),
-                        darwin_entry.d_namlen as usize,
+                        addr_of!((*entry).d_name).cast::<u8>(),
+                        d_namlen as usize,
                     )
                 };
 
-                if name == b"." || name == b".." || darwin_entry.d_ino == 0 {
+                if name == b"." || name == b".." || d_ino == 0 {
                     continue 'start_over;
                 }
 
-                let entry_kind = match darwin_entry.d_type {
+                let entry_kind = match d_type {
                     libc::DT_BLK => EntryKind::BlockDevice,
                     libc::DT_CHR => EntryKind::CharacterDevice,
                     libc::DT_DIR => EntryKind::Directory,
@@ -862,7 +884,7 @@ where
                     index: 0,
                     end_index: 0,
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
-                    buf: [0u8; 8192],
+                    buf: platform::DirentBuf([0u8; 8192]),
                     received_eof: false,
                 },
             };

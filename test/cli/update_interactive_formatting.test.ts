@@ -475,8 +475,9 @@ registry = "${registryUrl}"
     const exitCode = await update.exited;
     const stderr = await new Response(update.stderr).text();
 
-    expect(exitCode).toBe(0);
     expect(stderr).not.toContain("panic");
+    expect(stderr).not.toMatch(/^error:/m);
+    expect(exitCode).toBe(0);
 
     // Check if workspace package was updated
     const appPackageJson = await Bun.file(join(dir, "packages/app/package.json")).json();

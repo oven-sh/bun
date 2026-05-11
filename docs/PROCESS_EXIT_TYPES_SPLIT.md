@@ -68,6 +68,8 @@ enough of that owner has moved into sidecar types.
 ```
 Natural sibling crates
   ├─> bun_io_types
+  │     ├─> heap
+  │     │     - allocation-free intrusive heap metadata shared by IO, timers, and lifecycle-type state
   │     ├─> owner::OwnerToken<T>
   │     │     - non-zero typed pointer identity
   │     ├─> reader::BufferedReaderHandle
@@ -475,6 +477,7 @@ Required deeper type movement
   │     ├─> LifecycleScriptState has moved the current index, copied package name, output readiness count, and LifecycleScriptExit reducer into bun_install_types without changing the old package-name allocation shape
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
   │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
+  │     ├─> the generic intrusive heap metadata moved to bun_io_types, so sidecar-owned lifecycle state can be a heap node without depending on the full bun_io crate
   │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
   │     ├─> lifecycle still needs the process/reader/effect storage split that owns those handles without recovering LifecycleScriptSubprocess
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again

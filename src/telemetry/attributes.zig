@@ -450,7 +450,7 @@ pub const AttributeKeys = struct {
             // Get or create AttributeKey for this header
             // This auto-detects fast_header ID and populates http_header name
             const attr_key = try self.getOrCreateHeaderKey(direction, header_name);
-            try list.items.append(attr_key);
+            try list.items.append(self.allocator, attr_key);
         }
 
         return list;
@@ -479,7 +479,7 @@ pub const HeaderNameList = struct {
 
     fn init(parent: *AttributeKeys, context: ContextKind) HeaderNameList {
         return .{
-            .items = std.ArrayList(*const AttributeKey).init(parent.allocator),
+            .items = std.ArrayList(*const AttributeKey){},
             .context = context,
             .parent = parent,
         };
@@ -489,7 +489,7 @@ pub const HeaderNameList = struct {
         // Decrement parent refcount atomically
         _ = self.parent.list_count.fetchSub(1, .monotonic);
         // Don't free AttributeKeys - we don't own them (they're owned by AttributeKeys singleton)
-        self.items.deinit();
+        self.items.deinit(self.parent.allocator);
     }
 
     /// Convert back to JS array for debugging/serialization

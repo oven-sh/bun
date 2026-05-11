@@ -92,17 +92,17 @@ pub const TelemetryConfig = struct {
         // Initialize native configuration properties (bun.String arrays)
         var native_properties: [ConfigurationProperty.COUNT]std.ArrayList(bun.String) = undefined;
         for (&native_properties) |*list| {
-            list.* = std.ArrayList(bun.String).init(allocator);
+            list.* = std.ArrayList(bun.String){};
         }
 
         // Populate native arrays from sample data
         for (sample_request_headers) |header| {
-            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_request)].append(bun.String.fromBytes(header));
-            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request)].append(bun.String.fromBytes(header));
+            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_request)].append(allocator, bun.String.fromBytes(header));
+            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request)].append(allocator, bun.String.fromBytes(header));
         }
         for (sample_response_headers) |header| {
-            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_response)].append(bun.String.fromBytes(header));
-            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response)].append(bun.String.fromBytes(header));
+            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_server_response)].append(allocator, bun.String.fromBytes(header));
+            try native_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response)].append(allocator, bun.String.fromBytes(header));
         }
 
         // Initialize header properties (pre-computed HeaderNameList for each config property)
@@ -160,7 +160,7 @@ pub const TelemetryConfig = struct {
             for (list.items) |str| {
                 str.deref();
             }
-            list.deinit();
+            list.deinit(self.allocator);
         }
 
         // Clean up header properties (pre-computed HeaderNameList)
@@ -283,7 +283,7 @@ pub const TelemetryConfig = struct {
                     if (item.isString()) {
                         const zig_str = item.getZigString(self.global) catch continue;
                         const bun_str = bun.String.init(zig_str);
-                        try native_list.append(bun_str);
+                        try native_list.append(self.allocator, bun_str);
                     }
                 }
             }
@@ -346,11 +346,11 @@ pub const TelemetryConfig = struct {
         if (request_prop_id == null and response_prop_id == null) return;
 
         // Collect all header names from instruments (linear concatenation)
-        var request_headers = std.ArrayList(JSValue).init(self.allocator);
-        defer request_headers.deinit();
+        var request_headers = std.ArrayList(JSValue){};
+        defer request_headers.deinit(self.allocator);
 
-        var response_headers = std.ArrayList(JSValue).init(self.allocator);
-        defer response_headers.deinit();
+        var response_headers = std.ArrayList(JSValue){};
+        defer response_headers.deinit(self.allocator);
 
         for (instrument_records) |*record| {
             if (record.instrument_config) |*inst_config| {
@@ -362,7 +362,7 @@ pub const TelemetryConfig = struct {
                         var i: u32 = 0;
                         while (i < len) : (i += 1) {
                             const header = try req_headers.getIndex(self.global, i);
-                            try request_headers.append(header);
+                            try request_headers.append(self.allocator, header);
                         }
                     }
                 }
@@ -375,7 +375,7 @@ pub const TelemetryConfig = struct {
                         var i: u32 = 0;
                         while (i < len) : (i += 1) {
                             const header = try res_headers.getIndex(self.global, i);
-                            try response_headers.append(header);
+                            try response_headers.append(self.allocator, header);
                         }
                     }
                 }
@@ -438,11 +438,11 @@ pub const TelemetryConfig = struct {
         if (request_prop_id == null and response_prop_id == null) return;
 
         // Collect all header names from instruments (union)
-        var request_headers = std.ArrayList(JSValue).init(self.allocator);
-        defer request_headers.deinit();
+        var request_headers = std.ArrayList(JSValue){};
+        defer request_headers.deinit(self.allocator);
 
-        var response_headers = std.ArrayList(JSValue).init(self.allocator);
-        defer response_headers.deinit();
+        var response_headers = std.ArrayList(JSValue){};
+        defer response_headers.deinit(self.allocator);
 
         for (instrument_records) |*record| {
             if (record.instrument_config) |*inst_config| {
@@ -454,7 +454,7 @@ pub const TelemetryConfig = struct {
                         var i: u32 = 0;
                         while (i < len) : (i += 1) {
                             const header = try req_headers.getIndex(self.global, i);
-                            try request_headers.append(header);
+                            try request_headers.append(self.allocator, header);
                         }
                     }
                 }
@@ -467,7 +467,7 @@ pub const TelemetryConfig = struct {
                         var i: u32 = 0;
                         while (i < len) : (i += 1) {
                             const header = try res_headers.getIndex(self.global, i);
-                            try response_headers.append(header);
+                            try response_headers.append(self.allocator, header);
                         }
                     }
                 }

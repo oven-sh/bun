@@ -301,22 +301,22 @@ pub const TelemetryContext = struct {
         // Initialize all instrument lists
         var instrument_table: [InstrumentType.COUNT]std.ArrayList(InstrumentRecord) = undefined;
         for (&instrument_table) |*list| {
-            list.* = std.ArrayList(InstrumentRecord).init(allocator);
+            list.* = std.ArrayList(InstrumentRecord){};
         }
         errdefer {
-            for (&instrument_table) |*list| list.deinit();
+            for (&instrument_table) |*list| list.deinit(allocator);
         }
 
         // Initialize all operation lists (2D: [kind][step])
         var operations_table: [InstrumentType.COUNT][OperationStep.COUNT]std.ArrayList(*InstrumentRecord) = undefined;
         for (&operations_table) |*kind_table| {
             for (kind_table) |*step_list| {
-                step_list.* = std.ArrayList(*InstrumentRecord).init(allocator);
+                step_list.* = std.ArrayList(*InstrumentRecord){};
             }
         }
         errdefer {
             for (&operations_table) |*kind_table| {
-                for (kind_table) |*step_list| step_list.deinit();
+                for (kind_table) |*step_list| step_list.deinit(allocator);
             }
         }
 
@@ -355,11 +355,11 @@ pub const TelemetryContext = struct {
             for (list.items) |*record| {
                 record.dispose();
             }
-            list.deinit();
+            list.deinit(self.allocator);
         }
         for (&self.operations_table) |*kind_table| {
             for (kind_table) |*step_list| {
-                step_list.deinit();
+                step_list.deinit(self.allocator);
             }
         }
 
@@ -435,7 +435,7 @@ pub const TelemetryContext = struct {
         errdefer record.dispose();
         // Add to appropriate instrument list
         const type_index = @intFromEnum(instrument_type);
-        try self.instrument_table[type_index].append(record);
+        try self.instrument_table[type_index].append(self.allocator, record);
         errdefer _ = self.instrument_table[type_index].pop();
 
         // Rebuild inject and capture config for this type if it's HTTP or Fetch
@@ -472,7 +472,7 @@ pub const TelemetryContext = struct {
                     const step: OperationStep = @enumFromInt(step_idx);
                     const op_fn = record.on_op_fns[step_idx];
                     if (op_fn.isCallable()) {
-                        self.getOnOperations(step, record.type).append(record) catch {
+                        self.getOnOperations(step, record.type).append(self.allocator, record) catch {
                             // This should never fail in practice since we pre-allocate
                             log("Telemetry: Failed to append instrument {} (kind={}, step={}) to operations table\n", .{ record.id, @intFromEnum(record.type), step_idx });
                         };

@@ -1,4 +1,5 @@
 use crate::{Rusage, Status};
+use core::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ProcessIdentity(usize);
@@ -29,9 +30,47 @@ impl ProcessIdentity {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ProcessHandle(NonZeroUsize);
+
+impl ProcessHandle {
+    /// Build a non-null lower-process handle from a raw address value.
+    ///
+    /// The handle is only pointer identity at this layer. Dereferencing or
+    /// mutating the process stays with `bun_spawn`, which owns `Process`.
+    #[inline]
+    pub const fn from_usize(handle: usize) -> Option<Self> {
+        match NonZeroUsize::new(handle) {
+            Some(handle) => Some(Self(handle)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub fn from_ptr<T>(ptr: *mut T) -> Option<Self> {
+        Self::from_usize(ptr.cast::<()>() as usize)
+    }
+
+    #[inline]
+    pub const fn identity(self) -> ProcessIdentity {
+        ProcessIdentity(self.0.get())
+    }
+
+    #[inline]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+
+    #[inline]
+    pub fn as_ptr<T>(self) -> *mut T {
+        self.0.get() as *mut T
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProcessExitContext<'a> {
     pub process: ProcessIdentity,
+    pub process_handle: Option<ProcessHandle>,
     pub status: Status,
     pub rusage: &'a Rusage,
 }
@@ -41,14 +80,47 @@ impl<'a> ProcessExitContext<'a> {
     pub const fn new(process: ProcessIdentity, status: Status, rusage: &'a Rusage) -> Self {
         Self {
             process,
+            process_handle: None,
             status,
             rusage,
         }
     }
 
     #[inline]
+    pub const fn from_handle(
+        process_handle: ProcessHandle,
+        status: Status,
+        rusage: &'a Rusage,
+    ) -> Self {
+        Self {
+            process: process_handle.identity(),
+            process_handle: Some(process_handle),
+            status,
+            rusage,
+        }
+    }
+
+    #[inline]
+    pub fn from_process_ptr<T>(
+        process: *mut T,
+        status: Status,
+        rusage: &'a Rusage,
+    ) -> Option<Self> {
+        Some(Self::from_handle(
+            ProcessHandle::from_ptr(process)?,
+            status,
+            rusage,
+        ))
+    }
+
+    #[inline]
     pub fn process_identity(&self) -> ProcessIdentity {
         self.process
+    }
+
+    #[inline]
+    pub fn process_handle(&self) -> Option<ProcessHandle> {
+        self.process_handle
     }
 }
 
@@ -118,6 +190,23 @@ mod tests {
 
     fn process_identity(id: usize) -> ProcessIdentity {
         ProcessIdentity::from_usize(id).unwrap()
+    }
+
+    #[test]
+    fn context_from_process_ptr_carries_typed_handle() {
+        let mut raw_process = 0u8;
+        let process = core::ptr::from_mut(&mut raw_process);
+        let rusage = rusage_zeroed();
+        let ctx = ProcessExitContext::from_process_ptr(
+            process,
+            Status::Exited(Exited { code: 0, signal: 0 }),
+            &rusage,
+        )
+        .unwrap();
+
+        let handle = ctx.process_handle().unwrap();
+        assert_eq!(ctx.process_identity(), handle.identity());
+        assert_eq!(handle.as_ptr::<u8>(), process);
     }
 
     #[test]

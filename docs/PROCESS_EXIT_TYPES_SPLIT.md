@@ -209,7 +209,8 @@ identity for the interpreter.
 Process-exit production shape
   ├─> bun_spawn_types
   │     ├─> ProcessIdentity
-  │     ├─> ProcessExitContext { process, status, rusage }
+  │     ├─> ProcessHandle
+  │     ├─> ProcessExitContext { process, process_handle, status, rusage }
   │     ├─> ProcessExitReadiness
   │     │     └─> returns ProcessExitReadinessAction
   │     └─> common process status / rusage values
@@ -239,6 +240,7 @@ returns an action:
 ```rust
 pub struct ProcessExitContext<'a> {
     pub process: ProcessIdentity,
+    pub process_handle: Option<ProcessHandle>,
     pub status: Status,
     pub rusage: &'a Rusage,
 }
@@ -430,7 +432,8 @@ Required deeper type movement
   │     │     - stdout/stderr buffers and reader teardown/reuse
   │     │     - PackageManager/Installer effects
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
-  │     ├─> that also requires lower typed handles or type movement for Process and BufferedReader storage
+  │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
+  │     ├─> BufferedReader storage still needs the same lower typed-handle or storage movement
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free

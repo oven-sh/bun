@@ -113,26 +113,24 @@ impl ProcessExitTarget {
     ) -> Option<ProcessExitDelivery> {
         match self {
             Self::Install(target) => {
-                let process_identity = bun_spawn_types::ProcessIdentity::from_ptr(process)
-                    .expect("Process::on_exit passes a live Process pointer");
-                let ctx = bun_spawn_types::ProcessExitContext::new(
-                    process_identity,
+                let ctx = bun_spawn_types::ProcessExitContext::from_process_ptr(
+                    process,
                     status,
                     rusage,
-                );
+                )
+                .expect("Process::on_exit passes a live Process pointer");
                 // SAFETY: the target was installed from the owning process state
                 // and is valid until that owner drops its Process ref.
                 unsafe { target.on_process_exit(&ctx) };
                 None
             }
             Self::Runtime(target) => {
-                let process_identity = bun_spawn_types::ProcessIdentity::from_ptr(process)
-                    .expect("Process::on_exit passes a live Process pointer");
-                let ctx = bun_spawn_types::ProcessExitContext::new(
-                    process_identity,
+                let ctx = bun_spawn_types::ProcessExitContext::from_process_ptr(
+                    process,
                     status,
                     rusage,
-                );
+                )
+                .expect("Process::on_exit passes a live Process pointer");
                 // `event_loop` is kept with the typed action so Mini waiter-thread
                 // completions can re-enter the same stack context as FilePoll exits.
                 let event_loop = unsafe { (*process).event_loop };

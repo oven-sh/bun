@@ -25,7 +25,7 @@ use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value 
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_jsc::AbortSignalRef;
 use super::response::HeadersRef;
-use bun_str::{strings, String as BunString, ZigString};
+use bun_str::{strings, OwnedStringCell, String as BunString, ZigString};
 use bun_uws as uws;
 use bun_jsc::StringJsc as _;
 use bun_http_jsc::method_jsc::MethodJsc as _;
@@ -525,7 +525,7 @@ impl Request {
         method: Method,
     ) -> Request {
         Request {
-            url: Cell::new(url),
+            url: OwnedStringCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body,
@@ -1162,7 +1162,7 @@ impl Request {
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
         let body = body::hive_alloc(global_this.bun_vm().as_mut(), BodyValue::Null);
         let mut req = Request {
-            url: Cell::new(BunString::empty()),
+            url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body,
@@ -1744,7 +1744,7 @@ impl Request {
             core::ptr::write(
                 req,
                 Request {
-                    url: Cell::new(url),
+                    url: OwnedStringCell::new(url),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body,
@@ -1773,7 +1773,7 @@ impl Request {
         // `req.body` first to release the seed allocation, so seed with a valid
         // sentinel rather than `MaybeUninit`.
         let mut req = Box::new(Request {
-            url: Cell::new(BunString::empty()),
+            url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1846,7 +1846,7 @@ impl Request {
         body: NonNull<BodyHiveRef>,
     ) -> Request {
         Request {
-            url: Cell::new(BunString::empty()),
+            url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body,

@@ -2771,7 +2771,7 @@ fn transpile_source_code_inner(
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
                     resolved_source.module_info = core::ptr::null_mut();
-                    return Ok(resolved_source);
+                    return Ok(OwnedResolvedSource::new(resolved_source));
                 }
 
                 // Spec :561-592 — final ResolvedSource.
@@ -3194,7 +3194,7 @@ fn get_hardcoded_module(
     _jsc_vm: *mut VirtualMachine,
     specifier: &bun_string::String,
     hardcoded: HardcodedModule,
-) -> Option<ResolvedSource> {
+) -> Option<OwnedResolvedSource> {
     // TODO(b2-cycle): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
     // — the `EnumSet<HardcodedModule>` static lives in T5 (`bun_resolve_builtins`)
     // and is not yet wired into `bun_analytics`.
@@ -3294,7 +3294,7 @@ unsafe fn fetch_builtin_module(
         return match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
             Some(resolved) => {
                 // SAFETY: per fn contract — `out` is a valid out-param.
-                unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+                unsafe { *out = ErrorableResolvedSource::ok(resolved.into_ffi()) };
                 FetchBuiltinResult::Found
             }
             // Recognised builtin but not servable right now → fall through
@@ -4118,7 +4118,7 @@ unsafe fn get_hardcoded_module_hook(
     match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
         Some(resolved) => {
             // SAFETY: per fn contract — `out` is a valid out-param.
-            unsafe { *out = resolved };
+            unsafe { *out = resolved.into_ffi() };
             true
         }
         None => false,

@@ -53,46 +53,68 @@ mod _bun_shim_impl;
 pub static _fltused: i32 = 0;
 
 /// `__chkstk` — MSVC's stack-probe; LLVM inserts a call before any frame
-/// allocating >4 KiB (the launcher's path/cmdline buffers exceed that). The
+/// allocating >4 KiB (the launcher's path/cmdline buffers are ~128 KiB). The
 /// CRT version walks each 4 KiB page so the OS's guard-page-driven stack
 /// growth commits them. With `/NODEFAULTLIB` we supply the same probe.
+///
+/// `compiler_builtins` *has* this routine but hard-gates it on
+/// `cfg(target_env = "gnu")` (`src/x86_64.rs` / `src/aarch64.rs`) because on
+/// `*-msvc` it expects the CRT to provide it; there is no feature flag to
+/// opt in. Zig is in the same position and ships the probe in its own
+/// compiler-rt for `windows && !link_libc` (see
+/// `vendor/zig/lib/compiler_rt/stack_probe.zig`). We do likewise: the bodies
+/// below are taken verbatim from `compiler_builtins` (which in turn mirrors
+/// LLVM `compiler-rt/lib/builtins/{x86_64,aarch64}/chkstk.S`), so they are
+/// the upstream-tested instruction sequences rather than a local rewrite.
+///
 /// MS x64 contract: bytes-to-probe in `rax`; must preserve all registers
 /// except `rax`/`r10`/`r11`; does NOT adjust `rsp` (caller subtracts after).
 #[cfg(all(windows, target_arch = "x86_64"))]
-core::arch::global_asm!(
-    ".globl __chkstk",
-    "__chkstk:",
-    "    push rcx",
-    "    push rax",
-    "    cmp  rax, 0x1000",
-    "    lea  rcx, [rsp + 0x18]",
-    "    jb   3f",
-    "2:  sub  rcx, 0x1000",
-    "    or   qword ptr [rcx], 0",
-    "    sub  rax, 0x1000",
-    "    cmp  rax, 0x1000",
-    "    ja   2b",
-    "3:  sub  rcx, rax",
-    "    or   qword ptr [rcx], 0",
-    "    pop  rax",
-    "    pop  rcx",
-    "    ret",
-);
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __chkstk() {
+    // Verbatim: compiler_builtins `src/x86_64.rs` `___chkstk_ms` (the MS-x64
+    // probe-only variant — same contract as MSVC `__chkstk`).
+    core::arch::naked_asm!(
+        "push   rcx",
+        "push   rax",
+        "cmp    rax, 0x1000",
+        "lea    rcx, [rsp + 24]",
+        "jb     3f",
+        "2:",
+        "sub    rcx, 0x1000",
+        "test   [rcx], rcx",
+        "sub    rax, 0x1000",
+        "cmp    rax, 0x1000",
+        "ja     2b",
+        "3:",
+        "sub    rcx, rax",
+        "test   [rcx], rcx",
+        "pop    rax",
+        "pop    rcx",
+        "ret",
+    );
+}
 
-/// AArch64 spelling (`__chkstk` on Win-ARM64): bytes/16 in `x15`; touches each
-/// 4 KiB page; preserves everything except `x16`/`x17`.
+/// AArch64 spelling: bytes/16 in `x15`; touches each 4 KiB page; preserves
+/// everything except `x16`/`x17`.
 #[cfg(all(windows, target_arch = "aarch64"))]
-core::arch::global_asm!(
-    ".globl __chkstk",
-    "__chkstk:",
-    "    lsl  x16, x15, #4",
-    "    mov  x17, sp",
-    "1:  sub  x17, x17, #4096",
-    "    subs x16, x16, #4096",
-    "    ldr  xzr, [x17]",
-    "    b.gt 1b",
-    "    ret",
-);
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __chkstk() {
+    // Verbatim: compiler_builtins `src/aarch64.rs` `__chkstk`.
+    core::arch::naked_asm!(
+        ".p2align 2",
+        "lsl    x16, x15, #4",
+        "mov    x17, sp",
+        "1:",
+        "sub    x17, x17, 4096",
+        "subs   x16, x16, 4096",
+        "ldr    xzr, [x17]",
+        "b.gt   1b",
+        "ret",
+    );
+}
 
 /// PE entry point (named via `-C link-arg=/ENTRY:shim_main` in the build
 /// script — bypasses `mainCRTStartup` and the CRT entirely). The launcher

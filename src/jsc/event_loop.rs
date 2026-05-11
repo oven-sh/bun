@@ -429,11 +429,28 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        self.enter();
+        // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
+        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
+        // `noalias`, and `callback.call()` receives nothing derived from
+        // `self`, so LLVM is licensed to forward `self.entered_event_loop_count`
+        // (written by `enter()`) across the JS call into `exit()`. JS re-enters
+        // via host-fns that reach this same `EventLoop` through
+        // `vm.event_loop()` and may run nested `enter()/exit()` pairs (or call
+        // `drain_microtasks` directly), making the cached count stale. ASM-
+        // verified PROVEN_CACHED. Launder `self` so the post-call access goes
+        // through an opaque pointer LLVM can't prove is in the noalias scope.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop` (a value field of the
+        // process-lifetime `VirtualMachine`); short-lived `&mut` only.
+        unsafe { (*this).enter() };
         if let Err(err) = callback.call(global_object, this_value, arguments) {
             global_object.report_active_exception_as_unhandled(err);
         }
-        self.exit();
+        // Force a re-escape between the JS call and the post-call `exit()` so
+        // LLVM cannot forward any `*this` field across `call()`.
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above.
+        unsafe { (*this).exit() };
         // PORT NOTE: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
     }
 
@@ -444,7 +461,10 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        self.enter();
+        // R-2 noalias mitigation — see `run_callback` above.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
+        unsafe { (*this).enter() };
         let result = match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
@@ -452,7 +472,9 @@ impl EventLoop {
                 JSValue::ZERO
             }
         };
-        self.exit();
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above.
+        unsafe { (*this).exit() };
         // PORT NOTE: reshaped for borrowck — `defer this.exit()` moved to tail
         result
     }
@@ -708,9 +730,23 @@ impl EventLoop {
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
     pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
-        let mut to_run_now = core::mem::take(&mut self.immediate_tasks);
+        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
+        // the only thing reaching the `__bun_run_immediate_task` extern call is
+        // `virtual_machine` — a *separate* pointer parameter that LLVM is told
+        // does NOT alias `*self` (even though `EventLoop` is a value field of
+        // `*virtual_machine`). JS re-enters via `setImmediate` →
+        // `enqueue_immediate_task` and pushes onto `self.next_immediate_tasks`.
+        // Without the launder, LLVM may forward the post-`take` empty
+        // `next_immediate_tasks` past the loop into the `.capacity() > 0`
+        // recursion check and the trailing `= to_run_now` store, dropping any
+        // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; each access below is a
+        // short-lived `&mut` that does not overlap re-entry.
+        let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
 
-        self.immediate_tasks = core::mem::take(&mut self.next_immediate_tasks);
+        unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
@@ -719,20 +755,27 @@ impl EventLoop {
             // live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
+        // Re-escape `this` after the re-entrant loop so nothing about `*this`
+        // is carried across it.
+        let this: *mut Self = core::hint::black_box(this);
 
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
-            self.maybe_drain_microtasks();
+            // SAFETY: as above.
+            unsafe { (*this).maybe_drain_microtasks() };
         }
 
-        if self.next_immediate_tasks.capacity() > 0 {
+        // SAFETY: as above; this read MUST observe pushes JS made during the
+        // loop (the recursion check).
+        if unsafe { (*this).next_immediate_tasks.capacity() } > 0 {
             // this would only occur if we were recursively running tickImmediateTasks.
             #[cold]
             fn cold_merge(this: &mut EventLoop) {
                 let next = core::mem::take(&mut this.next_immediate_tasks);
                 this.immediate_tasks.extend_from_slice(&next);
             }
-            cold_merge(self);
+            // SAFETY: as above.
+            cold_merge(unsafe { &mut *this });
         }
 
         if to_run_now.capacity() > 1024 * 128 {
@@ -742,7 +785,8 @@ impl EventLoop {
             to_run_now.clear();
         }
 
-        self.next_immediate_tasks = to_run_now;
+        // SAFETY: as above.
+        unsafe { (*this).next_immediate_tasks = to_run_now };
     }
 
     pub fn ensure_waker(&mut self) {

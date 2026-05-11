@@ -743,13 +743,29 @@ impl RareData {
         }
     }
     pub fn close_all_watchers_for_isolation(&mut self) {
-        while let Some(w) = self.fs_watchers_for_isolation.pop() {
+        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // `b818e70e1c57` NodeHTTPResponse::cork): `(w.close)(w.ptr)` is an
+        // opaque fn-pointer call that receives nothing derived from `self`. It
+        // re-enters JS (FSWatcher.close → "close" event), which can call
+        // `add_*_watcher_for_isolation` and push back onto these same Vecs.
+        // With `noalias self`, LLVM may cache the Vec's `len`/`ptr` across the
+        // call body and miss the push. ASM-verified PROVEN_CACHED. Launder
+        // `self` so every `pop()` goes through an opaque pointer.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        loop {
+            // SAFETY: `this` is the unique live `RareData` (boxed by VM);
+            // momentary `&mut` only, ended before the re-entrant close.
+            let Some(w) = (unsafe { &mut (*this).fs_watchers_for_isolation }).pop() else { break };
             // SAFETY: registered via add_fs_watcher_for_isolation; still live.
             unsafe { (w.close)(w.ptr) };
+            core::hint::black_box(this);
         }
-        while let Some(w) = self.stat_watchers_for_isolation.pop() {
+        loop {
+            // SAFETY: as above.
+            let Some(w) = (unsafe { &mut (*this).stat_watchers_for_isolation }).pop() else { break };
             // SAFETY: registered via add_stat_watcher_for_isolation; still live.
             unsafe { (w.close)(w.ptr) };
+            core::hint::black_box(this);
         }
     }
 

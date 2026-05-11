@@ -1992,7 +1992,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // PORT NOTE: Zig `defer this.wrote_at_start_of_flush = this.wrote` reads `this.wrote`
             // at scope exit (AFTER resolve, which may reenter JS and mutate `wrote`). Read it here,
             // not before the call.
-            self.wrote_at_start_of_flush = self.wrote;
+            //
+            // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+            // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`
+            // and `resolve()` receives nothing derived from `self`, so LLVM is
+            // licensed to forward the `self.wrote` read used in the
+            // `js_number(...)` argument above into this assignment — defeating
+            // the very ordering the PORT NOTE exists to preserve. ASM-verified
+            // PROVEN_CACHED. Launder `self` so the post-resolve `wrote` read
+            // goes through an opaque pointer.
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+            // SAFETY: `this` is the live heap payload (refcounted via the JS
+            // wrapper); momentary access only.
+            unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
             return Ok(result?);
         }
         Ok(())

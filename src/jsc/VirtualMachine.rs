@@ -3375,10 +3375,25 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1028 `waitFor`.
     pub fn wait_for(&mut self, cond: &mut bool) {
-        while !*cond {
-            self.event_loop_mut().tick();
-            if !*cond {
-                self.auto_tick();
+        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // `b818e70e1c57` NodeHTTPResponse::cork): both `&mut self` and
+        // `cond: &mut bool` are LLVM-`noalias`. `tick()/auto_tick()` re-enter
+        // JS, which sets `*cond` via a closure that captured it *before* this
+        // call (so `cond` itself never escapes here). LLVM is therefore
+        // licensed to hoist `!*cond` out of the loop → infinite spin once the
+        // condition fires. ASM-verified PROVEN_CACHED. Launder both pointers
+        // so every read goes through an opaque address.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        let cond: *mut bool = core::hint::black_box(core::ptr::from_mut(cond));
+        // SAFETY: `this` is the unique live VM; `cond` is the caller's stack
+        // local, live for this frame. Each deref is a momentary access only.
+        while !unsafe { *cond } {
+            unsafe { (*this).event_loop_mut().tick() };
+            // Re-escape between the two re-entrant calls so `*cond` isn't
+            // forwarded across `tick()`.
+            let cond = core::hint::black_box(cond);
+            if !unsafe { *cond } {
+                unsafe { (*this).auto_tick() };
             }
         }
     }

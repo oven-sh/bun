@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
 
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
 use core::ptr::NonNull;
@@ -12,7 +13,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{env_var, fmt as bun_fmt, zstr, Output, ZBox};
 use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsClass, JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
+    JsCell, JsClass, JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
 };
 use crate::napi;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
@@ -288,21 +289,26 @@ impl Offsets {
     }
 }
 
+// R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
+// per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
+// `close()` does not itself re-enter JS, but routing mutation through
+// `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
+// shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
-    pub dylib: Option<bun_sys::DynLib>, // TODO(port): std.DynLib equivalent
-    pub functions: StringArrayHashMap<Function>,
-    pub closed: bool,
-    pub shared_state: Option<NonNull<TCC::State>>,
+    pub dylib: JsCell<Option<bun_sys::DynLib>>, // TODO(port): std.DynLib equivalent
+    pub functions: JsCell<StringArrayHashMap<Function>>,
+    pub closed: Cell<bool>,
+    pub shared_state: Cell<Option<NonNull<TCC::State>>>,
 }
 
 impl Default for FFI {
     fn default() -> Self {
         Self {
-            dylib: None,
-            functions: StringArrayHashMap::default(),
-            closed: false,
-            shared_state: None,
+            dylib: JsCell::new(None),
+            functions: JsCell::new(StringArrayHashMap::default()),
+            closed: Cell::new(false),
+            shared_state: Cell::new(None),
         }
     }
 }
@@ -1321,10 +1327,10 @@ impl FFI {
 
         // TODO: pub const new = bun.TrivialNew(FFI)
         let lib = Box::new(FFI {
-            dylib: None,
-            shared_state: scopeguard::ScopeGuard::into_inner(_tcc_guard).take(),
-            functions: core::mem::take(&mut compile_c.symbols.map),
-            closed: false,
+            dylib: JsCell::new(None),
+            shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
+            functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
+            closed: Cell::new(false),
         });
         // PORT NOTE: reshaped for borrowck — Zig nulled tcc_state and symbols after move
 
@@ -1405,25 +1411,25 @@ impl FFI {
 
     #[bun_jsc::host_fn(method)]
     pub fn close(
-        this: &mut FFI,
+        &self,
         _global_this: &JSGlobalObject,
         _: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
-        if this.closed {
+        if self.closed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        this.closed = true;
-        if let Some(mut dylib) = this.dylib.take() {
+        self.closed.set(true);
+        if let Some(dylib) = self.dylib.replace(None) {
             dylib.close();
         }
 
-        if let Some(state) = this.shared_state.take() {
+        if let Some(state) = self.shared_state.take() {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
             unsafe { TCC::State::destroy(state.as_ptr()) };
         }
 
-        this.functions.clear_retaining_capacity();
+        self.functions.with_mut(|f| f.clear_retaining_capacity());
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1681,8 +1687,8 @@ impl FFI {
         }
 
         let lib = Box::new(FFI {
-            dylib: Some(dylib),
-            functions: symbols,
+            dylib: JsCell::new(Some(dylib)),
+            functions: JsCell::new(symbols),
             ..Default::default()
         });
 
@@ -1778,8 +1784,8 @@ impl FFI {
         }
 
         let lib = Box::new(FFI {
-            dylib: None,
-            functions: symbols,
+            dylib: JsCell::new(None),
+            functions: JsCell::new(symbols),
             ..Default::default()
         });
 

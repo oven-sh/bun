@@ -304,6 +304,17 @@ impl MimallocArena {
             self.reset();
             true
         } else {
+            // Under limit: retain pages, but DO process deferred/cross-thread
+            // frees so the next iteration's allocations can reuse this
+            // iteration's now-dead blocks (this is what Zig's
+            // `arena.reset(.{.retain_with_limit=..})` cursor-bump achieves).
+            // Without this, darwin-aarch64's free path leaves blocks on the
+            // thread-delayed list — committed grows ~330 KB/iter and the
+            // limit may never trip (mi_heap_visit_blocks walks live arenas
+            // only; OS-backed pages on darwin sit elsewhere) → 83 MB on
+            // require-cache "via require() with a lot of long export names".
+            // SAFETY: heap_ptr() valid (owns asserted above).
+            unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
             // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
             // that was *under* the limit can still allocate on the new thread.
             #[cfg(debug_assertions)]

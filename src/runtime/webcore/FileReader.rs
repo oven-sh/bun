@@ -335,10 +335,9 @@ impl FileReader {
 
         // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
+        // global); deref to build the typed event-loop handle.
         let global = unsafe { &*(*self.parent()).global_this };
-        self.event_loop =
-            EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+        self.event_loop = global.bun_vm().as_mut().event_loop_handle();
     }
 
     pub fn on_start(&mut self) -> streams::Start {
@@ -401,11 +400,10 @@ impl FileReader {
 
         // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
+        // global); deref to build the typed event-loop handle.
         {
             let global = unsafe { &*(*self.parent()).global_this };
-            self.event_loop =
-                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+            self.event_loop = global.bun_vm().as_mut().event_loop_handle();
         }
 
         if was_lazy {

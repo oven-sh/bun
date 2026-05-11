@@ -105,6 +105,11 @@ unsafe extern "Rust" {
 }
 
 impl JsEventLoop {
+    #[inline]
+    pub fn from_handle(handle: bun_jsc_types::event_loop::JsEventLoopHandle) -> Self {
+        Self(handle)
+    }
+
     /// Wrap an erased `*mut bun_jsc::event_loop::EventLoop`.
     ///
     /// # Safety
@@ -112,12 +117,17 @@ impl JsEventLoop {
     /// through this handle.
     #[inline]
     pub unsafe fn from_raw(ptr: *mut ()) -> Self {
-        Self(unsafe { bun_jsc_types::event_loop::JsEventLoopHandle::from_raw(ptr) })
+        Self::from_handle(unsafe { bun_jsc_types::event_loop::JsEventLoopHandle::from_raw(ptr) })
     }
 
     #[inline]
     pub fn as_void_ptr(self) -> *mut core::ffi::c_void {
         self.0.as_void_ptr()
+    }
+
+    #[inline]
+    pub fn handle(self) -> bun_jsc_types::event_loop::JsEventLoopHandle {
+        self.0
     }
 
     /// `jsc::VirtualMachine::get().event_loop()` for the current thread.

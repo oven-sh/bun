@@ -2944,9 +2944,8 @@ pub fn create_shell_interpreter(
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
-    // dereferencing for `event_loop()` is sound on the mutator thread.
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let event_loop = global.bun_vm().as_mut().event_loop_handle();
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),

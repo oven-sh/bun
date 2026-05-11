@@ -607,7 +607,7 @@ impl WindowsNamedPipe {
         // now `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
         WindowsNamedPipe {
             vm,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
+            event_loop_handle: vm.event_loop_handle(),
             // Leak the `Box` and keep only a non-owning `NonNull` alias (Zig:
             // `?*uv.Pipe`). Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which

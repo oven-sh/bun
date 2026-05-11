@@ -700,6 +700,19 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Safe typed handle for the active JS event loop. This keeps the raw
+    /// `*mut EventLoop` cast local to `bun_jsc`; higher/runtime crates that
+    /// already hold a VM can pass an ordinary `EventLoopHandle`.
+    #[inline]
+    pub fn event_loop_handle(&self) -> bun_event_loop::EventLoopHandle {
+        self.event_loop_mut().as_event_loop_handle()
+    }
+
+    #[inline]
+    pub fn any_event_loop(&self) -> bun_event_loop::AnyEventLoop<'static> {
+        self.event_loop_mut().as_any_event_loop()
+    }
+
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline]

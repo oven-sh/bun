@@ -1025,7 +1025,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+    let loop_handle = unsafe { (*event_loop).as_event_loop_handle() };
 
     let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),

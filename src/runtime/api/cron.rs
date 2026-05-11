@@ -134,8 +134,7 @@ fn cron_expression_next(
 
 #[inline]
 fn runtime_reader_target(target: RuntimeBufferedReaderTarget) -> BufferedReaderTarget {
-    // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-    let event_loop = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
+    let event_loop = unsafe { vm_mut() }.event_loop_handle();
     BufferedReaderTarget::Runtime {
         target,
         event_loop: event_loop.as_event_loop_ctx(),
@@ -1927,8 +1926,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            // SAFETY: per-thread VM singleton.
-            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            loop_: unsafe { vm_mut() }.event_loop_handle(),
             ..Default::default()
         },
         ..SpawnOptions::default()
@@ -2006,8 +2004,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     }
 
-    // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-    let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
+    let ev_handle = unsafe { vm_mut() }.event_loop_handle();
     let process = spawned.to_process(ev_handle, false);
     let process_handle =
         ProcessHandle::from_ptr(process).expect("spawned Process pointer must not be null");

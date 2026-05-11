@@ -202,8 +202,8 @@ pub fn run_as_coordinator(
     let mut coord = Coordinator {
         // SAFETY: see vm_ptr note above.
         vm: unsafe { &*vm_ptr },
-        // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: bun_jsc::EventLoopHandle::init(unsafe { (*vm_ptr).event_loop() }.cast::<()>()),
+        // SAFETY: see vm_ptr note above.
+        event_loop_handle: unsafe { (*vm_ptr).event_loop_handle() },
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.

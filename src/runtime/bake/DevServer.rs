@@ -2984,7 +2984,7 @@ impl DevServer {
         // as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
+                self.vm().any_event_loop(),
             )));
 
         // PORT NOTE: `BundleV2::init` consumes `heap` and also wants

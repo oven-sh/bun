@@ -285,6 +285,24 @@ impl Drop for EventLoopEnterGuard {
 }
 
 impl EventLoop {
+    #[inline]
+    pub fn as_js_event_loop(&mut self) -> bun_event_loop::JsEventLoop {
+        let ptr = core::ptr::from_mut::<EventLoop>(self).cast::<()>();
+        // SAFETY: `self` is the live VM-owned JSC event loop; the returned
+        // handle is non-owning and does not extend the event loop lifetime.
+        bun_event_loop::JsEventLoop::from_handle(unsafe { JsEventLoopHandle::from_raw(ptr) })
+    }
+
+    #[inline]
+    pub fn as_event_loop_handle(&mut self) -> EventLoopHandle {
+        EventLoopHandle::from_js(self.as_js_event_loop())
+    }
+
+    #[inline]
+    pub fn as_any_event_loop(&mut self) -> AnyEventLoop<'static> {
+        AnyEventLoop::from_js(self.as_js_event_loop())
+    }
+
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
     ///
@@ -788,12 +806,9 @@ impl EventLoop {
             }
         }
         // PORT NOTE: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
-        let (tag, ptr) =
-            EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>()).into_tag_ptr();
+        // so this `bun_jsc` method is where the concrete `EventLoop` reference
+        // becomes the typed sidecar handle.
+        let (tag, ptr) = self.as_event_loop_handle().into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
         unsafe { (*uws::Loop::get()).internal_loop_data.set_parent_raw(tag, ptr) };
     }

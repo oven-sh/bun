@@ -1382,7 +1382,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // Sentinel — overwritten by `finish_concurrently` (gated by the
             // `has_result` CAS) before any read on the JS thread.
             result: core::cell::UnsafeCell::new(Ok(())),
-            evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+            evtloop: vm.event_loop_handle(),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),

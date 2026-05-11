@@ -650,11 +650,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // PORT NOTE: Zig `EventLoopHandle.init(anytype)` accepted a
-            // `*VirtualMachine` and called `vm.eventLoop()` internally; the
-            // Rust split keeps `init` taking the erased `*mut ()` event-loop
-            // pointer directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            loop_: VirtualMachine::get().event_loop_handle(),
             ..Default::default()
         },
         ..Default::default()

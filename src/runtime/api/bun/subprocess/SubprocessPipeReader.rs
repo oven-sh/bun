@@ -129,7 +129,7 @@ impl PipeReader {
         exit_state: SubprocessExitStateHandle,
         pipe: RuntimePipeKind,
     ) -> IntrusiveRc<PipeReader> {
-        let event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        let event_loop_handle = unsafe { (*event_loop.as_ptr()).as_event_loop_handle() };
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
             process: Some(process),
@@ -186,7 +186,7 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(process);
         self.event_loop = event_loop;
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop_handle = unsafe { (*event_loop.as_ptr()).as_event_loop_handle() };
         self.reader.set_target(Self::reader_target(
             self.event_loop_handle,
             self.exit_state,

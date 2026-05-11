@@ -648,7 +648,7 @@ pub fn build_with_vm(
         // Zig: `.{ .js = vm.event_loop }` — construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        let mut any_loop = vm.any_event_loop();
 
         // Spec production.zig:312 — plain `try`; propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for

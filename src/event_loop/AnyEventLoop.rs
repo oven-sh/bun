@@ -148,9 +148,12 @@ impl<'a> AnyEventLoop<'a> {
         // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (Zig
         // `vm.eventLoop()`). This is the single `unsafe` boundary for the
         // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
-        AnyEventLoop::Js {
-            owner: unsafe { JsEventLoop::from_raw(js_event_loop) },
-        }
+        AnyEventLoop::from_js(unsafe { JsEventLoop::from_raw(js_event_loop) })
+    }
+
+    #[inline]
+    pub fn from_js(owner: JsEventLoop) -> AnyEventLoop<'static> {
+        AnyEventLoop::Js { owner }
     }
 
     /// Construct the `Js` variant for the current thread's JS event loop.
@@ -370,9 +373,12 @@ impl EventLoopHandle {
         // back-reference invariant — owner outlives every dispatch through this
         // handle). This is the single `unsafe` boundary for the
         // `EventLoopHandle::Js` arm.
-        EventLoopHandle::Js {
-            owner: unsafe { JsEventLoop::from_raw(js_event_loop) },
-        }
+        EventLoopHandle::from_js(unsafe { JsEventLoop::from_raw(js_event_loop) })
+    }
+
+    #[inline]
+    pub fn from_js(owner: JsEventLoop) -> EventLoopHandle {
+        EventLoopHandle::Js { owner }
     }
 
     #[inline]

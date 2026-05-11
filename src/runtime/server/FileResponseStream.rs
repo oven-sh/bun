@@ -111,8 +111,8 @@ pub struct StartOptions {
 impl FileResponseStream {
     pub fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
-        // SAFETY: `opts.vm` is &'static; event_loop() returns its live JS loop.
-        let event_loop_handle = EventLoopHandle::init(unsafe { (*opts.vm).event_loop() }.cast::<()>());
+        // SAFETY: `opts.vm` is &'static.
+        let event_loop_handle = unsafe { (*opts.vm).event_loop_handle() };
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
         // via `heap::take` in `deref()` when the intrusive refcount hits 0.
@@ -548,9 +548,8 @@ impl FileResponseStream {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv); event_loop()
-        // returns its live `*mut jsc::EventLoop`.
-        EventLoopHandle::init(unsafe { (*self.vm).event_loop() }.cast::<()>())
+        // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv).
+        unsafe { (*self.vm).event_loop_handle() }
     }
 
     pub fn r#loop(&self) -> *mut bun_io::Loop {

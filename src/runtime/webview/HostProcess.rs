@@ -191,7 +191,7 @@ fn spawn(
         )??;
 
         // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        let event_loop = unsafe { (*vm).event_loop_handle() };
         let process = NonNull::new(spawned.to_process(event_loop, false))
             .expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));

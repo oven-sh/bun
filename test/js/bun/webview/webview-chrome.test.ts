@@ -525,8 +525,8 @@ test.skipIf(!isPosix)("chrome: closeAll() reaps the whole process group (#30475)
     // parks on the socketpair fd Bun dup2'd into position 3.
     "fake-chrome.sh":
       "#!/bin/sh\n" +
-      'sleep 3600 &\nC1=$!\n' +
-      'sleep 3600 &\nC2=$!\n' +
+      "sleep 3600 &\nC1=$!\n" +
+      "sleep 3600 &\nC2=$!\n" +
       'printf "%d %d %d" "$$" "$C1" "$C2" > "$PID_OUT"\n' +
       "exec cat <&3 >/dev/null\n",
     "driver.ts":
@@ -544,7 +544,7 @@ test.skipIf(!isPosix)("chrome: closeAll() reaps the whole process group (#30475)
       "const isAlive = (p) => { try { process.kill(p, 0); return true; } catch { return false; } };\n" +
       // Prove all three are alive first — otherwise a vacuously empty
       // survivor list would "pass" even if the test is broken.
-      'const beforeDead = pids.filter(p => !isAlive(p));\n' +
+      "const beforeDead = pids.filter(p => !isAlive(p));\n" +
       'if (beforeDead.length) throw new Error("dead before closeAll: " + JSON.stringify(beforeDead));\n' +
       "Bun.WebView.closeAll();\n" +
       // Poll for every pid to be gone. kill(-pgid, SIGKILL) is delivered
@@ -565,11 +565,7 @@ test.skipIf(!isPosix)("chrome: closeAll() reaps the whole process group (#30475)
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Zero survivors: browser + both "helpers" died together. With the bug
   // the two sleeps survive (reparented to PID 1); with the fix they're
   // reaped via kill(-pgid, SIGKILL).

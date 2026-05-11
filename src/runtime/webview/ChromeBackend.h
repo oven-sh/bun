@@ -418,8 +418,16 @@ public:
 
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
-    // Pipe mode: usockets-adopted socketpair fd.
+    // Pipe mode (POSIX): usockets-adopted socketpair fd. Always nullptr
+    // on Windows — Zig owns the pipes there; see m_windowsActive.
     us_socket_t* m_readSock = nullptr;
+#if OS(WINDOWS)
+    // Windows has no us_socket adopted; this flag stands in for the
+    // m_readSock != nullptr "is the transport alive?" check. Flipped
+    // true by ensureSpawned on Bun__Chrome__ensure success, false by
+    // rejectAllAndMarkDead.
+    bool m_windowsActive = false;
+#endif
     // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
     // the singleton's lifetime. The WebSocket's native callbacks point
     // back at this Transport (via static trampolines, not a captured

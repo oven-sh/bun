@@ -73,7 +73,38 @@ function findChrome(): string | undefined {
       "/usr/bin/microsoft-edge",
     ];
     for (const c of absolute) if (isExecutable(c)) return c;
-  } // Windows TODO — ChromeProcess.zig doesn't support it yet
+  } else if (process.platform === "win32") {
+    // Mirror findChrome() in ChromeProcess.zig — same channel order, same
+    // root precedence (ProgramFiles → ProgramFiles(x86) → LOCALAPPDATA).
+    const relative = [
+      "Google\\Chrome\\Application\\chrome.exe",
+      "Google\\Chrome Beta\\Application\\chrome.exe",
+      "Google\\Chrome Dev\\Application\\chrome.exe",
+      "Google\\Chrome SxS\\Application\\chrome.exe",
+      "Chromium\\Application\\chrome.exe",
+      "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "BraveSoftware\\Brave-Browser-Beta\\Application\\brave.exe",
+      "BraveSoftware\\Brave-Browser-Nightly\\Application\\brave.exe",
+      "BraveSoftware\\Brave-Browser-Dev\\Application\\brave.exe",
+      "Microsoft\\Edge\\Application\\msedge.exe",
+      "Microsoft\\Edge Beta\\Application\\msedge.exe",
+      "Microsoft\\Edge Dev\\Application\\msedge.exe",
+      "Microsoft\\Edge SxS\\Application\\msedge.exe",
+    ];
+    const roots = [
+      process.env["ProgramFiles"],
+      process.env["ProgramFiles(x86)"],
+      process.env["LOCALAPPDATA"],
+    ].filter((r): r is string => Boolean(r));
+    for (const rel of relative) {
+      for (const root of roots) {
+        const full = join(root, rel);
+        // accessSync with X_OK on Windows only checks existence — that's
+        // fine, the extension gates us to an actual executable.
+        if (isExecutable(full)) return full;
+      }
+    }
+  }
 
   // Playwright cache fallback — mirrors findPlaywrightShell().
   const cacheDir =
@@ -129,6 +160,33 @@ it("backend: chrome constructor returns a WebView", () => {
   const view = new Bun.WebView({ backend: chrome, width: 400, height: 300 });
   expect(view).toBeInstanceOf(Bun.WebView);
   view.close();
+});
+
+// Regression for https://github.com/oven-sh/bun/issues/30480 —
+// `new Bun.WebView({backend:"chrome"})` threw ERR_DLOPEN_FAILED on
+// Windows because ChromeProcess.zig short-circuited with `return -1` for
+// the entire platform. The Windows spawn path now uses two anonymous
+// pipes (child inherits fds 3 and 4 via MSVCRT lpReserved2); the parent
+// drives I/O through libuv uv_pipe_t.
+it("chrome: spawn + navigate + evaluate works on Windows", async () => {
+  await using view = new Bun.WebView({ backend: chrome });
+  await view.navigate(html("<span id=x>ok</span>"));
+  expect(await view.evaluate("document.getElementById('x').textContent")).toBe("ok");
+});
+
+// Sanity check on Bun__Chrome__writeWindows: force a bigger-than-one-
+// packet CDP command through the pipe so the async uv_write path (not
+// just the immediate try_write fast path) actually runs. Pre-fix the
+// parent-side socket was null and Chrome was never spawned, so writes
+// were no-ops that silently dropped.
+it("chrome: large evaluate payload round-trips over the pipe", async () => {
+  await using view = new Bun.WebView({ backend: chrome });
+  await view.navigate(html("<body></body>"));
+  // 64 KiB string — exceeds typical pipe buffer on Windows (default 4KB),
+  // forcing libuv to chunk the write and reassemble on Chrome's side.
+  const big = Buffer.alloc(64 * 1024, "A").toString();
+  const echoed = await view.evaluate(`${JSON.stringify(big)}`);
+  expect(echoed).toBe(big);
 });
 
 it("chrome: navigate + evaluate round-trip", async () => {

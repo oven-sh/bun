@@ -71,10 +71,28 @@ pub struct LinkerGraph {
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
-// linking (matches Zig, which has no Send/Sync). The raw pointers inside
-// (`bump`, `MultiArrayList` columns, `BitSet` storage, AST arenas) are owned by
-// `BundleV2` and are not mutated through `&LinkerGraph` while a worker pool is
-// running; per-chunk writes go through disjoint slices the linker hands out.
+// linking (matches Zig, which has no Send/Sync). What makes `&LinkerGraph`
+// sound to hold concurrently:
+//
+// - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
+//   (no new allocations) for the duration of any worker-pool fan-out that
+//   holds `&LinkerGraph`.
+// - `files_live` / `is_scb_bitset` / `reachable_files` /
+//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
+//   before fan-out and only read by workers.
+// - `ast` / `meta` / `files` columns that workers mutate are split out via
+//   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
+//   `compute_cross_chunk_dependencies`); workers never reach those columns
+//   through `&LinkerGraph`.
+// - `symbols: symbol::Map` IS written by workers
+//   (`Map::assign_chunk_index`), but the written field is
+//   `Symbol.chunk_index: AtomicU32` — interior-mutable, Relaxed store — so
+//   the write is sound through `&Map`. All other `Symbol` fields are
+//   read-only during worker fan-out.
+//
+// `Send` is required because `LinkerGraph` is moved into `LinkerContext`
+// which is itself sent to the link task; the only `!Send` constituent is the
+// raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
 unsafe impl Send for LinkerGraph {}
 unsafe impl Sync for LinkerGraph {}
 

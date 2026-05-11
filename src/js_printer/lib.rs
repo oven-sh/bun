@@ -328,6 +328,16 @@ pub mod analyze_transpiled_module {
 
             let record_kinds_len = eat_u32!();
             let record_kinds = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
+            // Validate every record-kind byte is a known discriminant *before* `as_ref()`
+            // reinterprets this range as `&[RecordKind]`. `RecordKind` is a `#[repr(u8)]`
+            // enum, so any byte outside 0..=8 would be an invalid value and forming a
+            // slice over it is immediate UB. `source` may come from an on-disk cache
+            // (`create_from_cached_record`), so it is untrusted.
+            for &b in &duped[record_kinds.0..record_kinds.0 + record_kinds.1] {
+                if RecordKind::try_from_u8(b).is_none() {
+                    return Err(BadModuleInfo);
+                }
+            }
             let _ = eat!((4 - (record_kinds_len % 4)) % 4); // alignment padding
 
             let buffer_len = eat_u32!();
@@ -361,11 +371,14 @@ pub mod analyze_transpiled_module {
             Self::create(source).ok()
         }
         pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
-            // SAFETY: offsets/lengths were validated in `create`; backing types are
-            // #[repr(transparent)] u32 / #[repr(u8)]; the serialized stream keeps every
-            // u32 field at a 4-byte offset by construction; and `backing` is an
-            // `AlignedBytes` whose base pointer is 4-byte aligned, so each
-            // `.add(off).cast::<u32>()` yields a properly-aligned pointer.
+            // SAFETY: offsets/lengths were validated in `create`; every byte in the
+            // `record_kinds` range was checked against `RecordKind::try_from_u8` so the
+            // `#[repr(u8)]` enum slice contains only valid discriminants; the remaining
+            // backing types are `#[repr(transparent)]` over `u32` (all bit patterns
+            // valid); the serialized stream keeps every u32 field at a 4-byte offset by
+            // construction; and `backing` is an `AlignedBytes` whose base pointer is
+            // 4-byte aligned, so each `.add(off).cast::<u32>()` yields a properly-aligned
+            // pointer.
             unsafe {
                 ModuleInfoDeserialized {
                     record_kinds: core::slice::from_raw_parts(

@@ -768,6 +768,13 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub modified: SemverString,
     pub public_max_age: u32,
+    // Explicit padding so this struct has no implicit (uninitialized) padding
+    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
+    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
+    // fields, `Default` zero-fills them and every byte of the struct is
+    // initialized. Layout (size=120, align=8) is unchanged; see the
+    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    pub _padding_after_max_age: [u8; 4],
 
     pub name: ExternalString,
 
@@ -780,7 +787,31 @@ pub struct NpmPackage {
 
     // Flag to indicate if we have timestamp data from extended manifest
     pub has_extended_manifest: bool,
+    pub _padding_tail: [u8; 7],
 }
+
+// Compile-time proof that the explicit `_padding_*` fields above leave no
+// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
+// initialized bytes). Mirrors the per-field-gap check documented in
+// `padding_checker.rs`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
+    assert!(
+        offset_of!(NpmPackage, _padding_after_max_age)
+            == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
+    );
+    assert!(
+        offset_of!(NpmPackage, name)
+            == offset_of!(NpmPackage, _padding_after_max_age) + 4
+    );
+    // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
+    assert!(
+        offset_of!(NpmPackage, _padding_tail)
+            == offset_of!(NpmPackage, has_extended_manifest) + size_of::<bool>()
+    );
+    assert!(offset_of!(NpmPackage, _padding_tail) + 7 == size_of::<NpmPackage>());
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -923,7 +954,13 @@ pub mod package_manifest {
             // order matches Zig comptime sort (descending alignment).
             {
                 // "pkg"
-                // SAFETY: NpmPackage is #[repr(C)] POD
+                // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
+                // implicit padding** — the two layout gaps are filled by
+                // explicit `_padding_*: [u8; N]` fields (zero-initialized via
+                // `Default`), and the `const _ = { offset_of!… }` block at the
+                // struct definition statically asserts no gap remains. Every
+                // byte of `this.pkg` is therefore initialized, so viewing it
+                // as `&[u8]` is sound.
                 let bytes = unsafe {
                     bun_core::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),
@@ -2129,17 +2166,16 @@ impl PackageManifest {
         string_builder.allocate()?;
 
         // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
-        // `Builder::allocate` already produces a zeroed `Box<[u8]>`. The
-        // builder still owns the buffer; we keep a `*const u8`+len pair so
-        // sliced views into it stay valid across the appends below
-        // (borrowck would otherwise reject `&string_builder.ptr` while
-        // `string_builder.append` takes `&mut self`).
-        let (string_buf_ptr, string_buf_len) = match string_builder.ptr.as_deref() {
-            Some(b) => (b.as_ptr(), string_builder.cap),
-            None => (b"".as_ptr(), 0usize),
-        };
-        // SAFETY: builder buffer lives for the rest of this fn; reads only.
-        let string_buf: &[u8] = unsafe { bun_core::ffi::slice(string_buf_ptr, string_buf_len) };
+        // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
+        //
+        // Zig kept a single `string_buf` slice over the builder's backing
+        // allocation for the rest of the function. In Rust that would alias a
+        // `&[u8]` across the `&mut self` borrows taken by every `append` below
+        // (Stacked Borrows UB even though the allocation never moves). Instead
+        // we re-borrow `string_builder.allocated_slice()` at each read site —
+        // `Builder::append*` only writes in-place and never grows/replaces
+        // `ptr`, so the slice contents are stable, and NLL releases each
+        // short-lived borrow before the next `append`.
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
@@ -2182,7 +2218,7 @@ impl PackageManifest {
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
-                    sliced_version = version_string.sliced(string_buf);
+                    sliced_version = version_string.sliced(string_builder.allocated_slice());
                     parsed_version = Semver::Version::parse(sliced_version);
                     if cfg!(debug_assertions) {
                         debug_assert!(parsed_version.valid);
@@ -2801,7 +2837,7 @@ impl PackageManifest {
 
                         let dist_tag_value_literal = string_builder.append::<ExternalString>(version_name);
 
-                        let sliced_string = dist_tag_value_literal.value.sliced(string_buf);
+                        let sliced_string = dist_tag_value_literal.value.sliced(string_builder.allocated_slice());
 
                         // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
                         unsafe {
@@ -2927,7 +2963,7 @@ impl PackageManifest {
                         *dest = i as Int;
                     }
 
-                    let string_bytes = string_buf;
+                    let string_bytes = string_builder.allocated_slice();
                     indices.sort_by(|&left, &right| {
                         cloned_versions[left as usize].order(
                             cloned_versions[right as usize],
@@ -2958,7 +2994,7 @@ impl PackageManifest {
                             // version
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
-                            let order = second.order(first, string_buf, string_buf);
+                            let order = second.order(first, string_bytes, string_bytes);
                             debug_assert!(order == core::cmp::Ordering::Greater);
                         }
                     }

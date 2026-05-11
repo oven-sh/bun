@@ -2901,7 +2901,7 @@ unsafe extern "C" {
 pub use bun_core::strings::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
     encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, to_utf8_alloc,
-    to_utf8_append_to_list, to_utf8_from_latin1,
+    to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
 };
 
 #[inline]

@@ -706,7 +706,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only; Scope holds its own
         // raw-derived `&mut` (Handlers.rs).
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
         // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(&global);
@@ -769,7 +769,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         let global = unsafe { (*handlers).global_object };
         let this_value = this.get_this_value(&global);
@@ -813,7 +813,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         let global = unsafe { (*handlers).global_object };
         let this_value = this.get_this_value(&global);
@@ -934,7 +934,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let scope = unsafe { (*handlers).enter() };
+        let scope = unsafe { Handlers::enter(handlers) };
         // PORT NOTE: `let _ = guard` would drop *immediately* (end of
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
@@ -1084,7 +1084,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `Listener.handlers` field, so `mark_inactive`'s
             // `container_of` arithmetic is valid; client-mode it is the
             // `heap::alloc` allocation `mark_inactive` frees in place.
-            if unsafe { (*handlers).mark_inactive() } {
+            if unsafe { Handlers::mark_inactive(handlers) } {
                 // Client-mode handlers are allocated per-connection and
                 // `Handlers.markInactive` just freed them. Null the field
                 // so `connectInner` (net.Socket reconnect path) and
@@ -1224,7 +1224,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
         let result = match callback.call(&global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1301,7 +1301,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         let global = unsafe { (*handlers).global_object };
         let this_value = this.get_this_value(&global);
@@ -1365,7 +1365,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         let global = unsafe { (*handlers).global_object };
         let this_value = this.get_this_value(&global);
@@ -1494,7 +1494,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         let global = unsafe { (*handlers).global_object };
         let this_value = this.get_this_value(&global);
@@ -1563,7 +1563,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
-        let mut scope = unsafe { (*handlers).enter() };
+        let mut scope = unsafe { Handlers::enter(handlers) };
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
@@ -3416,8 +3416,14 @@ impl DuplexUpgradeContext {
         self.deinit_in_next_tick();
     }
 
-    fn run_event(&mut self) {
-        match self.task_event {
+    /// # Safety
+    /// `this` must be the live heap allocation produced in
+    /// `js_upgrade_duplex_to_tls`. May free `this` (via [`Self::deinit`]);
+    /// callers must not hold a `&`/`&mut Self` across the call — pass the raw
+    /// pointer directly so no Stacked Borrows protector spans the dealloc.
+    unsafe fn run_event(this: *mut Self) {
+        // SAFETY: `this` is live; copy of a `Copy` field.
+        match unsafe { (*this).task_event } {
             EventState::StartTLS => {
                 // A pre-open error (onError's `!is_open` branch) may have
                 // already fired the connect-error callback, freed
@@ -3428,31 +3434,39 @@ impl DuplexUpgradeContext {
                 // created — so tear everything down here instead of
                 // spinning up a wrapper that would dispatch `onOpen` into
                 // the dead socket.
-                if self.tls.is_none() {
-                    self.deinit();
+                //
+                // SAFETY: `this` is live; short-lived `&` for the null-check.
+                if unsafe { (*this).tls.is_none() } {
+                    // SAFETY: per fn contract; no `&Self` live across this.
+                    unsafe { Self::deinit(this) };
                     return;
                 }
-                log!(
-                    "DuplexUpgradeContext.startTLS mode={}",
-                    <&'static str>::from(self.mode)
-                );
-                let is_client = self.mode == SocketMode::Client;
-                let started: Result<(), bun_core::Error> = if let Some(ctx) = self.owned_ctx.take()
-                {
-                    // Transfer the ref into SSLWrapper; null first so the
-                    // failure path / deinit don't double-free it.
-                    self.upgrade.start_tls_with_ctx(ctx, is_client)
-                } else if let Some(config) = &self.ssl_config {
-                    self.upgrade.start_tls(config, is_client)
-                } else {
-                    Ok(())
+                // SAFETY: `this` is live; this `&mut` is scoped to the block
+                // and ends before any `Self::deinit` call below.
+                let started: Result<(), bun_core::Error> = {
+                    let this_ref = unsafe { &mut *this };
+                    log!(
+                        "DuplexUpgradeContext.startTLS mode={}",
+                        <&'static str>::from(this_ref.mode)
+                    );
+                    let is_client = this_ref.mode == SocketMode::Client;
+                    if let Some(ctx) = this_ref.owned_ctx.take() {
+                        // Transfer the ref into SSLWrapper; null first so the
+                        // failure path / deinit don't double-free it.
+                        this_ref.upgrade.start_tls_with_ctx(ctx, is_client)
+                    } else if let Some(config) = &this_ref.ssl_config {
+                        this_ref.upgrade.start_tls(config, is_client)
+                    } else {
+                        Ok(())
+                    }
                 };
                 if let Err(err) = started {
                     if err == bun_core::err!("OutOfMemory") {
                         bun_core::out_of_memory();
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
-                    if let Some(tls) = self.tls.take() {
+                    // SAFETY: `this` is live; short-lived `&mut` for `take`.
+                    if let Some(tls) = unsafe { (*this).tls.take() } {
                         // `handleConnectError` consumes our +1 — `tls.socket`
                         // is `InternalSocket::UpgradedDuplex` (set before
                         // `start_tls()` was queued), so `needs_deref =
@@ -3470,15 +3484,18 @@ impl DuplexUpgradeContext {
                     // was never registered and nothing will schedule
                     // `.Close`. Same as the `tls == null` early-return
                     // above: tear down here.
-                    self.deinit();
+                    // SAFETY: per fn contract; no `&Self` live across this.
+                    unsafe { Self::deinit(this) };
                     return;
                 }
-                self.ssl_config = None; // Drop frees.
+                // SAFETY: `this` is live; short-lived `&mut` for the field write.
+                unsafe { (*this).ssl_config = None }; // Drop frees.
             }
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
             // for every duplex-upgraded TLS socket.
-            EventState::Close => self.deinit(),
+            // SAFETY: per fn contract; no `&Self` live across this.
+            EventState::Close => unsafe { Self::deinit(this) },
         }
     }
 
@@ -3494,22 +3511,34 @@ impl DuplexUpgradeContext {
         unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
     }
 
-    fn deinit(&mut self) {
-        if let Some(tls) = self.tls.take() {
-            // Zig `tls.deref()` — IntrusiveRc::drop decrements.
-            drop(tls);
-        }
-        // Close raced ahead of StartTLS — drop the unconsumed config.
-        self.ssl_config = None;
-        if let Some(ctx) = self.owned_ctx.take() {
-            // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+    /// # Safety
+    /// `this` must be the unique live pointer to the heap allocation produced
+    /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
+    /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
+    /// be a Stacked Borrows protector violation when the backing `Box` is
+    /// reclaimed below).
+    unsafe fn deinit(this: *mut Self) {
+        {
+            // SAFETY: `this` is live; short-lived `&mut` ends before the
+            // `heap::take` free below — no protector spans the dealloc.
+            let this_ref = unsafe { &mut *this };
+            if let Some(tls) = this_ref.tls.take() {
+                // Zig `tls.deref()` — IntrusiveRc::drop decrements.
+                drop(tls);
+            }
+            // Close raced ahead of StartTLS — drop the unconsumed config.
+            this_ref.ssl_config = None;
+            if let Some(ctx) = this_ref.owned_ctx.take() {
+                // SAFETY: BoringSSL FFI; we hold one owned ref.
+                unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+            }
         }
         // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
-        // runs via `Drop` when `heap::take(self)` frees the containing
+        // runs via `Drop` when `heap::take(this)` frees the containing
         // struct below; an explicit call here would double-free.
-        // SAFETY: `self` was heap-allocated in `new()`.
-        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
+        // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
+        // matching free. No `&`/`&mut Self` survives past this point.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -3683,8 +3712,11 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
             ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
-                // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
-                unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(p).run_event() };
+                // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in
+                // `ctx`. `run_event` may free the allocation, so pass the raw
+                // pointer through — never form a `&mut` here whose protector
+                // would span the dealloc.
+                unsafe { DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>()) };
                 Ok(())
             },
         });

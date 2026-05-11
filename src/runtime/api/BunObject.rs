@@ -2240,16 +2240,11 @@ pub mod JSZlib {
         }
     }
 
-    /// Local shim for Zig's `list.allocatedSlice()` — exposes the full
-    /// `[0..capacity)` window as `&mut [u8]` for libdeflate to write into.
-    /// SAFETY: caller must `set_len()` to the bytes actually written before
-    /// reading; the uninitialized tail is treated as scratch space.
-    #[inline]
-    unsafe fn allocated_slice(list: &mut Vec<u8>) -> &mut [u8] {
-        // SAFETY: ptr is valid for `capacity` bytes; libdeflate writes raw
-        // bytes and the caller fixes up `len` afterwards.
-        unsafe { core::slice::from_raw_parts_mut(list.as_mut_ptr(), list.capacity()) }
-    }
+    // PORT NOTE: Zig's `list.allocatedSlice()` (the full `[0..capacity)` window)
+    // was previously shimmed here as `&mut [u8]`, but materializing `&mut [u8]`
+    // over uninitialized bytes is UB in Rust regardless of later `set_len`.
+    // Callers now use `Vec::spare_capacity_mut()` (-> `&mut [MaybeUninit<u8>]`)
+    // with `compress_into` / `decompress_into`, which is the sound equivalent.
 
     // PORT NOTE: Zig exported `reader_deallocator` / `compressor_deallocator`
     // to free a heap-allocated reader/compressor (and its owned `ArrayList`)
@@ -2472,10 +2467,12 @@ pub mod JSZlib {
                 loop {
                     // Zig passes list.allocatedSlice() (= [0..capacity]) every iteration;
                     // libdeflate restarts decompression from scratch on each call.
-                    let result = decompressor.decompress(
+                    // Reset len to 0 so spare_capacity_mut() spans the full [0..capacity)
+                    // window (cheap: u8 has no Drop, this just zeroes `len`).
+                    list.clear();
+                    let result = decompressor.decompress_into(
                         compressed,
-                        // SAFETY: see `allocated_slice` doc — set_len follows.
-                        unsafe { allocated_slice(&mut list) },
+                        list.spare_capacity_mut(),
                         if is_gzip {
                             bun_libdeflate::Encoding::Gzip
                         } else {
@@ -2483,7 +2480,8 @@ pub mod JSZlib {
                         },
                     );
 
-                    // SAFETY: result.written ≤ list.capacity()
+                    // SAFETY: result.written ≤ list.capacity() and libdeflate has
+                    // initialized output[..result.written].
                     unsafe { list.set_len(result.written) };
 
                     if result.status == bun_libdeflate::Status::InsufficientSpace {
@@ -2651,10 +2649,9 @@ pub mod JSZlib {
 
                 loop {
                     // list.len() == 0 here (no retry path), so spare == [0..capacity] == allocatedSlice().
-                    let result = compressor.compress(
+                    let result = compressor.compress_into(
                         compressed,
-                        // SAFETY: see `allocated_slice` doc — set_len follows.
-                        unsafe { allocated_slice(&mut list) },
+                        list.spare_capacity_mut(),
                         encoding,
                     );
 

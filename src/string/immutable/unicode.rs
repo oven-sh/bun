@@ -951,15 +951,12 @@ impl BOM {
                 Ok(bytes)
             }
             BOM::Utf16Le => {
+                // `trimmed_bytes` is `&[u8]` at offset 2 of a `Vec<u8>`; alignment is
+                // not guaranteed ≥ 2, so casting to `&[u16]` (the Zig `@alignCast`
+                // port) is UB. Route through the byte-level helper which copies into
+                // an aligned `Vec<u16>` first.
                 let trimmed_bytes = &bytes[Self::UTF16_LE_BYTES.len()..];
-                // SAFETY: trimmed bytes are pairs of u8 forming u16 LE; alignment may be 1 — Zig used @alignCast.
-                let trimmed_bytes_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(
-                        trimmed_bytes.as_ptr().cast::<u16>(),
-                        trimmed_bytes.len() / 2,
-                    )
-                };
-                let out = bun_core::strings::to_utf8_alloc(trimmed_bytes_u16);
+                let out = bun_core::strings::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
                 Ok(out)
             }
@@ -991,15 +988,10 @@ impl BOM {
                 Ok(&list[..len - n])
             }
             BOM::Utf16Le => {
-                let trimmed_bytes = &list[Self::UTF16_LE_BYTES.len()..];
-                // SAFETY: see remove_and_convert_to_utf8_and_free.
-                let trimmed_bytes_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(
-                        trimmed_bytes.as_ptr().cast::<u16>(),
-                        trimmed_bytes.len() / 2,
-                    )
-                };
-                let out = bun_core::strings::to_utf8_alloc(trimmed_bytes_u16);
+                // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
+                // u16-alignment guarantee, so use the byte-level transcode helper.
+                let out =
+                    bun_core::strings::to_utf8_alloc_from_le_bytes(&list[Self::UTF16_LE_BYTES.len()..]);
                 list.clear();
                 list.extend_from_slice(&out);
                 // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor

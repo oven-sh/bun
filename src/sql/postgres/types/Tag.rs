@@ -298,43 +298,39 @@ impl Tag {
     // Zig: pub const toJSTypedArrayType / toJS / fromJS = @import("../../../sql_jsc/...").*;
     // Deleted per PORTING.md — these become extension-trait methods in `bun_sql_jsc`.
 
-    // TODO(port): `byteArrayType` / `pgArrayType` returned a *type* at comptime based on a
-    // comptime `Tag` value. Rust cannot return a type from a const fn. Callers should
-    // instead name `PostgresBinarySingleDimensionArray<i32>` / `<f32>` directly, or this
-    // can be modeled as a trait with an associated type if dispatch-by-Tag is needed.
-    //
-    // Original mapping:
-    //   .int4_array   => i32
-    //   .float4_array => f32
-    //   else          => error.UnsupportedArrayType
+    // PORT NOTE: `byteArrayType` / `pgArrayType` / `PostgresBinarySingleDimensionArray`
+    // are not ported. The Zig version overlaid an `extern struct` of i32 fields onto a
+    // `[]const u8` wire buffer via `@ptrCast(@alignCast(@constCast(...)))` and byte-swapped
+    // in place. In Rust that is UB on two axes: (1) the recv buffer carries no 4-byte
+    // alignment guarantee, and (2) writing through a pointer derived from `&[u8]` violates
+    // Stacked Borrows / lets LLVM elide the writes via the `readonly` parameter attribute
+    // (observed: release-asan left `len` un-swapped → 192MB OOB memcpy in SQLClient.cpp).
+    // The sole caller — `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array` — instead
+    // does explicit unaligned field reads + copies into an owned buffer. See that function
+    // for the wire layout and the original `.int4_array => i32` / `.float4_array => f32`
+    // element-type mapping.
 }
 
 // Zig: `fn PostgresBinarySingleDimensionArray(comptime T: type) type { return extern struct { ... } }`
-#[repr(C)]
-pub struct PostgresBinarySingleDimensionArray<T> {
-    // struct array_int4 {
-    //   int4_t ndim; /* Number of dimensions */
-    //   int4_t _ign; /* offset for data, removed by libpq */
-    //   Oid elemtype; /* type of element in the array */
-    //
-    //   /* First dimension */
-    //   int4_t size; /* Number of elements */
-    //   int4_t index; /* Index of first element */
-    //   int4_t first_value; /* Beginning of integer data */
-    // };
-    pub ndim: i32,
-    pub offset_for_data: i32,
-    pub element_type: i32,
-
-    pub len: i32,
-    pub index: i32,
-    pub first_value: T,
-}
+// Not ported — see PORT NOTE on `Tag` above. Kept here only as documentation of the
+// wire header shape the Zig code overlaid:
+//
+//   struct array_int4 {
+//     int4_t ndim;        /* Number of dimensions */
+//     int4_t _ign;        /* offset for data, removed by libpq */
+//     Oid    elemtype;    /* type of element in the array */
+//     /* First dimension */
+//     int4_t size;        /* Number of elements */
+//     int4_t index;       /* Index of first element */
+//     int4_t first_value; /* Beginning of integer data */
+//   };
 
 /// `@bitCast(@byteSwap(@as(Int, @bitCast(val))))` — wire-order byte swap for
-/// the element types `PostgresBinarySingleDimensionArray` is instantiated with
-/// (`i32` / `f32`; see `byteArrayType`). Replaces the old generic
-/// `byte_swap_same_size` `transmute_copy` shim with safe `to_bits`/`from_bits`.
+/// the element types the Zig `PostgresBinarySingleDimensionArray` was instantiated
+/// with (`i32` / `f32`; see Zig `byteArrayType`). Used by
+/// `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array`. Replaces the old
+/// generic `byte_swap_same_size` `transmute_copy` shim with safe
+/// `to_bits`/`from_bits`.
 pub trait WireByteSwap: Copy {
     fn wire_byte_swap(self) -> Self;
 }
@@ -349,53 +345,6 @@ impl WireByteSwap for f32 {
 impl WireByteSwap for f64 {
     #[inline]
     fn wire_byte_swap(self) -> Self { f64::from_bits(self.to_bits().swap_bytes()) }
-}
-
-impl<T: WireByteSwap> PostgresBinarySingleDimensionArray<T> {
-    pub fn slice(&mut self) -> &mut [T] {
-        // `len` is server-controlled; callers must validate it against
-        // the backing buffer length before calling this.
-        if self.len <= 0 {
-            return &mut [];
-        }
-
-        // SAFETY: `first_value` is the start of a contiguous trailing array of T-sized
-        // (length-prefix, value) pairs in the wire buffer; caller has validated `len`
-        // against the backing buffer.
-        unsafe {
-            let head: *mut T = &raw mut self.first_value;
-            let mut current: *mut T = head;
-            let len: usize = usize::try_from(self.len).expect("int cast");
-            for i in 0..len {
-                // Skip every other value as it contains the size of the element
-                current = current.add(1);
-
-                let val: T = *current;
-                // Zig: const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
-                //      const swapped = @byteSwap(@as(Int, @bitCast(val)));
-                //      head[i] = @bitCast(swapped);
-                *head.add(i) = val.wire_byte_swap();
-
-                current = current.add(1);
-            }
-
-            core::slice::from_raw_parts_mut(head, len)
-        }
-    }
-
-    pub fn init(bytes: &[u8]) -> *mut Self {
-        // SAFETY: caller guarantees `bytes` is at least `size_of::<Self>()` and suitably
-        // aligned for `Self`. Zig used @ptrCast(@alignCast(@constCast(bytes.ptr))).
-        unsafe {
-            let this: *mut Self = bytes.as_ptr().cast_mut().cast::<Self>();
-            (*this).ndim = i32::swap_bytes((*this).ndim);
-            (*this).offset_for_data = i32::swap_bytes((*this).offset_for_data);
-            (*this).element_type = i32::swap_bytes((*this).element_type);
-            (*this).len = i32::swap_bytes((*this).len);
-            (*this).index = i32::swap_bytes((*this).index);
-            this
-        }
-    }
 }
 
 // ported from: src/sql/postgres/types/Tag.zig

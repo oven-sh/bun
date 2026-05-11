@@ -164,8 +164,8 @@ impl<'a> Printer<'a> {
         let final_ref = symbols.follow(ref_);
         if let Some(local_names) = self.local_names {
             if let Some(local_name) = local_names.get(&final_ref) {
-                // SAFETY: LocalsResultsMap values are arena-owned slices valid for `'a`.
-                return unsafe { crate::arena_str(*local_name) };
+                // `local_names: &'a LocalsResultsMap` → `&'a Box<[u8]>` → `&'a [u8]`.
+                return &**local_name;
             }
         }
 

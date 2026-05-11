@@ -570,16 +570,17 @@ impl FileReader {
     }
 
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is
-    // invoked from the Source's JS finalizer path; it also calls `parent().deinit()`.
+    // invoked from the Source's JS finalizer path via `SourceContext::deinit_fn`.
     // Not `pub`: reached only via the `SourceContext` trait impl below.
+    //
+    // Only side-effect teardown lives here. Owned fields (buffered: Vec, reader:
+    // BufferedReader, pending_value: Strong, lazy: Arc) drop when the caller
+    // (`NewSource::decrement_count`) reclaims the `Box<Source>` *after* this
+    // returns. Freeing the parent here (Zig: `this.parent().deinit()`) would
+    // deallocate the storage backing `&self` while the borrow is still live
+    // — a dangling-reference UAF — so ownership release stays with the caller.
     fn deinit(&self) {
-        // Owned fields (buffered: Vec, reader: BufferedReader, pending_value: Strong,
-        // lazy: Arc) drop automatically; only genuine side effects remain.
         self.reader().update_ref(false);
-        // SAFETY: see `parent()`. `Source` is always `Box`-allocated
-        // (`bun.TrivialNew`); this is the terminal owner-release matching Zig
-        // `this.parent().deinit()` → `bun.destroy(this)`.
-        unsafe { drop(bun_core::heap::take(self.parent())) };
     }
 
     #[inline]
@@ -1016,8 +1017,12 @@ impl FileReader {
         }
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
-            // SAFETY: see `parent()`.
-            let _ = unsafe { (*self.parent()).decrement_count() };
+            let parent = self.parent();
+            // SAFETY: `parent` was produced by `Source::new` (`Box::into_raw`).
+            // Tail position — `self` (a field of `*parent`) is not accessed
+            // after this call, which may free the allocation when the refcount
+            // hits zero.
+            let _ = unsafe { Source::decrement_count(parent) };
         }
     }
 

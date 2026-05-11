@@ -83,7 +83,7 @@ fn deref_guard(
     fn drop_fn(p: *const JSValkeyClient) {
         // SAFETY: `p` was a live `&JSValkeyClient` at guard creation; the
         // intrusive `ref_()` taken just before guarantees liveness here.
-        unsafe { (*p).deref() }
+        unsafe { JSValkeyClient::deref(p.cast_mut()) }
     }
     scopeguard::guard(this, drop_fn as fn(*const JSValkeyClient))
 }
@@ -418,11 +418,22 @@ impl JSValkeyClient {
         // SAFETY: `self` is live; intrusive count is interior-mutable.
         unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
+    /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
+    /// which frees the heap allocation. After this returns `this` may dangle.
+    ///
+    /// Takes a raw pointer (not `&self`) because a `&self` argument would carry
+    /// a Stacked Borrows protector for the whole call frame, making the
+    /// in-frame deallocation in `deinit` UB ("deallocating while item is
+    /// protected"). Callers that hold a live `&Self` and can prove the count
+    /// stays > 0 may pass `std::ptr::from_ref(self).cast_mut()`.
+    ///
+    /// # Safety
+    /// `this` must point to a live, `heap`-allocated `JSValkeyClient` and the
+    /// caller must own one ref.
     #[inline]
-    pub fn deref(&self) {
-        // SAFETY: `self` is live; may free on last deref (caller must not
-        // touch `self` afterwards — same contract as Zig).
-        unsafe { bun_ptr::RefCount::deref(std::ptr::from_ref::<Self>(self).cast_mut()) };
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe { bun_ptr::RefCount::deref(this) };
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -1137,7 +1148,9 @@ impl JSValkeyClient {
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
-            self.deref();
+            // SAFETY: balanced with add_timer's ref_(); count stays > 0 so
+            // `&self` remains valid past this call.
+            unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         }
     }
 
@@ -1414,7 +1427,7 @@ impl JSValkeyClient {
         let _defer = scopeguard::guard(self_ptr, |p| unsafe {
             // Update poll reference to allow garbage collection of disconnected clients
             (*p).update_poll_ref();
-            (*p).deref();
+            JSValkeyClient::deref(p.cast_mut());
         });
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1498,7 +1511,7 @@ impl JSValkeyClient {
                 // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
                 unsafe {
                     (*ctx).client_mut().close();
-                    (*ctx).deref();
+                    JSValkeyClient::deref(ctx.cast_mut());
                 }
                 // self_ dropped here (Box freed).
             }
@@ -1623,7 +1636,8 @@ impl JSValkeyClient {
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { (*p).deref() });
+        let errdefer_deref =
+            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p.cast_mut()) });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {
@@ -1706,21 +1720,30 @@ impl JSValkeyClient {
 
     // Called by RefCounted::destructor when ref_count hits 0.
     unsafe fn deinit(this: *mut JSValkeyClient) {
-        // SAFETY: last ref dropped; exclusive access.
-        let this = unsafe { &*this };
-        debug_assert!(this.client.get().socket.is_closed());
-        if let Some(s) = this._secure.get() {
-            // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+        // SAFETY: last ref dropped; exclusive access. The shared borrow is
+        // scoped so it ends before we reclaim the Box below — the final
+        // `heap::take` must consume the original `*mut` (which carries the
+        // allocation's Unique provenance from `Box::into_raw`), not a
+        // pointer re-derived from `&Self` (SharedReadOnly under Stacked
+        // Borrows, which would make the dealloc-write UB).
+        {
+            let this_ref = unsafe { &*this };
+            debug_assert!(this_ref.client.get().socket.is_closed());
+            if let Some(s) = this_ref._secure.get() {
+                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
+                unsafe { boringssl::c::SSL_CTX_free(s) };
+            }
+            this_ref.client_mut().shutdown(None);
+            this_ref.poll_ref.with_mut(|r| r.disable());
+            this_ref.stop_timers();
+            this_ref.ref_count.assert_no_refs();
         }
-        this.client_mut().shutdown(None);
-        this.poll_ref.with_mut(|r| r.disable());
-        this.stop_timers();
-        this.ref_count.assert_no_refs();
 
         // bun.destroy(this) → reclaim the Box allocated in `new()`.
-        // SAFETY: `this` was created via heap::alloc in `new()`.
-        drop(unsafe { bun_core::heap::take(std::ptr::from_ref::<JSValkeyClient>(this).cast_mut()) });
+        // SAFETY: `this` was created via `heap::alloc` in `new()`; the shared
+        // borrow above has ended, and `this` is the original raw pointer with
+        // its Box-derived write provenance intact.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Keep the event loop alive, or don't keep it alive
@@ -1994,7 +2017,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
-            (*p).deref();
+            JSValkeyClient::deref(p.cast_mut());
         });
 
         let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
@@ -2021,7 +2044,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
-            (*p).deref();
+            JSValkeyClient::deref(p.cast_mut());
         });
 
         narrow_terminated(this.client_mut().on_close())

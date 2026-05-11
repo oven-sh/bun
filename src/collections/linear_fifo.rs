@@ -284,22 +284,34 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // a fixed byte scratch and compute the element count at runtime.
             // PERF(port): was stack array sized by page_size/2/sizeof(T) — same
             // byte footprint here, no heap.
+            //
+            // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
+            // writing through it as `*mut T` would violate
+            // `ptr::copy_nonoverlapping`'s alignment precondition for any
+            // `align_of::<T>() > 1`, so the tmp↔buf transfers are done at byte
+            // granularity instead — `*mut u8` only requires 1-byte alignment,
+            // which both the scratch and `buf` (cast down from `*T`) satisfy.
             let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
-            let tmp_ptr = tmp_bytes.as_mut_ptr().cast::<T>();
-            // TODO(port): alignment — tmp_bytes is 1-aligned; for T with
-            // align > 1 this is UB. Phase B: use an aligned scratch type.
-            let tmp_len = (PAGE_SIZE_MIN / 2) / mem::size_of::<T>();
+            let tmp_ptr: *mut u8 = tmp_bytes.as_mut_ptr().cast::<u8>();
+            let t_size = mem::size_of::<T>();
+            let tmp_len = (PAGE_SIZE_MIN / 2) / t_size;
 
             while self.head != 0 {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
                 let buf = self.buf.as_mut_slice();
-                // SAFETY: tmp disjoint from buf; the middle copy overlaps so use
-                // ptr::copy (memmove); the others don't.
+                // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
+                // `n * size_of::<T>()` raw bytes (no `T` typed access through
+                // the 1-aligned scratch). The buf→buf shift overlaps, so use
+                // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
                 unsafe {
-                    ptr::copy_nonoverlapping(buf.as_ptr(), tmp_ptr, n);
+                    ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
                     ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
-                    ptr::copy_nonoverlapping(tmp_ptr, buf.as_mut_ptr().add(m), n);
+                    ptr::copy_nonoverlapping(
+                        tmp_ptr,
+                        buf.as_mut_ptr().add(m).cast::<u8>(),
+                        n * t_size,
+                    );
                 }
                 self.head -= n;
             }

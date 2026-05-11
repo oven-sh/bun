@@ -152,26 +152,14 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // TODO(port): Zig checked that `ev.timer` was not the 0xAA undefined-memory pattern.
-            // Rust has no equivalent debug-undefined fill; this check is a no-op here. Kept as a
-            // structural marker for Phase B review.
-            // SAFETY: reading initialized bytes of `timer` for a debug sanity check.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(
-                    core::ptr::addr_of!(ev_ref.timer).cast::<u8>(),
-                    core::mem::size_of_val(&ev_ref.timer),
-                )
-            };
-            let mut all_aa = true;
-            for &b in bytes {
-                if b != 0xAA {
-                    all_aa = false;
-                    break;
-                }
-            }
-            if all_aa {
-                panic!("timer is undefined memory in watcherReleaseAndSubmitEvent");
-            }
+            // PORT NOTE: Zig checked that `ev.timer` was not the 0xAA undefined-memory pattern by
+            // reinterpreting it as `[size]u8`. That check has no Rust equivalent: (1) Rust does not
+            // fill uninitialized memory with 0xAA, (2) `std::time::Instant` is an opaque std type
+            // that contains padding bytes on Linux/Windows, so materialising `&[u8]` over it would
+            // read uninitialized padding (UB), and (3) the type system already guarantees `timer`
+            // is initialized — `HotReloadEvent::init_empty` constructs it and `watcher_acquire_event`
+            // overwrites it with `Instant::now()` before any release. The Zig check is therefore
+            // dropped entirely rather than ported.
             ev_ref.debug_mutex.unlock();
         }
 

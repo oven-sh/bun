@@ -933,9 +933,9 @@ impl<'a> Parser<'a> {
             // PORT NOTE: `Loc` lacks `Hash` (logger crate), so the
             // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
             // matches Zig's ArrayHashMap linear behaviour at small N (one
-            // entry per top-level `enum`). `scope_order_to_visit` is `&'a mut
-            // [_]`; save/restore moves the unique borrow out into a local and
-            // back (Zig held a plain `[]ScopeOrder` slice value).
+            // entry per top-level `enum`). `scope_order_to_visit` is
+            // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
+            // copy, mirroring the Zig `[]ScopeOrder` slice value.
             let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> =
                 BumpVec::new_in(arena);
@@ -943,33 +943,24 @@ impl<'a> Parser<'a> {
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
-                        // Stash the unique `&'a mut [_]` by value — no raw ptr needed.
-                        let old_scopes_in_order: &'a mut [_] =
-                            core::mem::replace(&mut p.scope_order_to_visit, &mut []);
+                        let old_scopes_in_order = p.scope_order_to_visit;
                         let idx = p
                             .scopes_in_order_for_enum
                             .keys()
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
-                        // Map stores `NonNull<[ScopeOrder]>` (Zig `[]ScopeOrder`
-                        // slice value); materialize the sole live `&'a mut` here
-                        // — `append_part → visit_stmts` re-reads the raw map
-                        // entry, never as `&mut`, so no aliasing `&mut` exists.
-                        // SAFETY: arena-owned slice recorded at parse time
-                        // (parseTypescript.rs), valid for `'a`; the previous
-                        // unique borrow was just stashed in
-                        // `old_scopes_in_order` above.
-                        p.scope_order_to_visit = unsafe {
-                            &mut *p.scopes_in_order_for_enum.values()[idx].as_ptr()
-                        };
+                        // Map stores `&'a [ScopeOrder]` (Zig `[]ScopeOrder` slice
+                        // value); shared borrow may freely alias the inner
+                        // re-lookup performed by `append_part → visit_stmts`.
+                        p.scope_order_to_visit =
+                            p.scopes_in_order_for_enum.values()[idx];
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut enum_parts, sliced)?;
                         preprocessed_enums.push(enum_parts);
 
-                        // Restore the unique borrow stashed above (no unsafe).
                         p.scope_order_to_visit = old_scopes_in_order;
                     }
                 }
@@ -1072,11 +1063,9 @@ impl<'a> Parser<'a> {
                             .expect("enum scope-order entry");
                         let enum_scope_count =
                             p.scopes_in_order_for_enum.values()[idx].len();
-                        // Re-slice the `&'a mut [_]` we own — move out, split,
-                        // move the tail back in (no unsafe needed).
-                        let taken: &'a mut [_] =
-                            core::mem::replace(&mut p.scope_order_to_visit, &mut []);
-                        p.scope_order_to_visit = &mut taken[enum_scope_count..];
+                        // Advance the shared-slice cursor past this enum's scopes.
+                        p.scope_order_to_visit =
+                            &p.scope_order_to_visit[enum_scope_count..];
                     }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);

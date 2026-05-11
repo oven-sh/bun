@@ -273,7 +273,7 @@ impl<'a> MiniEventLoop<'a> {
 
     /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
     ///
-    /// The `mini_ctx` vtable shims (`file_polls`/`alloc_file_poll`) are reached
+    /// The `mini_ctx` vtable shim (`file_polls`) is reached
     /// via `EventLoopCtx` from inside FilePoll callbacks fired by
     /// `UwsLoop::tick()`, which is itself invoked from
     /// `tick`/`tick_once`/`tick_without_idle` while those methods hold
@@ -523,7 +523,6 @@ bun_io::link_impl_EventLoopCtx! {
         // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
         // reaches this body.
         file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
-        alloc_file_poll() => (*MiniEventLoop::file_polls_raw(this)).get(),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
         // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
@@ -559,8 +558,8 @@ impl<'a> Drop for MiniEventLoop<'a> {
 // ───────────────────────────── MiniVM ─────────────────────────────
 
 pub struct MiniVM<'a> {
-    // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()` /
-    // `alloc_file_poll()` mutate the loop (lazy-init the store). Hold `&'a mut` instead of
+    // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()`
+    // mutates the loop (lazy-inits the store). Hold `&'a mut` instead of
     // casting `&T`→`&mut T` (UB, and forbidden by PORTING.md "no raw pointers to silence
     // borrowck"). Zig's `*MiniEventLoop` was always mutable.
     pub mini: &'a mut MiniEventLoop<'a>,
@@ -574,11 +573,6 @@ impl<'a> MiniVM<'a> {
     #[inline]
     pub fn loop_(&self) -> &MiniEventLoop<'a> {
         &*self.mini
-    }
-
-    #[inline]
-    pub fn alloc_file_poll(&mut self) -> *mut FilePoll {
-        self.mini.file_polls().get()
     }
 
     #[inline]

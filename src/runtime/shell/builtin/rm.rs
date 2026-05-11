@@ -866,9 +866,16 @@ impl ShellRmTask {
         if !self.opts.verbose {
             return Ok(());
         }
-        // SAFETY: the calling worker thread has exclusive access to
-        // `dir_task`'s non-atomic fields; `deleted_entries` is disjoint from
-        // every other live borrow (`&self`, `path`).
+        // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
+        // Ownership starts on the worker that runs `remove_entry*` and is
+        // handed to the last child via `need_to_wait`: the parent
+        // release-stores `true` (SeqCst, `remove_entry_dir`) after its final
+        // append here, and the child acquire-loads it (SeqCst, `post_run`)
+        // before re-entering via `delete_after_waiting_for_children`. That
+        // release/acquire pair makes prior `deleted_entries` writes visible to
+        // the new owner, so this `&mut` is exclusive and race-free. The
+        // reborrow is also disjoint from every other live borrow (`&self`,
+        // `path`).
         let entries = unsafe { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
@@ -1385,8 +1392,21 @@ impl DirTask {
                     // finished, while the parent was still in `remove_entry_dir`.
                     let p = &*me.parent_task;
                     let tasks_left = p.subtask_count.fetch_sub(1, Ordering::SeqCst);
+                    // PORT NOTE: rm.zig uses `.monotonic` here, but that is a
+                    // formal data race on the parent's non-atomic
+                    // `deleted_entries`: the parent thread may have appended
+                    // verbose paths for plain-file children *after* scheduling
+                    // this subtask and *before* its `need_to_wait.store(true,
+                    // SeqCst)` (the only release that covers those writes). A
+                    // Relaxed load reading `true` does not synchronize-with
+                    // that store, so the `Vec<u8>` writes would not
+                    // happen-before our `delete_after_waiting_for_children` →
+                    // `verbose_deleted(parent)` access below. Use SeqCst
+                    // (Acquire suffices) so observing `true` establishes the
+                    // ownership hand-off and makes the parent's
+                    // `deleted_entries` writes visible.
                     let parent_still_in_remove_entry_dir =
-                        !p.need_to_wait.load(Ordering::Relaxed);
+                        !p.need_to_wait.load(Ordering::SeqCst);
                     if !parent_still_in_remove_entry_dir && tasks_left == 2 {
                         Self::delete_after_waiting_for_children(me.parent_task);
                     }

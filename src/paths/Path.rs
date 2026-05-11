@@ -942,13 +942,26 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// `append`/`append_join` normalize separators going forward — so
     /// passing a built path to a callee typed with a different `sep`
     /// option is sound. Rust's const-generic monomorphization makes them
-    /// nominally distinct, hence this explicit cast.
+    /// nominally distinct, hence this explicit conversion.
     #[inline]
     pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
-        // SAFETY: `Path<U, KIND, *, CHECK>` differs only in a phantom const
-        // parameter; field layout (`_buf: Buf<U, *>`, `_unit: PhantomData`)
-        // is byte-identical across `SEP_OPT` values.
-        unsafe { core::mem::transmute_copy(&core::mem::ManuallyDrop::new(self)) }
+        // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
+        // Rust gives no layout-compat guarantee between distinct const-generic
+        // instantiations. Rebuilding field-by-field is layout-agnostic and
+        // optimizes to the same no-op move.
+        let mut this = ManuallyDrop::new(self);
+        let len = this._buf.len;
+        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
+        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
+        // and observe the now-uninitialized field.
+        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
+        Path {
+            _buf: Buf {
+                pooled: ManuallyDrop::new(pooled),
+                len,
+            },
+            _unit: PhantomData,
+        }
     }
 
     pub fn slice_z(&mut self) -> &U::ZSlice {

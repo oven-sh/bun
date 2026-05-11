@@ -155,7 +155,9 @@ pub fn scan_imports_and_exports(
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
-                    this.log,
+                    // SAFETY: `*mut Log` backref valid for the link step; see
+                    // `LinkerContext::log_mut`.
+                    unsafe { &mut *this.log },
                 );
 
                 // Validate cross-file "composes: ... from" named imports and
@@ -431,7 +433,7 @@ pub fn scan_imports_and_exports(
                         source_index_.get(),
                     );
 
-                    if this.log.errors > 0 {
+                    if this.log().errors > 0 {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }
@@ -1422,7 +1424,8 @@ mod __css_validation {
                         .local_scope
                         .contains_adapted(name_v, SliceBoxAdapter)
                     {
-                        let _ = this.log.add_error_fmt(
+                        // SAFETY: split-borrow — see `LinkerContext::log_mut`.
+                        let _ = unsafe { &mut *this.log }.add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
@@ -1679,7 +1682,9 @@ mod __css_validation {
             all_css_asts,
             all_symbols: &this.graph.symbols,
             all_sources: input.source,
-            log: this.log,
+            // SAFETY: split-borrow with `&this.graph.symbols` above; raw-deref
+            // the `*mut Log` backref. See `LinkerContext::log_mut`.
+            log: unsafe { &mut *this.log },
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();

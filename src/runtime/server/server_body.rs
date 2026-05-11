@@ -875,9 +875,12 @@ impl ServePlugins {
     ///
     /// # Safety
     /// `this` must originate from [`ServePlugins::init`] (carry `heap::alloc`
-    /// provenance) so the eventual `deref_` can free it.
+    /// write provenance) so the eventual `deref_` can free it. Do **not** derive
+    /// `this` from a `&Self`/`&mut Self` reborrow — under Stacked Borrows that
+    /// pointer is invalidated by later writes through the reference and cannot
+    /// be used to deallocate.
     #[inline]
-    unsafe fn guard_ref(this: *const Self) -> ServePluginsRef {
+    unsafe fn guard_ref(this: *mut Self) -> ServePluginsRef {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_() };
         ServePluginsRef(this)
@@ -885,20 +888,20 @@ impl ServePlugins {
 
     /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
     ///
-    /// Takes a raw pointer (not `&self`) so the original `heap::alloc` provenance
+    /// Takes the raw `*mut` (not `&self`) so the original `heap::alloc` provenance
     /// from [`ServePlugins::init`] is preserved for the final `heap::take` — going
     /// through `&self` would narrow provenance to read-only and make the drop UB.
     ///
     /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
     /// hold a counted reference.
-    pub unsafe fn deref_(this: *const Self) {
+    pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: caller contract — `this` is live while refcount > 0
         let rc = unsafe { &(*this).ref_count };
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
             // SAFETY: refcount hit zero; `this` carries the heap::alloc provenance from init()
-            unsafe { drop(bun_core::heap::take(this.cast_mut())) };
+            unsafe { drop(bun_core::heap::take(this)) };
         }
     }
 
@@ -955,9 +958,11 @@ impl ServePlugins {
         let bunfig_folder: &[u8] =
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
-        // SAFETY: `self` originates from a `*mut ServePlugins` (heap::alloc in init()); the
-        // raw pointer preserves that provenance for the paired deref_ on scope exit.
-        let _deref_guard = unsafe { Self::guard_ref(self) };
+        // NOTE: the keep-alive ref/deref pair (Zig: `this.ref(); defer this.deref()`)
+        // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
+        // `*mut ServePlugins` directly. Deriving the guard's pointer from `&mut self`
+        // here would give it a tag that is invalidated by the writes to `self.state`
+        // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
@@ -1094,7 +1099,12 @@ impl ServePlugins {
 /// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
 /// reference via [`ServePlugins::deref_`] on scope exit — the Rust spelling of
 /// Zig's `defer this.deref()`.
-struct ServePluginsRef(*const ServePlugins);
+///
+/// Holds the raw `*mut` from [`ServePlugins::init`] so the final `heap::take`
+/// has write/dealloc provenance over the whole allocation. Never construct this
+/// from a pointer derived through `&ServePlugins` — that yields a SharedReadOnly
+/// tag under Stacked Borrows and freeing through it is UB.
+struct ServePluginsRef(*mut ServePlugins);
 
 impl ServePluginsRef {
     /// Adopt an existing +1 reference (no increment).
@@ -1103,7 +1113,7 @@ impl ServePluginsRef {
     /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
     /// `heap::alloc` provenance from [`ServePlugins::init`].
     #[inline]
-    unsafe fn adopt(ptr: *const ServePlugins) -> Self {
+    unsafe fn adopt(ptr: *mut ServePlugins) -> Self {
         Self(ptr)
     }
 }
@@ -1252,15 +1262,17 @@ where
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
-    fn on_websocket_upgrade(
-        &mut self,
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
         res: *mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        Self::on_web_socket_upgrade(self, bun_opaque::opaque_deref_mut(res), req, context, id);
+        // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
+        // dispatch inside `on_web_socket_upgrade`.
+        unsafe { Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id) };
     }
 }
 
@@ -1366,6 +1378,14 @@ where
     pub fn get_or_load_plugins(&mut self, callback: ServePluginsCallback<'_>) -> GetOrStartLoadResult<'_> {
         if let Some(p) = self.plugins {
             let global = self.global();
+            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`
+            // (Zig: `this.ref(); defer this.deref()`). The guard is built from the
+            // heap-allocated `*mut` directly so its provenance survives the
+            // `&mut *p` reborrow below and remains valid for `heap::take` on drop.
+            //
+            // SAFETY: `p` was produced by `ServePlugins::init` (heap::alloc) and is
+            // live while held in `self.plugins`.
+            let _deref_guard = unsafe { ServePlugins::guard_ref(p.as_ptr()) };
             // SAFETY: `plugins` holds a counted ref produced by
             // `ServePlugins::init` (heap::alloc); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
@@ -2983,8 +3003,16 @@ where
         Self::handle_request(server_ptr, should_deinit_ptr, prepared, req, response_value);
     }
 
-    pub fn on_web_socket_upgrade(
-        &mut self,
+    /// # Safety
+    /// `this` is the raw user-data pointer registered with `app.ws(...)` cast
+    /// to `*mut Self`. Its **actual pointee type depends on `id`**: `id == 1`
+    /// registers a `*mut UserRoute<SSL,DEBUG>` (mod.rs per-route ws), `id == 0`
+    /// registers `*mut Self` (mod.rs `/*` fallback). The receiver is therefore
+    /// kept raw and only dereferenced *after* dispatching on `id`, so no
+    /// wrong-typed `&mut Self` reference is ever materialized (which would be
+    /// instant UB regardless of whether it is read).
+    pub unsafe fn on_web_socket_upgrade(
+        this: *mut Self,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
@@ -2992,33 +3020,39 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // This is actually a UserRoute if id is 1 so it's safe to cast
-            // SAFETY: uws passes the UserRoute* as the context when id == 1
-            let user_route = unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<UserRoute<SSL, DEBUG>>() };
+            // SAFETY: for `id == 1` the registered user-data IS
+            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
+            // live for the request's duration. Raw-ptr cast only — no
+            // intermediate `&mut Self` was ever created.
+            let user_route = unsafe { &mut *this.cast::<UserRoute<SSL, DEBUG>>() };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
-        if self.config.on_node_http_request.is_some() {
+        let self_ptr: *mut Self = this;
+        // SAFETY: for `id == 0` the registered user-data IS `*mut Self`
+        // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
+        // duration.
+        let this = unsafe { &mut *self_ptr };
+        if this.config.on_node_http_request.is_some() {
             // PORT NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
-            Self::on_node_http_request_with_upgrade_ctx(self, req, resp, upgrade_ctx);
+            Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
             return;
         }
-        if self.config.on_request.is_none() {
+        if this.config.on_request.is_none() {
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
             resp.write_status(b"403 Forbidden");
             resp.end_without_body(true);
             return;
         }
-        self.pending_requests += 1;
+        this.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*self.request_pool).get() };
+        let ctx_slot = unsafe { (*this.request_pool).get() };
         let mut should_deinit_context = false;
-        let self_ptr: *mut Self = self;
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot,
             self_ptr,
@@ -3030,13 +3064,13 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero.
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
-        let signal = AbortSignal::new(&self.global());
+        let signal = AbortSignal::new(&this.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
@@ -3068,15 +3102,15 @@ where
         ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-        let global = self.global();
+        let global = this.global();
         let args = [
             request_object.to_js(&global),
-            self.js_value_assert_alive(),
+            this.js_value_assert_alive(),
         ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match self.config.on_request.as_ref().unwrap().get().call(&global, self.js_value_assert_alive(), &args) {
+        let response_value = match this.config.on_request.as_ref().unwrap().get().call(&global, this.js_value_assert_alive(), &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };

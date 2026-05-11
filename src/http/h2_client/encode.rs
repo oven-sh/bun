@@ -324,9 +324,11 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
-            // Re-acquire isn't needed — we still hold the lock from line 315; just bump cursor.
-            // SAFETY: sb is still locked; buffer fields are accessible.
-            let buffer = unsafe { &mut (*sb_ptr.as_ptr()).buffer };
+            // We still hold the lock from `acquire()` above; reborrow the buffer
+            // through `sb` (NOT `sb_ptr`) so the access is a child of `sb`'s
+            // unique borrow rather than a sibling — the latter would invalidate
+            // `sb` under Stacked Borrows before `report_drain`/`release` below.
+            let buffer = &mut sb.buffer;
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {

@@ -526,9 +526,9 @@ impl ByteStream {
             // variant; JSPromiseStrong implements Drop, so dropping the enum is equivalent.
             drop(action);
         }
-        // SAFETY: `self` is the `context` field of a heap-allocated `NewSource<ByteStream>`
-        // (via `Source::new` → `Box::new`); this is the GC-finalizer teardown path.
-        unsafe { self.parent().deinit() };
+        // Enclosing `Box<NewSource<ByteStream>>` is freed by the caller
+        // (`NewSource::decrement_count`) after this returns; freeing it here would
+        // deallocate the storage backing `&mut self` (dangling UAF).
     }
 
     pub fn drain(&self) -> Vec<u8> {

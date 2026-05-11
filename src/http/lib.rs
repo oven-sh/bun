@@ -690,12 +690,22 @@ pub(crate) static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
 
 #[inline]
 pub fn http_thread() -> &'static mut HTTPThread {
-    debug_assert!(
-        HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Relaxed),
-        "http_thread initialized"
+    // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
+    // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
+    // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
+    // `debug_assert!` leaves release builds unguarded. The `Acquire` load
+    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
+    // establishing happens-before for cross-thread callers that did not
+    // themselves go through `Once::call_once` (e.g. `schedule_*` paths from
+    // the JS thread). Cost is a single relaxed-on-x86 atomic load.
+    assert!(
+        HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
+        "http_thread() called before HTTPThread::init()"
     );
-    // SAFETY: HTTP_THREAD is initialized before any HTTPClient runs and only
-    // accessed from the single HTTP thread.
+    // SAFETY: `HTTP_THREAD_INIT == true` (checked above) is set only after
+    // `HTTP_THREAD.write(..)` in `init_once`, so the `MaybeUninit` is fully
+    // written. Thread-affinity is documented (HTTP-thread-only after
+    // `on_start`); the `ThreadCell` owner assert covers debug.
     unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
 }
 #[inline]

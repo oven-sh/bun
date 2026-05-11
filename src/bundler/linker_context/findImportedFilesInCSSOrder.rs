@@ -916,12 +916,9 @@ fn debug_css_order_impl(
                 parse_graph.input_files.items_unique_key_for_additional_file(),
             )
         };
-        // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
-        // `this.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s
-        // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
-        // pointers — same layout, used read-only by the printer.
-        let local_names: &LocalsResultsMap =
-            unsafe { &*(&raw const this.mangled_props).cast::<LocalsResultsMap>() };
+        // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
+        // `bun_js_printer::MangledProps`; no cast needed.
+        let local_names: &LocalsResultsMap = &this.mangled_props;
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
 
         for (i, entry) in order.slice().iter().enumerate() {

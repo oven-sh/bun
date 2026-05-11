@@ -75,7 +75,10 @@ pub trait PosixPipeWriter {
     // in on_poll. Expose via accessor instead of requiring a field.
     fn handle(&self) -> &PollOrFd;
 
-    fn try_write(&mut self, force_sync: bool, buf: &[u8]) -> WriteResult {
+    /// Only reads `get_file_type()` / `get_fd()` from `self`; takes `&self` so
+    /// callers may pass a `buf` that borrows from a field of `self` (e.g.
+    /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
+    fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF(port): Zig used `switch { inline else }` to monomorphize
         // try_write_with_write_fn per FileType — profile in Phase B.
         let ft = if !force_sync { self.get_file_type() } else { FileType::File };
@@ -89,7 +92,7 @@ pub trait PosixPipeWriter {
     }
 
     fn try_write_with_write_fn(
-        &mut self,
+        &self,
         buf: &[u8],
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
     ) -> WriteResult {
@@ -842,20 +845,19 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf_len);
         }
 
-        // PORT NOTE: reshaped for borrowck — pass slice via raw to avoid &self/&mut self overlap.
-        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
-        let slice_ptr = self.outgoing.slice().as_ptr();
-        let slice_len = self.outgoing.slice().len();
-        // SAFETY: outgoing storage not reallocated during try_write_newly_buffered_data
-        // until after reads complete (writes happen via syscall on this slice).
-        let buf = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-        self.try_write_newly_buffered_data(buf)
+        self.try_write_newly_buffered_data()
     }
 
-    fn try_write_newly_buffered_data(&mut self, buf: &[u8]) -> WriteResult {
+    fn try_write_newly_buffered_data(&mut self) -> WriteResult {
         debug_assert!(!self.is_done);
 
-        let rc = self.try_write(self.force_sync, buf);
+        // Borrow `self.outgoing` only for the syscall. `try_write` takes `&self`
+        // so the shared borrow of `outgoing.slice()` is sound and ends before
+        // `reset()`/`Parent::on_write` below — both of which may reallocate or
+        // free `outgoing.list` (`reset` shrinks; `on_write` may re-enter
+        // `write()` on this writer). Holding a `&[u8]` fn-arg across those (the
+        // old shape) was a Stacked-Borrows protector violation / dangling ref.
+        let rc = self.try_write(self.force_sync, self.outgoing.slice());
 
         match rc {
             WriteResult::Wrote(amt) => {
@@ -919,14 +921,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Err(oom_err());
             }
 
-            // PORT NOTE: reshaped for borrowck
-            // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
-            let slice_ptr = self.outgoing.slice().as_ptr();
-            let slice_len = self.outgoing.slice().len();
-            // SAFETY: outgoing storage is not reallocated inside try_write_newly_buffered_data
-            // until after the syscall reads from this slice (only reset/wrote cursor mutation).
-            let s = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-            return self.try_write_newly_buffered_data(s);
+            return self.try_write_newly_buffered_data();
         }
 
         let rc = self.try_write(self.force_sync, buf);

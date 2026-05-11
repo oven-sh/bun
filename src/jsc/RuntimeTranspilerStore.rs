@@ -555,7 +555,12 @@ impl TranspilerJob {
                 // first populated the slot would still pass the thread-lock
                 // assert — though `thread_local!` already guarantees same-
                 // thread here.
-                unsafe { (*p.as_ptr()).reset() };
+                // Per-`import()` on the transpiler-pool worker. Like
+                // `transpile_source_code_arena`, paying `mi_heap_destroy +
+                // mi_heap_new` for every module memsets a fresh per-heap
+                // arena bitmap on the next first-alloc; retaining up to 8 M of
+                // garbage between modules keeps the heap (and its bitmap) warm.
+                unsafe { (*p.as_ptr()).reset_retain_with_limit(8 * 1024 * 1024) };
                 p
             }
             None => {

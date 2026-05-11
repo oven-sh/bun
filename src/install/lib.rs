@@ -1019,9 +1019,13 @@ pub fn initialize_mini_store() {
             // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,
             // so there is no stack-buffer watermark to inspect — `reset()` already
             // releases all bump allocations.
-            // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
+            // Spec checks `stack_allocator.fixed_buffer_allocator.end_index >=
+            // buffer.len() - 1`; the equivalent size gate is
+            // `reset_retain_with_limit` — only pay `mi_heap_destroy + mi_heap_new`
+            // once accumulated bytes exceed 8 MiB. `push()` re-publishes the
+            // (possibly unchanged) `heap_ptr()` to `AST_HEAP`.
             let _ = &mini_store.heap;
-            mini_store.memory_store.reset();
+            mini_store.memory_store.reset_retain_with_limit(8 * 1024 * 1024);
             mini_store.memory_store.push();
         }
     });

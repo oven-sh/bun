@@ -68,7 +68,14 @@ impl ASTMemoryAllocator {
         // otherwise a thread-local `ASTMemoryAllocator` reused across
         // `RuntimeTranspilerStore::run()` calls grows unboundedly (one full
         // AST worth of nodes per import).
-        self.arena.reset();
+        //
+        // Retain (not destroy) up to 8 MiB: this runs once per async
+        // `import()` on a transpiler-pool worker, and a fresh `mi_heap`'s
+        // first alloc memsets a per-heap arena bitmap. `Scope::enter` →
+        // `push()` re-publishes `heap_ptr()` to `AST_HEAP`, so when the limit
+        // *is* crossed and a real `reset()` runs underneath, the new heap
+        // pointer is wired through correctly.
+        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
         self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),
@@ -84,6 +91,15 @@ impl ASTMemoryAllocator {
         // Zig rebuilt the SFA against the stored fallback arena; Arena::reset is equivalent.
         // PERF(port): was stack-fallback — profile
         self.arena.reset();
+    }
+
+    /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
+    /// per-workspace-child re-entry). Thin delegate to
+    /// [`bun_alloc::Arena::reset_retain_with_limit`]; the cold init paths
+    /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
+    /// thread`) keep calling [`Self::reset`].
+    pub fn reset_retain_with_limit(&mut self, limit: usize) {
+        self.arena.reset_retain_with_limit(limit);
     }
 
     pub fn push(&mut self) {

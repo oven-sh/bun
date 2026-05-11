@@ -297,7 +297,9 @@ impl WorkspaceMap {
                 // end of each iter. In Rust, walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
-                arena.reset();
+                // Spec is `.reset(.retain_capacity)` — keep the `mi_heap` warm
+                // across glob patterns × matched dirs.
+                arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
                     b"package.json"
                 } else {

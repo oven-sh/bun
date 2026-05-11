@@ -1034,7 +1034,9 @@ impl ExportRenamer {
     pub fn clear_retaining_capacity(&mut self) {
         self.used.clear();
         self.string_buffer.reset();
-        self.arena.reset();
+        // Per-chunk in `computeCrossChunkDependencies`. The method *name* is
+        // already `clear_retaining_capacity`; honour that for the arena too.
+        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
     }
 
     pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {

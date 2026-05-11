@@ -3210,8 +3210,20 @@ pub mod store_ast_alloc_heap {
         }
         // SAFETY: `arena` is the live `Box::into_raw` allocation from
         // `enter()`; this thread is its only mutator.
+        //
+        // This runs once per source file in the bundler (`Transpiler::
+        // reset_store`) and once per resolve-queue iteration. A full
+        // `mi_heap_destroy + mi_heap_new` per file memsets a fresh per-heap
+        // arena bitmap on the next first alloc; retain up to 8 MiB of garbage
+        // between files instead. The AST nodes themselves (block-store) are
+        // bump-reset every file regardless, so the only effect of *not*
+        // destroying here is that previous files' embedded `AstVec` buffers
+        // become unreachable garbage in this heap until the limit is crossed
+        // — they cannot be dereferenced again because their owning AST nodes
+        // are gone. `set_thread_heap` re-publishes `heap_ptr()`, which is
+        // unchanged when under the limit and the new heap when over it.
         unsafe {
-            (*arena).reset();
+            (*arena).reset_retain_with_limit(8 * 1024 * 1024);
             bun_alloc::ast_alloc::set_thread_heap((*arena).heap_ptr());
         }
     }

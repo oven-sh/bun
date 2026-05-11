@@ -58,12 +58,14 @@ impl ModuleLoader {
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
+        // Spec ModuleLoader.zig:24-29.
+        let smol = jsc_vm.smol;
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
-            // TODO(port): Zig `arena.reset(.free_all)` / `.retain_with_limit(8M)`.
-            // bumpalo::Bump (= bun_alloc::Arena) only has `.reset()` (free all);
-            // there is no retain-with-limit variant. PERF(port): profile in Phase B.
-            let _ = jsc_vm.smol;
-            arena.reset();
+            if smol {
+                arena.reset();
+            } else {
+                arena.reset_retain_with_limit(8 * 1024 * 1024);
+            }
         }
     }
 }

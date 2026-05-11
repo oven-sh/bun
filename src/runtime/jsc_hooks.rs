@@ -1970,9 +1970,21 @@ fn transpile_source_code_inner(
                     }
                     if slot.is_none() {
                         if flags != FetchFlags::PrintSource {
-                            // PERF(port): Zig `.retain_with_limit(8M)` — bumpalo
-                            // has only `.reset()` (free-all). Profile in Phase B.
-                            arena.reset();
+                            // SAFETY: per fn contract — `jsc_vm` is the live
+                            // per-thread VM (closure runs on the same thread,
+                            // before the hook returns).
+                            if unsafe { (*jsc_vm).smol } {
+                                arena.reset();
+                            } else {
+                                // Spec ModuleLoader.zig:155
+                                // `.reset(.{.retain_with_limit = 8M})`.
+                                // See `MimallocArena::reset_retain_with_limit`
+                                // for why this is a no-op-until-limit rather
+                                // than a bump-pointer reset (each fresh
+                                // `mi_heap`'s first alloc pays
+                                // `mi_arena_pages_alloc` → bitmap memset).
+                                arena.reset_retain_with_limit(8 * 1024 * 1024);
+                            }
                         }
                         *slot = Some(arena);
                     }

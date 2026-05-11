@@ -1733,18 +1733,22 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
-                        // defer arena_state.reset(.retain_capacity) — handled at end of arm
+                        // Spec FrameworkRouter.zig: `defer arena_state.reset(
+                        // .retain_capacity)`. Handled at the end of every arm
+                        // via `reset_retain_with_limit(8M)` — keep the
+                        // `mi_heap` warm between directory entries instead of
+                        // paying `mi_heap_destroy + mi_heap_new` per file.
                         let parse_result =
                             t.style.parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
                                 log.cursor_at += u32::try_from(abs_root_len - root_len).expect("int cast");
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
-                                arena_state.reset();
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }
                             Ok(None) => {
-                                arena_state.reset();
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }
                             Ok(Some(p)) => p,
@@ -1754,7 +1758,7 @@ impl FrameworkRouter {
                             && t.ignore_underscores
                             && base.starts_with(b"_")
                         {
-                            arena_state.reset();
+                            arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
                         }
 
@@ -1773,7 +1777,7 @@ impl FrameworkRouter {
                         if param_count > 64 {
                             log.write(format_args!("Pattern cannot have more than 64 param"));
                             ctx.on_router_syntax_error(full_rel_path, log)?;
-                            arena_state.reset();
+                            arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
                         }
 
@@ -1846,7 +1850,7 @@ impl FrameworkRouter {
                             }
                         }
 
-                        arena_state.reset();
+                        arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                     }
                 }
             }

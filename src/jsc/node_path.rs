@@ -353,16 +353,10 @@ impl PathOrFileDescriptor {
     pub fn hash(&self) -> u64 {
         match self {
             Self::Path(path) => bun_wyhash::hash(path.slice()),
-            Self::Fd(fd) => {
-                // SAFETY: `Fd` is POD; reinterpret as bytes for hashing.
-                let bytes = unsafe {
-                    bun_core::ffi::slice(
-                        std::ptr::from_ref::<bun_sys::Fd>(fd).cast::<u8>(),
-                        core::mem::size_of::<bun_sys::Fd>(),
-                    )
-                };
-                bun_wyhash::hash(bytes)
-            }
+            // `Fd` is `#[repr(transparent)]` over its backing integer (`i32`
+            // on posix, `u64` on Windows), so hashing `fd.0.to_ne_bytes()` is
+            // byte-identical to the previous raw `from_raw_parts` reinterpret.
+            Self::Fd(fd) => bun_wyhash::hash(&fd.0.to_ne_bytes()),
         }
     }
 }

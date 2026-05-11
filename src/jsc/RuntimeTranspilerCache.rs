@@ -485,15 +485,10 @@ impl Entry {
                     }
                     let errdefer = scopeguard::guard(string, |s| s.deref());
 
-                    // SAFETY: `chars` is &mut [u16; char_len] backed by contiguous
-                    // WTFString storage; reinterpreting as bytes for pread is sound
-                    // (alignment of u8 ≤ u16).
-                    let chars_bytes = unsafe {
-                        bun_core::ffi::slice_mut(
-                            chars.as_mut_ptr().cast::<u8>(),
-                            char_len * 2,
-                        )
-                    };
+                    // `chars` is `&mut [u16; char_len]` backed by contiguous
+                    // WTFString storage; reinterpret as bytes for pread via the
+                    // safe POD cast (`u16` → `u8` always satisfies size/align).
+                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
                     let read_bytes =
                         file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
@@ -501,11 +496,7 @@ impl Entry {
                     }
 
                     if self.metadata.output_hash != 0 {
-                        let utf16 = string.utf16();
-                        // SAFETY: same reinterpretation as above, read-only.
-                        let utf16_bytes = unsafe {
-                            bun_core::ffi::slice(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
-                        };
+                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
                         if hash(utf16_bytes) != self.metadata.output_hash {
                             return Err(bun_core::err!(InvalidHash));
                         }

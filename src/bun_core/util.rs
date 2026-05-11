@@ -4038,6 +4038,11 @@ impl f16 {
 }
 impl From<f16> for f64 { #[inline] fn from(h: f16) -> f64 { h.to_f64() } }
 impl From<f16> for f32 { #[inline] fn from(h: f16) -> f32 { h.to_f64() as f32 } }
+// SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
+// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
+// from `&[u8]` for Float16Array printing (ConsoleObject).
+unsafe impl bytemuck::Zeroable for f16 {}
+unsafe impl bytemuck::Pod for f16 {}
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_f64().fmt(f)

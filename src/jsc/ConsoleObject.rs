@@ -5315,30 +5315,23 @@ pub mod formatter {
             writer.print(format_args!("({}) [ ", array_buffer.len));
 
             use jsc::JSType as T;
-            // SAFETY: `slice` comes from a typed array whose backing storage is
-            // aligned for its element type.
-            macro_rules! cast_slice {
-                ($t:ty) => {
-                    unsafe {
-                        core::slice::from_raw_parts(
-                            slice.as_ptr().cast::<$t>(),
-                            slice.len() / core::mem::size_of::<$t>(),
-                        )
-                    }
-                };
-            }
+            // `slice` comes from a typed array whose backing storage is aligned for its
+            // element type (JS spec: typed-array byteOffset is always a multiple of
+            // element size, and ArrayBuffer storage is mimalloc-aligned), so the safe
+            // `bytemuck::cast_slice` alignment/size checks always pass.
+            use bytemuck::cast_slice;
             match js_type {
-                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice!(i8)),
-                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice!(i16)),
-                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice!(u16)),
-                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice!(i32)),
-                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice!(u32)),
+                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice(slice)),
+                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice(slice)),
+                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice(slice)),
+                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice(slice)),
+                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice(slice)),
                 // TODO(port): Rust has no native f16; use `half::f16` in Phase B.
-                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice!(bun_core::f16)),
-                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, cast_slice!(f32)),
-                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, cast_slice!(f64)),
-                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, cast_slice!(i64)),
-                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, cast_slice!(u64)),
+                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice(slice)),
+                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, cast_slice(slice)),
+                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, cast_slice(slice)),
+                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, cast_slice(slice)),
+                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, cast_slice(slice)),
                 // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                 _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
             }

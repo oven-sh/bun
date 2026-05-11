@@ -358,10 +358,12 @@ impl ArrayBuffer {
             // PORT NOTE: `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {
-                let len = bytes.len();
-                // SAFETY: caller guarantees `bytes` was allocated by the default
-                // (mimalloc) allocator; ownership transfers to JSC.
-                let owned = unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(bytes.as_mut_ptr(), len)) };
+                // SAFETY: caller guarantees `bytes` is exactly a `Box<[u8]>`
+                // allocation from the default (mimalloc) allocator; ownership
+                // transfers to JSC. Coerce the borrowed slice directly to its
+                // fat raw pointer — no need to round-trip through
+                // `from_raw_parts_mut(as_mut_ptr(), len)`.
+                let owned = unsafe { bun_core::heap::take(bytes as *mut [u8]) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
             _ => unreachable!("Not implemented yet"), // Zig: @compileError

@@ -642,7 +642,15 @@ fn spawnWindows(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPa
         },
         .err => |e| {
             log("watch failed: {f}", .{e});
+            // readStart already succeeded, so read_pipe.data points at
+            // self. A late UV_ECANCELED callback queued before close
+            // could fire after bun.destroy(self) — null the context
+            // pointers first (mirrors onProcessExit's teardown) so
+            // the callback's @ptrCast lands on null and the onReadError
+            // / onReadChunk optional check bails.
             read_pipe.asStream().readStop();
+            read_pipe.data = null;
+            write_pipe.data = null;
             write_pipe.closeAndDestroy();
             read_pipe.closeAndDestroy();
             self.process.deref();

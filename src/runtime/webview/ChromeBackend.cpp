@@ -536,12 +536,13 @@ void Transport::writeRaw(const char* data, size_t len)
 #if OS(WINDOWS)
     if (!m_windowsActive) return;
     if (Bun__Chrome__writeWindows(data, len) < 0) {
-        // Write couldn't even be queued. Chrome's pipe probably closed
-        // between the last read and this write. rejectAllAndMarkDead
-        // will be called shortly from the read-error path; until then
-        // the caller's state is consistent with "wrote successfully" —
-        // we drop silently, same as the POSIX m_dead check at the top.
-        m_dead = true;
+        // Write failed synchronously — pipe closed (Chrome died between
+        // the last read and this write) or OOM on the uv_write_t /
+        // buffer copy. sendChromeOp already stashed a promise in
+        // m_pending before we got here, so marking dead isn't enough;
+        // the read-error path might never arrive (e.g. allocation
+        // failure doesn't imply Chrome died). Reject everything now.
+        rejectAllAndMarkDead("Chrome pipe write failed"_s);
     }
 #else
     if (!m_readSock) return;

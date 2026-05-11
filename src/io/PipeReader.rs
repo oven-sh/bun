@@ -9,6 +9,7 @@ use bun_sys::{self as sys, Fd};
 use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
 use bun_install_types::process_exit::SecurityScanExit;
 use bun_io_types::file_poll;
+use bun_io_types::reader::BufferedReaderHandle;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -114,7 +115,7 @@ impl BufferedReaderTarget {
     }
 
     #[inline]
-    fn on_reader_done(self) {
+    fn on_reader_done(self, _reader: BufferedReaderHandle) {
         match self {
             Self::SecurityScanIpc { state, .. } => {
                 Self::with_security_scan_state(state, |state| {
@@ -125,7 +126,7 @@ impl BufferedReaderTarget {
     }
 
     #[inline]
-    fn on_reader_error(self, err: sys::Error) {
+    fn on_reader_error(self, _reader: BufferedReaderHandle, err: sys::Error) {
         match self {
             Self::SecurityScanIpc { state, .. } => {
                 bun_core::Output::err_generic(
@@ -250,16 +251,16 @@ impl BufferedReaderVTable {
         self.link().on_read_chunk(chunk, has_more)
     }
 
-    pub fn on_reader_done(&self) {
+    pub fn on_reader_done(&self, reader: BufferedReaderHandle) {
         if let Some(target) = self.target {
-            return target.on_reader_done();
+            return target.on_reader_done(reader);
         }
         self.link().on_reader_done()
     }
 
-    pub fn on_reader_error(&self, err: sys::Error) {
+    pub fn on_reader_error(&self, reader: BufferedReaderHandle, err: sys::Error) {
         if let Some(target) = self.target {
-            return target.on_reader_error(err);
+            return target.on_reader_error(reader, err);
         }
         self.link().on_reader_error(err)
     }
@@ -550,11 +551,15 @@ impl PosixBufferedReader {
             self.flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
         }
         self.finish();
-        self.vtable.on_reader_done();
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.vtable.on_reader_done(reader);
     }
 
     pub fn on_error(&mut self, err: sys::Error) {
-        self.vtable.on_reader_error(err);
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.vtable.on_reader_error(reader, err);
     }
 
     pub fn register_poll(&mut self) {
@@ -582,7 +587,9 @@ impl PosixBufferedReader {
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => {
-                self.vtable.on_reader_error(err);
+                let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+                    .expect("BufferedReader self pointer is non-null");
+                self.vtable.on_reader_error(reader, err);
             }
             sys::Result::Ok(()) => {}
         }
@@ -1423,12 +1430,16 @@ impl WindowsBufferedReader {
 
         self.finish();
 
-        self.vtable.on_reader_done();
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.vtable.on_reader_done(reader);
     }
 
     pub fn on_error(&mut self, err: sys::Error) {
         self.finish();
-        self.vtable.on_reader_error(err);
+        let reader = BufferedReaderHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("BufferedReader self pointer is non-null");
+        self.vtable.on_reader_error(reader, err);
     }
 
     pub fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {

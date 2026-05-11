@@ -70,6 +70,8 @@ Natural sibling crates
   ├─> bun_io_types
   │     ├─> owner::OwnerToken<T>
   │     │     - non-zero typed pointer identity
+  │     ├─> reader::BufferedReaderHandle
+  │     │     - non-zero typed lower-reader identity for typed reader targets
   │     ├─> pollable::Token
   │     │     - preserves the epoll/kqueue u64 packing boundary
   │     └─> file_poll
@@ -433,7 +435,8 @@ Required deeper type movement
   │     │     - PackageManager/Installer effects
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
-  │     ├─> BufferedReader storage still needs the same lower typed-handle or storage movement
+  │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
+  │     ├─> lifecycle still needs the command state/storage split that owns those handles without recovering LifecycleScriptSubprocess
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free

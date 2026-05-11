@@ -390,10 +390,14 @@ impl ThreadPool {
                     return unsafe { &mut *w };
                 }
                 MapEntry::Vacant(v) => {
-                    // SAFETY: every field is fully written below before any read.
-                    // Zig wrote a struct literal with `undefined` for the
-                    // late-init fields; mirrored with `Option` slots.
-                    worker = bun_core::heap::into_raw(unsafe { Box::<Worker>::new_uninit().assume_init() });
+                    // Allocate raw uninitialized storage; fully written via
+                    // `worker.write(...)` below before any read. Keep it as
+                    // `*mut MaybeUninit<Worker>` → `.cast()` instead of
+                    // `assume_init()` so we never materialize a `Box<Worker>`
+                    // whose payload violates `Worker`'s validity invariants
+                    // (niche-optimized `Option<_>` discriminants, the non-null
+                    // fn-pointer in `deinit_task.callback`, `bool` fields).
+                    worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
                     v.insert(worker);
                 }
             }

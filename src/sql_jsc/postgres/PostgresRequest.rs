@@ -420,7 +420,7 @@ pub fn execute_query<Context: WriterContext>(
 }
 
 pub fn on_data<Context: ReaderContext>(
-    connection: &mut PostgresSQLConnection,
+    connection: &PostgresSQLConnection,
     mut reader: protocol::NewReader<Context>,
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
@@ -432,9 +432,9 @@ pub fn on_data<Context: ReaderContext>(
             b'D' => connection.on(M::DataRow, reader.reborrow())?,
             b'd' => connection.on(M::CopyData, reader.reborrow())?,
             b'S' => {
-                if let TlsStatus::MessageSent(n) = connection.tls_status {
+                if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
                     debug_assert!(n == 8);
-                    connection.tls_status = TlsStatus::SslOk;
+                    connection.tls_status.set(TlsStatus::SslOk);
                     connection.setup_tls();
                     return Ok(());
                 }
@@ -455,8 +455,8 @@ pub fn on_data<Context: ReaderContext>(
             b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
             b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
             b'N' => {
-                if matches!(connection.tls_status, TlsStatus::MessageSent(_)) {
-                    connection.tls_status = TlsStatus::SslNotAvailable;
+                if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_)) {
+                    connection.tls_status.set(TlsStatus::SslNotAvailable);
                     bun_core::scoped_log!(Postgres, "Server does not support SSL");
                     if connection.ssl_mode == SslMode::Require {
                         connection.fail(

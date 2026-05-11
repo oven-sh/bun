@@ -1,3 +1,4 @@
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum TLSStatus {
     None,
     Pending,

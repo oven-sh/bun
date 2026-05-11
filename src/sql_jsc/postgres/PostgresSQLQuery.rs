@@ -417,7 +417,8 @@ impl PostgresSQLQuery {
         };
         // SAFETY: `connection_ptr` is the live m_ctx payload for arguments[0]; the JS
         // wrapper is on-stack so GC cannot finalize it for the duration of this call.
-        let connection: &mut PostgresSQLConnection = unsafe { &mut *connection_ptr };
+        // R-2: shared borrow — every connection field accessed below is `Cell`/`JsCell`.
+        let connection: &PostgresSQLConnection = unsafe { &*connection_ptr };
 
         // Zig: `connection.poll_ref.ref(globalObject.bunVM())`. In the Rust port,
         // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a
@@ -426,7 +427,7 @@ impl PostgresSQLQuery {
         // identical to `PostgresSQLConnection::vm_ctx`.
         connection
             .poll_ref
-            .ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+            .with_mut(|r| r.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)));
         let query = arguments[1];
 
         if !query.is_object() {
@@ -476,13 +477,17 @@ impl PostgresSQLQuery {
                     }
                     return Err(JsError::Thrown);
                 }
-                connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                connection.nonpipelinable_requests += 1;
+                {
+                    let mut f = connection.flags.get();
+                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                    connection.flags.set(f);
+                }
+                connection.nonpipelinable_requests.set(connection.nonpipelinable_requests.get() + 1);
                 this.status = Status::Running;
             } else {
                 this.status = Status::Pending;
             }
-            if let Err(_) = connection.requests.write_item(this_ptr) {
+            if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
                 // fail to run do cleanup
                 this.statement = None;
                 // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
@@ -511,8 +516,8 @@ impl PostgresSQLQuery {
             query_str.slice(),
             binding_value,
             columns_value,
-            connection.prepared_statement_id,
-            connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
+            connection.prepared_statement_id.get(),
+            connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -533,8 +538,11 @@ impl PostgresSQLQuery {
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
             let signature_hash: u64 = hash(&signature.name);
-            if !connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
-                let entry = match connection.statements.get_or_put(signature_hash) {
+            if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
+                // SAFETY: single-JS-thread; the `&mut` to `statements` is held
+                // only for the `get_or_put` call (no re-entry into JS until
+                // after `connection_entry_value` is captured as a raw ptr).
+                let entry = match unsafe { connection.statements.get_mut() }.get_or_put(signature_hash) {
                     Ok(e) => e,
                     Err(err) => {
                         drop(signature);
@@ -595,10 +603,14 @@ impl PostgresSQLQuery {
                                     }
                                     return Err(JsError::Thrown);
                                 }
-                                connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                                {
+                                    let mut f = connection.flags.get();
+                                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                                    connection.flags.set(f);
+                                }
                                 this.status = Status::Binding;
                                 this.flags.pipelined = true;
-                                connection.pipelined_requests += 1;
+                                connection.pipelined_requests.set(connection.pipelined_requests.get() + 1);
 
                                 did_write = true;
                             }
@@ -624,7 +636,7 @@ impl PostgresSQLQuery {
                         &mut signature,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(&signature_hash);
+                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
@@ -642,11 +654,15 @@ impl PostgresSQLQuery {
                         }
                         return Err(JsError::Thrown);
                     }
-                    connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                    {
+                        let mut f = connection.flags.get();
+                        f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                        f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
+                        connection.flags.set(f);
+                    }
                     this.status = Status::Binding;
                     did_write = true;
-                    connection.flags.set(ConnectionFlags::WAITING_TO_PREPARE, true);
-                } else if !connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
+                } else if !connection.flags.get().contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                     // Named prepared statements: send Parse+Describe+Sync now and wait
                     // for ParameterDescription before sending Bind+Execute in advance().
                     bun_core::scoped_log!(Postgres, "writeQuery");
@@ -658,7 +674,7 @@ impl PostgresSQLQuery {
                         writer,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(&signature_hash);
+                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
@@ -678,7 +694,7 @@ impl PostgresSQLQuery {
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(&signature_hash);
+                            let _ = connection.statements.with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
                         if !global_object.has_exception() {
@@ -690,9 +706,13 @@ impl PostgresSQLQuery {
                         }
                         return Err(JsError::Thrown);
                     }
-                    connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                    {
+                        let mut f = connection.flags.get();
+                        f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
+                        f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
+                        connection.flags.set(f);
+                    }
                     did_write = true;
-                    connection.flags.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.
                 // advance() will send Parse+Describe+Bind+Execute atomically via
@@ -701,7 +721,7 @@ impl PostgresSQLQuery {
             {
                 // we only have connection_entry_value if we are using named prepared statements
                 if let Some(entry_value) = connection_entry_value {
-                    connection.prepared_statement_id += 1;
+                    connection.prepared_statement_id.set(connection.prepared_statement_id.get() + 1);
                     // Zig sets ref_count = .initExactRefs(2) (one for this.statement,
                     // one for the connection.statements map).
                     let stmt = {
@@ -730,7 +750,7 @@ impl PostgresSQLQuery {
             }
         }
 
-        if let Err(_) = connection.requests.write_item(this_ptr) {
+        if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
             return Err(global_object.throw_out_of_memory());
         }
         this.this_value.upgrade(global_object);

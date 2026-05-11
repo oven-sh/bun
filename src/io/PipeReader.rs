@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
-use bun_install_types::process_exit::SecurityScanExitHandle;
+use bun_install_types::reader::InstallBufferedReaderTarget;
 use bun_io_types::file_poll;
 use bun_io_types::reader::BufferedReaderHandle;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
@@ -66,8 +66,8 @@ pub struct BufferedReaderVTable {
 
 #[derive(Clone, Copy)]
 pub enum BufferedReaderTarget {
-    SecurityScanIpc {
-        state: SecurityScanExitHandle,
+    Install {
+        target: InstallBufferedReaderTarget,
         event_loop: EventLoopHandle,
     },
     Runtime {
@@ -80,7 +80,7 @@ impl BufferedReaderTarget {
     #[inline]
     fn event_loop(self) -> EventLoopHandle {
         match self {
-            Self::SecurityScanIpc { event_loop, .. } => event_loop,
+            Self::Install { event_loop, .. } => event_loop,
             Self::Runtime { event_loop, .. } => event_loop,
         }
     }
@@ -88,7 +88,7 @@ impl BufferedReaderTarget {
     #[inline]
     fn loop_ptr(self) -> *mut Loop {
         match self {
-            Self::SecurityScanIpc { event_loop, .. } => {
+            Self::Install { event_loop, .. } => {
                 #[cfg(not(windows))]
                 { event_loop.loop_().cast() }
                 #[cfg(windows)]
@@ -108,7 +108,7 @@ impl BufferedReaderTarget {
     #[inline]
     fn has_on_read_chunk(self) -> bool {
         match self {
-            Self::SecurityScanIpc { .. } => true,
+            Self::Install { target, .. } => target.has_on_read_chunk(),
             Self::Runtime { target, .. } => target.has_on_read_chunk(),
         }
     }
@@ -116,8 +116,8 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_read_chunk(self, chunk: &[u8], _has_more: ReadState) -> bool {
         match self {
-            Self::SecurityScanIpc { state, .. } => {
-                state.record_ipc_chunk(chunk);
+            Self::Install { target, .. } => {
+                target.on_read_chunk(chunk);
                 true
             }
             Self::Runtime { target, event_loop } => {
@@ -138,8 +138,8 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_reader_done(self, _reader: BufferedReaderHandle) {
         match self {
-            Self::SecurityScanIpc { state, .. } => {
-                let _ = state.record_ipc_done();
+            Self::Install { target, .. } => {
+                let _ = target.on_reader_done();
             }
             Self::Runtime { target, event_loop } => {
                 if let Some(delivery) = target.on_reader_done() {
@@ -159,12 +159,12 @@ impl BufferedReaderTarget {
     #[inline]
     fn on_reader_error(self, _reader: BufferedReaderHandle, err: sys::Error) {
         match self {
-            Self::SecurityScanIpc { state, .. } => {
+            Self::Install { target, .. } => {
                 bun_core::Output::err_generic(
                     "Failed to read security scanner IPC: {}",
                     (err,),
                 );
-                let _ = state.record_ipc_done();
+                let _ = target.on_reader_error();
             }
             Self::Runtime { target, event_loop } => {
                 let _ = err;

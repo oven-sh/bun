@@ -6,6 +6,7 @@
 pub mod NodeLinker;
 pub mod lifecycle;
 pub mod process_exit;
+pub mod reader;
 pub mod resolver_hooks;
 
 pub use process_exit::{

@@ -187,7 +187,8 @@ runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
 an `InstallProcessExitTarget::SecurityScan(SecurityScanExitHandle)` and only
 marks typed install state. Security scanner IPC reader callbacks also record
-through `bun_io::BufferedReaderTarget::SecurityScanIpc`, so the reader side no
+through `bun_io::BufferedReaderTarget::Install { target:
+InstallBufferedReaderTarget::SecurityScanIpc, ... }`, so the reader side no
 longer asks `bun_io` to call back into `SecurityScanSubprocess*`; the typed
 handle hides the state pointer inside `bun_install_types`, and `bun_install`
 still owns the local drain/deinit and result parsing effects before it reports
@@ -324,6 +325,10 @@ pub enum InstallProcessExitTarget {
     SecurityScan(SecurityScanExitHandle),
 }
 
+pub enum InstallBufferedReaderTarget {
+    SecurityScanIpc { state: SecurityScanExitHandle },
+}
+
 pub enum SecurityScanExitAction {
     WrongProcess,
     Pending { close_ipc_reader: bool },
@@ -337,7 +342,7 @@ Process-exit production wiring
   │     ├─> initializes SecurityScanExit with ipc_reader + json_writer count
   │     ├─> creates SecurityScanExitHandle once, at the owner setup point
   │     ├─> installs ProcessExitTarget::Install(SecurityScan(exit_handle))
-  │     ├─> installs BufferedReaderTarget::SecurityScanIpc(exit_handle, event_loop)
+  │     ├─> installs BufferedReaderTarget::Install(InstallBufferedReaderTarget::SecurityScanIpc { state: exit_handle }, event_loop)
   │     ├─> IPC reader chunks append into SecurityScanExit::ipc_data
   │     ├─> JSON writer close calls record_json_writer_closed()
   │     ├─> IPC reader done/error calls record_ipc_done() in bun_io
@@ -517,7 +522,7 @@ Required deeper type movement
 ```
 Typed reader-delivery follow-through
   ├─> current converted reader path
-  │     ├─> SecurityScan IPC reader stores BufferedReaderTarget::SecurityScanIpc
+  │     ├─> SecurityScan IPC reader stores BufferedReaderTarget::Install { target: InstallBufferedReaderTarget::SecurityScanIpc, ... }
   │     │     - bun_io mutates only bun_install_types::SecurityScanExit
   │     │     - bun_install still performs scanner parsing/drain/deinit effects
   │     └─> runtime CLI readers store BufferedReaderTarget::Runtime
@@ -590,8 +595,9 @@ SecurityScan IPC reader target
   │     ├─> owns the IPC byte buffer
   │     ├─> records reader completion/error
   │     └─> stays incomplete while bun_install still owes local drain/deinit work
-  ├─> bun_io::BufferedReaderTarget::SecurityScanIpc
-  │     ├─> stores SecurityScanExitHandle + EventLoopHandle
+  ├─> bun_io::BufferedReaderTarget::Install
+  │     ├─> stores InstallBufferedReaderTarget + EventLoopHandle
+  │     ├─> the install target stores SecurityScanExitHandle
   │     ├─> provides the reader loop / event loop without naming SecurityScanSubprocess
   │     ├─> appends chunks into the typed state
   │     └─> marks IPC done on EOF/error

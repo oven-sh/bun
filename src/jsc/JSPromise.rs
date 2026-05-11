@@ -175,6 +175,18 @@ impl Strong {
         }
     }
 
+    pub fn into_handle(mut self) -> JSPromiseStrongHandle {
+        let handle = self.strong;
+        self.strong = JSPromiseStrongHandle::empty();
+        handle
+    }
+
+    pub fn take_from_handle(handle: &mut JSPromiseStrongHandle) -> Self {
+        let strong = *handle;
+        *handle = JSPromiseStrongHandle::empty();
+        Self { strong }
+    }
+
     #[inline]
     fn raw_value(&self) -> Option<JSValue> {
         let handle = self.strong.get()?;

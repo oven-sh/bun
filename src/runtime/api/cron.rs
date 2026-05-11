@@ -198,7 +198,6 @@ trait CronJobBase: Sized {
 // ============================================================================
 
 pub struct CronRegisterJob {
-    promise: jsc::JSPromiseStrong,
     poll: KeepAlive,
 
     state: CronRegisterJobState,
@@ -327,13 +326,14 @@ impl CronRegisterJob {
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         let global = this_ref.state.global.cast::<JSGlobalObject>();
+        let mut promise = jsc::JSPromiseStrong::take_from_handle(&mut this_ref.state.promise);
         if let Some(msg) = &this_ref.state.process.err_msg {
-            let _ = this_ref.promise.reject_with_async_stack(
+            let _ = promise.reject_with_async_stack(
                 &global,
                 Ok(global.create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&global, JSValue::UNDEFINED);
+            let _ = promise.resolve(&global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -710,11 +710,13 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
         }
+        let promise = jsc::JSPromiseStrong::init(global);
+        let promise_value = promise.value();
         let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
-            promise: jsc::JSPromiseStrong::init(global),
             poll: KeepAlive::default(),
             state: CronRegisterJobState::new(
                 GlobalRef::from(global).cast::<()>(),
+                promise.into_handle(),
                 bun_exe,
                 abs_path,
                 ZString::from_bytes(normalized_schedule),
@@ -729,11 +731,10 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
-        let promise_value = {
+        {
             let job_ref = unsafe { &mut *job };
             job_ref.poll.ref_(vm_ctx());
-            job_ref.promise.value()
-        };
+        }
 
         // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
         // synchronous failure or hands it to the event loop on success.
@@ -845,6 +846,7 @@ impl Drop for CronRegisterJob {
         if let Some(p) = self.state.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
+        drop(jsc::JSPromiseStrong::take_from_handle(&mut self.state.promise));
         // process_state, abs_path, schedule, title freed via field Drop.
     }
 }
@@ -857,7 +859,6 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 // ============================================================================
 
 pub struct CronRemoveJob {
-    promise: jsc::JSPromiseStrong,
     poll: KeepAlive,
 
     state: CronRemoveJobState,
@@ -1000,13 +1001,14 @@ impl CronRemoveJob {
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         let global = this_ref.state.global.cast::<JSGlobalObject>();
+        let mut promise = jsc::JSPromiseStrong::take_from_handle(&mut this_ref.state.promise);
         if let Some(msg) = &this_ref.state.process.err_msg {
-            let _ = this_ref.promise.reject_with_async_stack(
+            let _ = promise.reject_with_async_stack(
                 &global,
                 Ok(global.create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&global, JSValue::UNDEFINED);
+            let _ = promise.resolve(&global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -1140,11 +1142,13 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             )));
         }
 
+        let promise = jsc::JSPromiseStrong::init(global);
+        let promise_value = promise.value();
         let job = bun_core::heap::into_raw(Box::new(CronRemoveJob {
-            promise: jsc::JSPromiseStrong::init(global),
             poll: KeepAlive::default(),
             state: CronRemoveJobState::new(
                 GlobalRef::from(global).cast::<()>(),
+                promise.into_handle(),
                 ZString::from_bytes(title_slice.slice()),
             ),
             process: None,
@@ -1155,11 +1159,10 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
-        let promise_value = {
+        {
             let job_ref = unsafe { &mut *job };
             job_ref.poll.ref_(vm_ctx());
-            job_ref.promise.value()
-        };
+        }
         // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
         // synchronous failure or hands it to the event loop on success.
         #[cfg(target_os = "macos")]
@@ -1212,6 +1215,7 @@ impl Drop for CronRemoveJob {
         if let Some(p) = self.state.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
+        drop(jsc::JSPromiseStrong::take_from_handle(&mut self.state.promise));
     }
 }
 

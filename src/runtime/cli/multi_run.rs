@@ -252,7 +252,7 @@ impl<'a> ProcessHandle<'a> {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    let _ = process.on_exit(Status::Err(err), &rusage);
                 }
             }
         }

@@ -631,9 +631,9 @@ impl Cmd {
             let process = subproc.proc();
             if process.has_exited() {
                 let status = process.status.clone();
-                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
+                let _ = process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
             } else {
-                process.wait(false);
+                let _ = process.wait(false);
             }
         }
 

@@ -21,7 +21,9 @@ use bun_core::{self, Error};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_spawn::{self, EventLoopHandle, Process, ProcessExitTarget, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn_types::ProcessIdentity;
 use bun_sys::{self, Fd, FdExt as _};
 
 declare_scope!(WebViewHost, hidden);
@@ -92,22 +94,34 @@ pub extern "C" fn Bun__WebViewHost__ensure(
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    HostProcess for HostProcess => |this| {
-        // Child died (EVFILT_PROC). Socket onClose may or may not have fired
-        // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
-        // pending promises and mark the host dead.
-        on_process_exit(_process, status, _rusage) => {
+impl HostProcess {
+    pub fn on_process_exit(process_identity: ProcessIdentity, status: Status) {
+        let this = INSTANCE.load(core::sync::atomic::Ordering::Relaxed);
+        if this.is_null() {
+            return;
+        }
+
+        // SAFETY: INSTANCE is JS-thread-owned and points to the Box allocated
+        // in spawn(). The identity check ensures this delivery belongs to
+        // that process before consuming the singleton.
+        unsafe {
+            let instance = &mut *this;
+            if ProcessIdentity::from_ref(instance.process.as_ref()) != process_identity {
+                return;
+            }
+            // Child died (EVFILT_PROC). Socket onClose may or may not have
+            // fired already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to
+            // reject any pending promises and mark the host dead.
             scoped_log!(WebViewHost, "child exited: {}", status);
             let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
             Bun__WebViewHost__childDied(signo);
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`
             // drops that ref, then drop the Box.
-            (*(*this).process.as_ptr()).deref();
+            (*instance.process.as_ptr()).deref();
             drop(bun_core::heap::take(this));
             INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-        },
+        }
     }
 }
 
@@ -181,11 +195,13 @@ fn spawn(
         let process = NonNull::new(spawned.to_process(event_loop, false))
             .expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
-        // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
-        // owns `process` and outlives it.
+        // `self_ptr` remains the runtime-owned singleton. bun_spawn only
+        // stores the typed exit target and never receives a HostProcess owner
+        // pointer.
         unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+            (*process.as_ptr()).set_exit_target(ProcessExitTarget::Runtime(
+                RuntimeProcessExitTarget::HostProcess,
+            ));
         }
         // SAFETY: process is live and exclusively owned here.
         match unsafe { (*process.as_ptr()).watch() } {

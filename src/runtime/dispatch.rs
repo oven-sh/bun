@@ -104,6 +104,7 @@ use crate::server::ServerAllConnectionsClosedTask;
 use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
+use bun_runtime_types::process_exit::RuntimeProcessExitAction;
 
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 
@@ -132,6 +133,19 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 pub enum RunTaskResult {
     Continue,
     EarlyReturn,
+}
+
+fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
+    match delivery {
+        bun_spawn::ProcessExitDelivery::Runtime(action) => match action {
+            RuntimeProcessExitAction::ChromeProcess { process, status } => {
+                crate::webview::ChromeProcess::on_process_exit(process, status);
+            }
+            RuntimeProcessExitAction::HostProcess { process, status } => {
+                crate::webview::HostProcess::on_process_exit(process, status);
+            }
+        },
+    }
 }
 
 /// Dispatch a single `Task` to its variant's `run`-style entry point.
@@ -480,7 +494,9 @@ pub fn run_task(
             {
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
                 let t = unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
-                t.run_from_js_thread();
+                if let Some(delivery) = t.run_from_js_thread() {
+                    dispatch_process_exit_delivery(delivery);
+                }
             }
             #[cfg(windows)]
             unreachable!("posix-only");
@@ -641,7 +657,9 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         }
         poll_tag::PROCESS => {
             let proc = owner_as!(Process);
-            proc.on_wait_pid_from_event_loop_task();
+            if let Some(delivery) = proc.on_wait_pid_from_event_loop_task() {
+                dispatch_process_exit_delivery(delivery);
+            }
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);

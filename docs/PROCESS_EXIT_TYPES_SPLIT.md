@@ -26,6 +26,46 @@ Domain-owned `_types` architecture
 ## Crate Topology
 
 ```
+Dependency DAG
+  ├─> bun_spawn_types
+  │     └─> base process values: Status / Exited / WaitPidResult / Rusage / ProcessIdentity
+  ├─> domain sidecar types
+  │     ├─> bun_install_types
+  │     │     ├─> depends on bun_spawn_types
+  │     │     └─> owns lifecycle/security process-output state and action enums
+  │     ├─> bun_runtime_types
+  │     │     ├─> depends on bun_spawn_types
+  │     │     └─> owns runtime-domain process/task state, not JSC effects
+  │     └─> bun_shell_types / CLI sidecars, if introduced
+  │           ├─> depend on bun_spawn_types
+  │           └─> own shell/CLI process state visible below the effect crates
+  ├─> lower implementation crates
+  │     ├─> bun_spawn
+  │     │     ├─> depends on bun_spawn_types + domain sidecars whose targets it stores
+  │     │     ├─> owns process wait/reap/status/lifetime mechanics
+  │     │     └─> does not depend on bun_install or bun_runtime effect crates
+  │     ├─> bun_io
+  │     │     ├─> depends on bun_io_types + domain sidecars needed for reader/poll state
+  │     │     └─> owns kernel/FilePoll/BufferedReader mechanics
+  │     └─> bun_event_loop
+  │           ├─> depends on task/payload sidecars
+  │           └─> owns queue/wakeup mechanics
+  └─> effect crates
+        ├─> bun_install
+        │     ├─> depends on bun_spawn + bun_install_types
+        │     └─> applies PackageManager/lifecycle/security effects
+        └─> bun_runtime / shell / CLI modules
+              ├─> depend on bun_spawn + their sidecar types
+              └─> apply JSC, shell, webview, cron, and C++ effects
+```
+
+The important dependency is that `bun_spawn` may know about
+`bun_install_types::LifecycleScript...` or a runtime/shell sidecar type, but it
+must not know about `bun_install::LifecycleScriptSubprocess` or
+`bun_runtime::Subprocess`. If a lower crate still needs an effect owner, not
+enough of that owner has moved into sidecar types.
+
+```
 Natural sibling crates
   ├─> bun_io_types
   │     ├─> owner::OwnerToken<T>
@@ -121,6 +161,13 @@ Pollable production path
 Process exit uses the same boundary for install-domain readiness gates and
 runtime cron readiness: value-only state lives below, effect application stays
 above.
+
+This branch proves the runtime sidecar path first with WebView process exits:
+`bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
+`RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the
+Chrome/Host effects. The Chrome/Host owners stay in `bun_runtime`; `bun_spawn`
+does not store their owner pointers and does not call their methods through the
+erased `ProcessExit` table.
 
 ```
 Process-exit production shape

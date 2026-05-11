@@ -84,7 +84,10 @@ pub use bun_spawn_sys::uv_getrusage;
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
 
-pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
+pub use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
+pub use crate::{
+    ProcessExit, ProcessExitDelivery, ProcessExitHandler, ProcessExitKind, ProcessExitTarget,
+};
 
 #[cfg(windows)]
 type SyncProcess = sync::SyncWindowsProcess;
@@ -124,6 +127,7 @@ pub struct Process {
     pub poller: Poller,
     pub ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
+    pub exit_target: Option<ProcessExitTarget>,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
 }
@@ -148,6 +152,14 @@ impl Process {
 
     pub fn set_exit_handler_default(&mut self) {
         self.exit_handler = None;
+    }
+
+    pub fn set_exit_target(&mut self, target: ProcessExitTarget) {
+        self.exit_target = Some(target);
+    }
+
+    pub fn set_exit_target_default(&mut self) {
+        self.exit_target = None;
     }
 
     pub fn has_exited(&self) -> bool {
@@ -224,7 +236,7 @@ impl Process {
             // NLL: `uv_proc`'s borrow of `p.poller` ends here; `p` is free
             // to be reborrowed whole for `close()` / `on_exit()`.
             p.close();
-            p.on_exit(
+            let _ = p.on_exit(
                 Status::Exited(Exited { code: 0, signal: 0 }),
                 &rusage,
             );
@@ -258,37 +270,48 @@ impl Process {
             poller: Poller::Detached,
             status,
             exit_handler: ProcessExitHandler::default(),
+            exit_target: None,
         }))
     }
 
     // has_exited / has_killed / signal_code live in the always-on impl above.
 
-    pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
+    pub fn on_exit(&mut self, status: Status, rusage: &Rusage) -> Option<ProcessExitDelivery> {
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
         let exit_handler = self.exit_handler;
+        let exit_target = self.exit_target.take();
         self.status = status.clone();
         if self.has_exited() {
             self.detach();
         }
+        if let Some(exit_target) = exit_target {
+            let process_identity = ProcessIdentity::from_ref(self);
+            let ctx = ProcessExitContext::new(process_identity, status, rusage);
+            return Some(exit_target.on_process_exit(&ctx));
+        }
         call_exit_handler(&exit_handler, self, status, rusage);
+        None
     }
 
     #[cfg(unix)]
-    pub fn wait_posix(&mut self, sync_: bool) {
+    pub fn wait_posix(&mut self, sync_: bool) -> Option<ProcessExitDelivery> {
         let mut rusage = rusage_zeroed();
         let waitpid_result = posix_spawn::wait4(
             self.pid,
             if sync_ { 0 } else { libc::WNOHANG as u32 },
             Some(&mut rusage),
         );
-        self.on_wait_pid(&waitpid_result, &rusage);
+        self.on_wait_pid(&waitpid_result, &rusage)
     }
 
-    pub fn wait(&mut self, sync_: bool) {
+    pub fn wait(&mut self, sync_: bool) -> Option<ProcessExitDelivery> {
         #[cfg(unix)]
-        self.wait_posix(sync_);
+        return self.wait_posix(sync_);
         #[cfg(windows)]
-        let _ = sync_;
+        {
+            let _ = sync_;
+            None
+        }
     }
 
     #[cfg(unix)]
@@ -296,24 +319,30 @@ impl Process {
         &mut self,
         waitpid_result: &bun_sys::Result<WaitPidResult>,
         rusage: &Rusage,
-    ) {
+    ) -> Option<ProcessExitDelivery> {
         if let Poller::WaiterThread(waiter) = &mut self.poller {
             let ctx = event_loop_handle_to_ctx(self.event_loop);
             waiter.unref(ctx);
             self.poller = Poller::Detached;
         }
-        self.on_wait_pid(waitpid_result, rusage);
+        let delivery = self.on_wait_pid(waitpid_result, rusage);
         self.deref();
+        delivery
     }
 
     #[cfg(unix)]
-    pub fn on_wait_pid_from_event_loop_task(&mut self) {
-        self.wait(false);
+    pub fn on_wait_pid_from_event_loop_task(&mut self) -> Option<ProcessExitDelivery> {
+        let delivery = self.wait(false);
         self.deref();
+        delivery
     }
 
     #[cfg(unix)]
-    fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
+    fn on_wait_pid(
+        &mut self,
+        waitpid_result: &bun_sys::Result<WaitPidResult>,
+        rusage: &Rusage,
+    ) -> Option<ProcessExitDelivery> {
         let pid = self.pid;
         // Mutated only on the macOS ESRCH retry path below.
         #[allow(unused_mut)]
@@ -348,14 +377,14 @@ impl Process {
             None
         });
 
-        let Some(status) = status else { return };
-        self.on_exit(status, &rusage_result);
+        let Some(status) = status else { return None };
+        self.on_exit(status, &rusage_result)
     }
 
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
-            self.on_exit(self.status.clone(), &zeroed);
+            let _ = self.on_exit(self.status.clone(), &zeroed);
             return Ok(true);
         }
 
@@ -363,7 +392,7 @@ impl Process {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
+                    let _ = self.wait(true);
                     return Ok(self.has_exited());
                 }
                 Err(err)
@@ -511,18 +540,18 @@ impl Process {
 
         if let Some(sig) = signal_code {
             this.close();
-            this.on_exit(Status::Signaled(sig), &rusage);
+            let _ = this.on_exit(Status::Signaled(sig), &rusage);
         } else if exit_status >= 0 {
             // Zig spec compares `exit_code >= 0` (a `u8` tautology) here; the
             // intended check — per the `else` arm's comment — is on the signed
             // libuv `exit_status`, so a negative `-UV_E*` reaches the Err arm.
             this.close();
-            this.on_exit(
+            let _ = this.on_exit(
                 Status::Exited(Exited { code: exit_code, signal: 0 }),
                 &rusage,
             );
         } else {
-            this.on_exit(
+            let _ = this.on_exit(
                 // libuv exit_status is negative (a `-UV_E*` code) on this arm;
                 // `E::from_raw` takes the unsigned table ordinal, so route
                 // through the libuv→bun errno map via the i32 ctor.
@@ -617,6 +646,7 @@ impl Process {
     pub fn detach(&mut self) {
         self.close();
         self.exit_handler = ProcessExitHandler::default();
+        self.exit_target = None;
     }
 
 
@@ -898,22 +928,22 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_js_thread(self: Box<Self>) {
-            self.run_from_main_thread();
+        pub fn run_from_js_thread(self: Box<Self>) -> Option<ProcessExitDelivery> {
+            self.run_from_main_thread()
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
+        pub fn run_from_main_thread(self: Box<Self>) -> Option<ProcessExitDelivery> {
             let this = *self;
             // bun.destroy(self) — Box dropped here.
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
                 T::on_wait_pid_from_waiter_thread(this.subprocess, &this.result, &this.rusage)
-            };
+            }
         }
 
         pub fn run_from_main_thread_mini(self: Box<Self>, _: *mut ()) {
-            self.run_from_main_thread();
+            let _ = self.run_from_main_thread();
         }
     }
 
@@ -937,7 +967,7 @@ pub mod waiter_thread_posix {
             let subprocess = self.subprocess;
             // bun.destroy(self) — Box drops at end of scope.
             // SAFETY: see ResultTask::run_from_main_thread.
-            unsafe {
+            let _ = unsafe {
                 T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed())
             };
         }
@@ -967,7 +997,7 @@ pub mod waiter_thread_posix {
             this: *mut Self,
             result: &bun_sys::Result<WaitPidResult>,
             rusage: &Rusage,
-        );
+        ) -> Option<ProcessExitDelivery>;
     }
 
     impl ProcessLike for Process {
@@ -987,9 +1017,9 @@ pub mod waiter_thread_posix {
             this: *mut Self,
             result: &bun_sys::Result<WaitPidResult>,
             rusage: &Rusage,
-        ) {
+        ) -> Option<ProcessExitDelivery> {
             // SAFETY: caller contract.
-            unsafe { (*this).on_wait_pid_from_waiter_thread(result, rusage) };
+            unsafe { (*this).on_wait_pid_from_waiter_thread(result, rusage) }
         }
     }
 
@@ -1914,6 +1944,7 @@ pub fn spawn_process_windows(
         status: Status::Running,
         poller: Poller::Detached,
         exit_handler: ProcessExitHandler::default(),
+        exit_target: None,
         sync: false,
     }));
 

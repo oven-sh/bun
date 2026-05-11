@@ -850,7 +850,7 @@ impl ShellSubprocess {
     }
 
     pub fn wait(&mut self, sync: bool) {
-        self.proc().wait(sync)
+        let _ = self.proc().wait(sync);
     }
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {

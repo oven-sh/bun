@@ -77,6 +77,28 @@ pub use process::{
     StdioKind, WaiterThread,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProcessExitTarget {
+    Runtime(bun_runtime_types::process_exit::RuntimeProcessExitTarget),
+}
+
+#[derive(Clone, Debug)]
+pub enum ProcessExitDelivery {
+    Runtime(bun_runtime_types::process_exit::RuntimeProcessExitAction),
+}
+
+impl ProcessExitTarget {
+    #[inline]
+    pub fn on_process_exit(
+        self,
+        ctx: &bun_spawn_types::ProcessExitContext<'_>,
+    ) -> ProcessExitDelivery {
+        match self {
+            Self::Runtime(target) => ProcessExitDelivery::Runtime(target.on_process_exit(ctx)),
+        }
+    }
+}
+
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
 // via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
 // variant here + one `link_impl_ProcessExit!` in the owning crate.
@@ -91,8 +113,6 @@ bun_dispatch::link_interface! {
         TestParallelWorker,
         CronRegister,
         CronRemove,
-        ChromeProcess,
-        HostProcess,
         SyncWindows,
     ] {
         fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);

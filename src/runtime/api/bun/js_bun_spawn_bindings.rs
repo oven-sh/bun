@@ -1568,11 +1568,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
                 let status = proc.status.clone();
-                proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
+                let _ = proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                proc.wait(IS_SYNC);
+                let _ = proc.wait(IS_SYNC);
             }
         }
     }
@@ -1657,7 +1657,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         // SAFETY: see `process_mut` doc.
-        unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+        let _ = unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
@@ -1681,7 +1681,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
         sys::Result::Err(_) => {
             // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+            let _ = unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
         }
     }
 

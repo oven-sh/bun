@@ -2176,7 +2176,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             if !unsafe { (*process).has_exited() } {
                 // SAFETY: all-zero is a valid Rusage.
                 let rusage = bun_core::ffi::zeroed::<Rusage>();
-                unsafe { (*process).on_exit(Status::Err(err), &rusage) };
+                let _ = unsafe { (*process).on_exit(Status::Err(err), &rusage) };
             }
         }
         Ok(_) => {}

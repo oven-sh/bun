@@ -194,14 +194,14 @@ unsafe extern "C" {
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
-#[inline]
+#[inline(always)]
 fn vm_get<'a>() -> &'a mut VirtualMachine {
     // SAFETY: JS-thread only; the global VM pointer is non-null once the runtime is up.
     VirtualMachine::get().as_mut()
 }
 
 /// `JSGlobalObject::bun_vm()` (lib.rs variant) returns `*mut`; deref for `Ref::ref/unref`.
-#[inline]
+#[inline(always)]
 fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
     // SAFETY: JS-thread only; bun_vm() returns the live VM for this global.
     global.bun_vm().as_mut()

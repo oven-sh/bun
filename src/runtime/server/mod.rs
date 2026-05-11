@@ -408,14 +408,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// non-null and outlives the server. S008: `JSGlobalObject` is an
     /// `opaque_ffi!` ZST, so the `*const → &` deref is safe via
     /// `bun_opaque::opaque_deref` (const-asserted ZST/align-1).
-    #[inline]
+    #[inline(always)]
     pub fn global_this(&self) -> &jsc::JSGlobalObject {
         bun_opaque::opaque_deref(self.global_this)
     }
 
     /// SAFETY: `vm` is a STATIC backref (LIFETIMES.tsv) set in `init()` from
     /// `VirtualMachine::get()`; non-null for the server's lifetime.
-    #[inline]
+    #[inline(always)]
     pub fn vm(&self) -> &jsc::VirtualMachine {
         unsafe { &*self.vm }
     }
@@ -430,7 +430,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// derived from a `&'static VirtualMachine`, so casting it to `*mut` would
     /// carry read-only Stacked-Borrows provenance and make any write through
     /// the result UB.
-    #[inline]
+    #[inline(always)]
     pub fn vm_mut(&self) -> *mut jsc::VirtualMachine {
         debug_assert!(core::ptr::eq(self.vm, jsc::VirtualMachine::get_mut_ptr()));
         jsc::VirtualMachine::get_mut_ptr()
@@ -2813,14 +2813,28 @@ pub trait ServerLike {
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     const SSL_ENABLED: bool = SSL;
     const DEBUG_MODE: bool = DEBUG;
+    // These trait-method forwards are on the per-request hot path (called via
+    // `RequestContext::server.vm()` etc.). Without `#[inline]` a generic trait
+    // impl is not eligible for cross-crate inlining at all, so each accessor
+    // would compile to a real `call` even though the inherent method it
+    // forwards to is itself one instruction. Zig has no trait layer here.
+    #[inline(always)]
     fn global_this(&self) -> &jsc::JSGlobalObject { Self::global_this(self) }
+    #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine { Self::vm(self) }
+    #[inline(always)]
     fn vm_mut(&self) -> *mut jsc::VirtualMachine { Self::vm_mut(self) }
+    #[inline(always)]
     fn config(&self) -> &ServerConfig { &self.config }
+    #[inline]
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
+    #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> { self.dev_server.as_deref() }
+    #[inline(always)]
     fn js_value(&self) -> &jsc::JsRef { &self.js_value }
+    #[inline]
     fn h3_alt_svc(&self) -> Option<&[u8]> { Self::h3_alt_svc(self) }
+    #[inline(always)]
     fn terminated(&self) -> bool { self.flags.contains(ServerFlags::TERMINATED) }
     fn release_request_context(&self, ctx: *mut c_void, is_h3: bool) {
         // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;
@@ -2879,7 +2893,7 @@ impl AnyServer {
     // under Stacked Borrows. `any_server_dispatch_mut!` keeps its inline
     // `unsafe` with the existing caller-upheld exclusivity contract.
 
-    #[inline]
+    #[inline(always)]
     fn as_http(&self) -> &HTTPServer {
         debug_assert!(matches!(self.tag, AnyServerTag::HTTPServer));
         // SAFETY: `ptr` was produced by `AnyServer::from::<false, false>` and
@@ -2888,21 +2902,21 @@ impl AnyServer {
         unsafe { &*self.ptr.cast::<HTTPServer>() }
     }
 
-    #[inline]
+    #[inline(always)]
     fn as_https(&self) -> &HTTPSServer {
         debug_assert!(matches!(self.tag, AnyServerTag::HTTPSServer));
         // SAFETY: tag-matched non-null `NewServer<true, false>`; see `as_http`.
         unsafe { &*self.ptr.cast::<HTTPSServer>() }
     }
 
-    #[inline]
+    #[inline(always)]
     fn as_debug_http(&self) -> &DebugHTTPServer {
         debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPServer));
         // SAFETY: tag-matched non-null `NewServer<false, true>`; see `as_http`.
         unsafe { &*self.ptr.cast::<DebugHTTPServer>() }
     }
 
-    #[inline]
+    #[inline(always)]
     fn as_debug_https(&self) -> &DebugHTTPSServer {
         debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPSServer));
         // SAFETY: tag-matched non-null `NewServer<true, true>`; see `as_http`.
@@ -2975,6 +2989,14 @@ impl AnyServer {
     /// Shared borrow of the process-static VM. Routes through
     /// [`NewServer::vm`], which centralizes the SAFETY invariant (`vm` is a
     /// STATIC backref set in `init()`; non-null for the server's lifetime).
+    ///
+    /// `vm`/`global_this` are read several times per request from
+    /// `NodeHTTPResponse` host_fns via `self.server`. The `vm` field is at
+    /// the same byte offset across all four `NewServer<SSL,DEBUG>`
+    /// monomorphizations, so `any_server_dispatch!` collapses to a single
+    /// load under inlining; without `#[inline]` it stays a 4-arm tag match
+    /// behind a real `call`.
+    #[inline]
     pub fn vm(&self) -> &jsc::VirtualMachine {
         any_server_dispatch!(self, |s| s.vm())
     }
@@ -2982,10 +3004,12 @@ impl AnyServer {
     /// Shared borrow of the per-process `JSGlobalObject`. Routes through
     /// [`NewServer::global_this`] (same SAFETY contract: never-null backref,
     /// never moved or freed while any `NewServer` exists).
+    #[inline]
     pub fn global_this(&self) -> &jsc::JSGlobalObject {
         any_server_dispatch!(self, |s| s.global_this())
     }
 
+    #[inline]
     pub fn config(&self) -> &ServerConfig {
         any_server_dispatch!(self, |s| &s.config)
     }

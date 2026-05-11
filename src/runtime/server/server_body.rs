@@ -1271,7 +1271,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Shared `&VirtualMachine` accessor (struct stores it as `*const`).
-    #[inline]
+    #[inline(always)]
     fn vm_ref(&self) -> &jsc::virtual_machine::VirtualMachine {
         // SAFETY: `vm` is the per-thread singleton, set in `init()`; non-null
         // and valid for the server's lifetime (LIFETIMES.tsv: STATIC).
@@ -1279,7 +1279,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
-    #[inline]
+    #[inline(always)]
     fn global(&self) -> GlobalRef {
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         // `global_this` is set in `init()`; non-null and valid for the

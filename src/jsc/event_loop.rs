@@ -294,6 +294,7 @@ impl EventLoop {
     /// afterwards (so that promises run). We must only do that once per task in the
     /// event loop. To make that work, we count enter/exit calls and once that
     /// counter reaches 0, we drain the microtasks.
+    #[inline]
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
         self.entered_event_loop_count += 1;
@@ -913,9 +914,10 @@ impl EventLoop {
     // is a value field of `VirtualMachine`, so materializing `&mut VM` while a
     // `&EventLoop`/`&mut EventLoop` is live would alias (PORTING.md §Forbidden).
     // Callers must dereference per-field at use sites.
-    #[inline]
+    #[inline(always)]
     fn vm(&self) -> *mut VirtualMachine {
-        self.virtual_machine.unwrap().as_ptr()
+        // SAFETY: see `vm_ref` below — set in `VirtualMachine::init()`, never None.
+        unsafe { self.virtual_machine.unwrap_unchecked().as_ptr() }
     }
     /// Safe `&'static VirtualMachine` accessor for the owning VM. The VM is the
     /// per-thread singleton (see [`VirtualMachine::get`]); `EventLoop` is a

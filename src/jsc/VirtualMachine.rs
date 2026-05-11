@@ -586,7 +586,7 @@ impl VirtualMachine {
     /// through [`JsCell`]-wrapped fields (`vm.field.with_mut(|x| ...)`);
     /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
     /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
-    #[inline]
+    #[inline(always)]
     pub fn get() -> &'static VirtualMachine {
         // SAFETY: `get_or_null()` returns the thread-local pointer set by
         // `init()`; non-null while a VM is installed; the allocation outlives
@@ -598,9 +598,24 @@ impl VirtualMachine {
     /// for read access and `JsCell` field projection for mutation; this exists
     /// for the (shrinking) set of call sites that still take
     /// `*mut VirtualMachine` or need a whole-struct `&mut`.
-    #[inline]
+    ///
+    /// Per-request hot path: `vm_get`/`as_mut`/`NewServer::vm_mut` all funnel
+    /// through here, so it is reached several times per `run_callback` (Zig
+    /// just reads the bare `threadlocal var vm`). The previous `.expect()`
+    /// emitted a check + cold-path panic-format branch on every call;
+    /// `unwrap_unchecked` collapses to one TLS load. The "no VM on this
+    /// thread" case is a programmer error (host_fn reached before `init()`),
+    /// not a recoverable condition — keep the diagnostic in debug builds only.
+    #[inline(always)]
     pub fn get_mut_ptr() -> *mut VirtualMachine {
-        Self::get_or_null().expect("VirtualMachine.get() called with no VM on this thread")
+        debug_assert!(
+            Self::get_or_null().is_some(),
+            "VirtualMachine.get() called with no VM on this thread",
+        );
+        // SAFETY: every caller is reached from a JS host_fn / event-loop tick,
+        // which by construction runs after `init()` installed `VMHolder::VM`
+        // for this thread.
+        unsafe { Self::get_or_null().unwrap_unchecked() }
     }
 
     /// `&mut self` from `&self` — the `JsCell` escape hatch applied to the
@@ -612,7 +627,7 @@ impl VirtualMachine {
     /// Routes through [`Self::get_mut_ptr`] (the thread-local raw pointer)
     /// rather than casting `&self`, so provenance is the original `*mut`
     /// allocation — avoids the `invalid_reference_casting` UB lint.
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn as_mut(&self) -> &mut VirtualMachine {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
@@ -621,7 +636,7 @@ impl VirtualMachine {
         unsafe { &mut *Self::get_mut_ptr() }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_or_null() -> Option<*mut VirtualMachine> {
         // thread-local set by init() on this thread; one VM per thread
         VMHolder::VM.get()
@@ -647,7 +662,7 @@ impl VirtualMachine {
     /// overlap with `VirtualMachine` storage). Same `'static`-on-the-JS-thread
     /// contract as [`JSGlobalObject::bun_vm`] — the global lives for the VM
     /// lifetime, and the VM is the per-thread singleton.
-    #[inline]
+    #[inline(always)]
     pub fn global(&self) -> &'static JSGlobalObject {
         // SAFETY: `global` is set during init and live for the VM lifetime.
         unsafe { &*self.global }
@@ -659,7 +674,7 @@ impl VirtualMachine {
     /// `vm.event_loop()` from inside `tick()`) mint aliased `&mut EventLoop` to
     /// the same allocation — UB per PORTING.md §Forbidden. Callers form a
     /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
-    #[inline]
+    #[inline(always)]
     pub fn event_loop(&self) -> *mut EventLoop {
         // self-pointer to regular_event_loop or macro_event_loop
         self.event_loop
@@ -672,7 +687,7 @@ impl VirtualMachine {
     /// [`Self::as_mut`]; keep the borrow short and do not hold across reentrant
     /// JS calls. Prefer this over `unsafe { &mut *vm.event_loop() }` at call
     /// sites.
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_mut(&self) -> &mut EventLoop {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
@@ -683,7 +698,7 @@ impl VirtualMachine {
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
     /// Prefer when only reading event-loop fields (queue lengths, pending
     /// refs) to avoid minting an unnecessary `&mut`.
-    #[inline]
+    #[inline(always)]
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
         unsafe { &*self.event_loop }
@@ -692,7 +707,7 @@ impl VirtualMachine {
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
     /// `runtime-hostfn-safe` branch; both names funnel into the single audited
     /// `unsafe` deref above.
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_ref(&self) -> &mut EventLoop {
         self.event_loop_mut()
@@ -700,7 +715,7 @@ impl VirtualMachine {
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
-    #[inline]
+    #[inline(always)]
     pub fn jsc_vm(&self) -> &VM {
         // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime.
         unsafe { &*self.jsc_vm }
@@ -789,7 +804,7 @@ impl VirtualMachine {
 
     /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
     /// single-JS-thread soundness contract as [`Self::event_loop_mut`].
-    #[inline]
+    #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn uws_loop_mut(&self) -> &mut uws::Loop {
         // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
@@ -910,10 +925,18 @@ impl VirtualMachine {
         crate::ScriptExecutionStatus::Running
     }
 
+    /// Per-callback hot path: `drain_microtasks_with_global` calls
+    /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
+    /// the only call site there is already gated on
+    /// `event_loop_handle.is_some()`. Zig (`uwsLoop`) is a bare field load.
+    #[inline(always)]
     pub fn uws_loop(&self) -> *mut uws::Loop {
         #[cfg(unix)]
         {
-            self.event_loop_handle.expect("uws event_loop_handle is null")
+            debug_assert!(self.event_loop_handle.is_some(), "uws event_loop_handle is null");
+            // SAFETY: set in `init()` on the JS thread before any host_fn /
+            // event-loop tick runs; never cleared while the VM is live.
+            unsafe { self.event_loop_handle.unwrap_unchecked() }
         }
         #[cfg(not(unix))]
         {

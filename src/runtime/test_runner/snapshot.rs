@@ -581,15 +581,36 @@ impl<'a> Snapshots<'a> {
                         vm.transpiler.options.jsx.clone().into(),
                         bun_ast::Loader::Js,
                     );
-                    // TODO(port): TSXParser::init takes out-param in Zig; reshaped `-> Result<Self>`.
-                    let mut parser = js_parser::TSXParser::init(
-                        &arena,
-                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
-                        &source,
-                        &vm.transpiler.options.define,
-                        lexer,
-                        opts,
-                    )?;
+                    // PORT NOTE: `P::init` takes an out-param (Zig:
+                    // `var p: ParserType = undefined; try ParserType.init(.., &p)`)
+                    // since 9a98701c980c — `P` is ~5 KiB and the previous
+                    // `let p = P::init(..)?` shape forced 2-3 by-value moves.
+                    // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
+                    // (that macro is crate-local).
+                    let mut __parser_slot =
+                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
+                    // SAFETY: fresh `MaybeUninit` is properly aligned + uninitialized;
+                    // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
+                    // `?`-return before arming the drop guard, so the slot stays
+                    // uninitialized and untouched.
+                    unsafe {
+                        js_parser::TSXParser::init(
+                            __parser_slot.as_mut_ptr(),
+                            &arena,
+                            core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
+                            &source,
+                            &vm.transpiler.options.define,
+                            lexer,
+                            opts,
+                        )
+                    }?;
+                    // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
+                    // the guard's drop closure is the sole owner of the slot from here.
+                    let mut __parser_guard =
+                        scopeguard::guard(__parser_slot, |mut s| unsafe { s.assume_init_drop() });
+                    // SAFETY: guard armed only after `init` succeeded.
+                    let parser: &mut js_parser::TSXParser<'_> =
+                        unsafe { __parser_guard.assume_init_mut() };
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;

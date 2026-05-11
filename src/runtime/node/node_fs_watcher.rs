@@ -1,8 +1,10 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_io::KeepAlive;
+use bun_jsc::JsCell;
 use bun_core::Output;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
@@ -32,6 +34,13 @@ use super::win_watcher as path_watcher;
 use super::path_watcher;
 
 // TODO: make this a top-level struct
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut Self`
+// carried LLVM `noalias`, so a host-fn that re-entered JS while holding it let
+// the optimiser cache `self.closed` etc. across the FFI call — the `*mut Self`
+// dance in the old `emit_abort`/`emit_error` was a manual workaround for
+// exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
+// structurally impossible and those methods are now plain `&self`.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
@@ -39,22 +48,22 @@ pub struct FSWatcher {
     verbose: bool,
 
     mutex: Mutex,
-    signal: Option<AbortSignalRef>,
-    persistent: bool,
-    path_watcher: Option<*mut path_watcher::PathWatcher>,
-    poll_ref: KeepAlive,
+    signal: JsCell<Option<AbortSignalRef>>,
+    persistent: Cell<bool>,
+    path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
+    poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
     // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
-    pub(super) js_this: JSValue,
+    pub(super) js_this: Cell<JSValue>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit` (matches Zig `ctx.encoding`).
     pub(super) encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
-    closed: bool,
+    closed: Cell<bool>,
 
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
-    current_task: FSWatchTask,
+    current_task: JsCell<FSWatchTask>,
 }
 
 /// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
@@ -89,9 +98,18 @@ impl FSWatcher {
         unsafe { (*self.event_loop()).enqueue_task_concurrent(task) }
     }
 
+    /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
+    /// rare-data ctx slots. Callbacks deref it as `&*const` (shared) — all
+    /// mutation goes through `Cell`/`JsCell` — so no write provenance is
+    /// required; the `*mut` spelling is purely to match the C signature.
+    #[inline]
+    fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
+    }
+
     /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.
     /// Runs on the mutator thread during lazy sweep.
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();
     }
@@ -136,18 +154,12 @@ impl FSWatchTaskPosix {
         Box::new(init)
     }
 
-    fn ctx(&self) -> &mut FSWatcher {
-        // SAFETY: BACKREF — `ctx` is the live owning FSWatcher (set right after
-        // boxing in `init`); FSWatcher outlives all its tasks. Single-JS-thread,
-        // so no overlapping borrow. Write provenance from `from_raw_mut`.
-        unsafe { self.ctx.expect("FSWatchTask.ctx unset").assume_mut() }
-    }
-
-    /// Raw owner pointer (write provenance) for `addr_of!` / re-entrant
-    /// `emit_error`-style helpers that take `*mut FSWatcher`.
-    #[inline]
-    fn ctx_ptr(&self) -> *mut FSWatcher {
-        self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()
+    fn ctx(&self) -> &FSWatcher {
+        // BACKREF — `ctx` is the live owning FSWatcher (set right after
+        // boxing in `init`); FSWatcher outlives all its tasks.
+        // R-2: `ParentRef: Deref<Target=FSWatcher>` yields `&FSWatcher`; all
+        // FSWatcher host-fns take `&self` (Cell/JsCell-backed).
+        self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
     pub fn append(&mut self, event: Event, needs_free: bool) {
@@ -175,10 +187,8 @@ impl FSWatchTaskPosix {
             match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                // SAFETY: `self.ctx` is the live owning FSWatcher (ParentRef); the
-                // `*mut Self` entry holds no `&mut FSWatcher` across the JS callback.
-                Event::Error(err) => unsafe { FSWatcher::emit_error(self.ctx_ptr(), err.clone()) },
-                Event::Abort => unsafe { FSWatcher::emit_if_aborted(self.ctx_ptr()) },
+                Event::Error(err) => self.ctx().emit_error(err.clone()),
+                Event::Abort => self.ctx().emit_if_aborted(),
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             }
         }
@@ -257,8 +267,8 @@ impl FSWatchTaskPosix {
         {
             // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
             debug_assert!(!core::ptr::eq(
-                unsafe { core::ptr::addr_of!((*this_ref.ctx_ptr()).current_task) },
-                this.cast_const()
+                this_ref.ctx().current_task.as_ptr(),
+                this
             ));
         }
         // SAFETY: paired with `heap::alloc` in `enqueue()`.
@@ -397,7 +407,8 @@ impl FSWatchTaskWindows {
         // `onPathUpdateWindows` and the posix `enqueue()` path).
         // SAFETY: ParentRef — `ctx` is the live owning FSWatcher set at
         // construction; FSWatcher outlives every task it enqueues.
-        if !unsafe { ctx.expect("FSWatchTask.ctx unset").assume_mut() }.ref_task() {
+        // R-2: `ref_task` takes `&self`; ParentRef Derefs to `&FSWatcher`.
+        if !ctx.expect("FSWatchTask.ctx unset").ref_task() {
             return;
         }
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
@@ -413,32 +424,25 @@ impl FSWatchTaskWindows {
 
     /// this runs on JS Context Thread
     pub fn run(&mut self) {
-        // PORT NOTE: reshaped for borrowck — a `fn ctx(&self) -> &mut FSWatcher`
-        // helper would tie the returned `&mut` to `&self` via lifetime elision,
-        // which then conflicts with `&mut self.event` below (and is unsound on
-        // its own: two calls would alias the same `&mut`). Copy the raw backref
-        // and deref it directly so no borrow of `*self` is held across the match.
-        let ctx_ptr = self.ctx_ptr();
-        // PORT NOTE (noalias re-entrancy): do NOT hold a single `&mut FSWatcher`
-        // across the match — `emit_error`/`emit_if_aborted` take `*mut Self` and
-        // re-derive `&mut` internally; a live outer `&mut FSWatcher` would alias.
-        // Each arm materialises its own short-lived borrow.
-        // SAFETY (all arms below): BACKREF — `ctx_ptr` is the live owning
-        // FSWatcher (set at construction), outliving every task it enqueues.
+        // BACKREF — `self.ctx` is the live owning FSWatcher (set at
+        // construction), outliving every task it enqueues. R-2: all FSWatcher
+        // methods below take `&self`, so a single `&FSWatcher` held across the
+        // match is sound (aliased shared borrows are fine; the old `*mut Self`
+        // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
+        let ctx: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
         match &mut self.event {
-            Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(unsafe { &mut *ctx_ptr }, path),
-            Event::Change(path) => Self::run_path::<{ EventType::Change }>(unsafe { &mut *ctx_ptr }, path),
-            Event::Error(err) => unsafe { FSWatcher::emit_error(ctx_ptr, err.clone()) },
-            Event::Abort => unsafe { FSWatcher::emit_if_aborted(ctx_ptr) },
-            Event::Close => unsafe { &mut *ctx_ptr }.emit::<{ EventType::Close }>(b""),
+            Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
+            Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
+            Event::Error(err) => ctx.emit_error(err.clone()),
+            Event::Abort => ctx.emit_if_aborted(),
+            Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
 
-        // SAFETY: BACKREF — `ctx_ptr` live for the task's lifetime.
-        unsafe { &mut *ctx_ptr }.unref_task();
+        ctx.unref_task();
     }
 
     #[cfg(windows)]
-    fn run_path<const EVENT_TYPE: EventType>(ctx: &mut FSWatcher, path: &mut StringOrBytesToDecode) {
+    fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
         use bun_jsc::StringJsc;
         if ctx.encoding == Encoding::Utf8 {
             let StringOrBytesToDecode::String(s) = path else {
@@ -464,7 +468,7 @@ impl FSWatchTaskWindows {
     }
 
     #[cfg(not(windows))]
-    fn run_path<const EVENT_TYPE: EventType>(_ctx: &mut FSWatcher, _path: &mut EventPathString) {
+    fn run_path<const EVENT_TYPE: EventType>(_ctx: &FSWatcher, _path: &mut EventPathString) {
         unreachable!("FSWatchTaskWindows::run is windows-only")
     }
 
@@ -487,7 +491,8 @@ impl FSWatchTaskWindows {
 impl FSWatcher {
     pub fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
+        // R-2: deref as shared (`&*const`) — mutation goes through `JsCell`.
+        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
 
         if this.verbose {
             match &event {
@@ -510,7 +515,7 @@ impl FSWatcher {
         #[cfg(not(windows))]
         {
             let cloned = event.dupe();
-            this.current_task.append(cloned, true);
+            this.current_task.with_mut(|t| t.append(cloned, true));
         }
         #[cfg(windows)]
         let _ = (event, is_file);
@@ -518,7 +523,8 @@ impl FSWatcher {
 
     pub fn on_path_update_windows(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
+        // R-2: deref as shared (`&*const`).
+        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
 
         if this.verbose {
             match &event {
@@ -539,9 +545,9 @@ impl FSWatcher {
         }
 
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
-            // SAFETY: `this` is a live `*mut FSWatcher` (BACKREF) recovered from
-            // the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
+            // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
+            // from the registered userdata; outlives every task it enqueues.
+            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
             event,
             count: 0,
         }));
@@ -558,14 +564,15 @@ impl FSWatcher {
 
     pub fn on_update_end(ctx: Option<*mut c_void>) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
+        // R-2: deref as shared (`&*const`).
+        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
         if this.verbose {
             Output::flush();
         }
         #[cfg(unix)]
         {
             // we only enqueue after all events are processed
-            this.current_task.enqueue();
+            this.current_task.with_mut(|t| t.enqueue());
         }
     }
 }
@@ -693,11 +700,10 @@ impl<'a> Arguments<'a> {
 }
 
 impl AbortListener for FSWatcher {
+    // R-2: trait sig is fixed at `&mut self`; body just reborrows as `&self`
+    // (auto-deref) and calls the interior-mutable `emit_abort`.
     fn on_abort(&mut self, reason: JSValue) {
-        // SAFETY: `self` is a live, uniquely-borrowed `FSWatcher`; `emit_abort`
-        // takes `*mut Self` (see its PORT NOTE) and we hand it the raw address
-        // without holding `&mut Self` across its re-entrant JS callback.
-        unsafe { FSWatcher::emit_abort(core::ptr::addr_of_mut!(*self), reason) };
+        (*self).emit_abort(reason);
     }
 }
 
@@ -706,7 +712,7 @@ impl FSWatcher {
     /// in Zig reads the `js_this` field directly off the by-value `*FSWatcher`.
     #[inline]
     pub fn js_this(&self) -> JSValue {
-        self.js_this
+        self.js_this.get()
     }
 
     /// `FSWatcher.initJS` (node_fs_watcher.zig:537). Takes `*mut Self` so the
@@ -718,9 +724,11 @@ impl FSWatcher {
     /// JS-thread only.
     pub unsafe fn init_js(this: *mut Self, listener: JSValue) {
         // SAFETY: caller contract — `this` is uniquely owned and live.
-        let this_ref = unsafe { &mut *this };
-        if this_ref.persistent {
-            this_ref.poll_ref.ref_(this_ref.vm_ctx());
+        // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
+        let this_ref = unsafe { &*this };
+        if this_ref.persistent.get() {
+            let vm_ctx = this_ref.vm_ctx();
+            this_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
         }
 
         // SAFETY: ownership of `this` transfers to the GC wrapper here; the
@@ -728,19 +736,19 @@ impl FSWatcher {
         // `heap::take(this)`.
         let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
-        this_ref.js_this = js_this;
+        this_ref.js_this.set(js_this);
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
-        if let Some(s) = &this_ref.signal {
+        if let Some(s) = this_ref.signal.get() {
             // already aborted?
             if s.aborted() {
                 // safely abort next tick
-                this_ref.current_task = FSWatchTask {
+                this_ref.current_task.set(FSWatchTask {
                     // SAFETY: `this` is the live boxed FSWatcher; write provenance.
                     ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
                     ..Default::default()
-                };
-                this_ref.current_task.append_abort();
+                });
+                this_ref.current_task.with_mut(|t| t.append_abort());
             } else {
                 // watch for abortion
                 s.listen::<FSWatcher>(this);
@@ -748,53 +756,39 @@ impl FSWatcher {
         }
     }
 
-    /// # Safety
-    /// `this` points at a live `FSWatcher`; JS-thread only. See `emit_abort`.
-    pub unsafe fn emit_if_aborted(this: *mut Self) {
-        // SAFETY: per fn contract — short-lived shared borrow of `signal`,
-        // dropped before `emit_abort` re-derives `&mut *this`.
-        let reason = match unsafe { &(*this).signal } {
+    pub fn emit_if_aborted(&self) {
+        let reason = match self.signal.get() {
             Some(s) if s.aborted() => Some(s.abort_reason()),
             _ => None,
         };
         if let Some(err) = reason {
-            // SAFETY: `this` still live; pass the raw pointer through.
-            unsafe { Self::emit_abort(this, err) };
+            self.emit_abort(err);
         }
     }
 
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
-    /// `&mut self`. `listener.call_with_global_this(...)` re-enters JS, which
-    /// can call `watcher.close()` on this same object via the JS wrapper's
-    /// `m_ptr` — setting `self.closed = true` and `detach()`-ing. With
-    /// `&mut self` LLVM `noalias` may cache `self.closed == false` (it was
-    /// checked at the top, and the FFI call doesn't reach `*self`) and
-    /// dead-store the re-entrant write, so the trailing `self.close()` runs a
-    /// second `detach()`/`emit('close')`. Mirror the timer fix: each
-    /// `(*this).foo()` materialises a short-lived `&mut` scoped to one
-    /// statement; the `&mut *this` for the trailing `unref_task()`/`close()`
-    /// is re-derived *after* the JS callback, so it observes any re-entrant
-    /// write to `closed`.
-    ///
-    /// # Safety
-    /// `this` points at a live `FSWatcher`; JS-thread only (callback dispatch).
-    pub unsafe fn emit_abort(this: *mut Self, err: JSValue) {
-        // SAFETY: per fn contract — short-lived raw derefs below.
-        if unsafe { (*this).closed } {
+    /// R-2: `&self` + `Cell<bool>` for `closed` makes the old `*mut Self`
+    /// re-derive dance unnecessary. `listener.call_with_global_this(...)`
+    /// re-enters JS, which can call `watcher.close()` on this same object via
+    /// the wrapper's `m_ptr` — setting `closed = true` and `detach()`-ing.
+    /// `Cell::get()` after the callback observes that write because
+    /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
+    /// `self.close()` then no-ops as in Zig.
+    pub fn emit_abort(&self, err: JSValue) {
+        if self.closed.get() {
             return;
         }
-        unsafe { (*this).pending_activity_count.fetch_add(1, Ordering::Relaxed) };
+        self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
         // PORT NOTE: Zig has `defer this.close(); defer this.unrefTask();` — defers run LIFO,
         // so unref_task() executes before close(). No early returns below, so both calls are
         // inlined at the end of this function.
 
         err.ensure_still_alive();
-        let js_this = unsafe { (*this).js_this };
+        let js_this = self.js_this.get();
         if !js_this.is_empty() {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
-                let global_this = unsafe { (*this).global_this };
+                let global_this = self.global_this;
                 let args = [
                     EventType::Error.to_js(&global_this),
                     if err.is_empty_or_undefined_or_null() {
@@ -809,34 +803,24 @@ impl FSWatcher {
             }
         }
 
-        // SAFETY: re-derive `&mut` from `this` *after* the JS callback so any
-        // re-entrant `close()` (which set `closed = true`) is observed; the
-        // trailing `close()` then no-ops as in Zig.
-        let this_ref = unsafe { &mut *this };
-        this_ref.unref_task();
-        this_ref.close();
+        self.unref_task();
+        self.close();
     }
 
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self` for the same
-    /// reason as `emit_abort` — the trailing `close()` reads `self.closed`,
-    /// which a re-entrant `watcher.close()` from inside the listener call may
-    /// have flipped to `true`.
-    ///
-    /// # Safety
-    /// `this` points at a live `FSWatcher`; JS-thread only (callback dispatch).
-    pub unsafe fn emit_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: per fn contract — short-lived raw derefs below.
-        if unsafe { (*this).closed } {
+    /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
+    /// observes a re-entrant `watcher.close()` from inside the listener.
+    pub fn emit_error(&self, err: bun_sys::Error) {
+        if self.closed.get() {
             return;
         }
         // PORT NOTE: reshaped for borrowck — `defer this.close()` moved to fn end.
 
-        let js_this = unsafe { (*this).js_this };
+        let js_this = self.js_this.get();
         if !js_this.is_empty() {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
-                let global_object = unsafe { (*this).global_this };
+                let global_object = self.global_this;
                 let err_js = err.to_js(&global_object);
                 let args = [EventType::Error.to_js(&global_object), err_js];
                 if let Err(e) = listener.call_with_global_this(&global_object, &args) {
@@ -845,12 +829,11 @@ impl FSWatcher {
             }
         }
 
-        // SAFETY: re-derive `&mut` from `this` *after* the JS callback.
-        unsafe { &mut *this }.close();
+        self.close();
     }
 
-    pub fn emit_with_filename<const EVENT_TYPE: EventType>(&mut self, file_name: JSValue) {
-        let js_this = self.js_this;
+    pub fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
+        let js_this = self.js_this.get();
         if js_this.is_empty() {
             return;
         }
@@ -860,9 +843,9 @@ impl FSWatcher {
         emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
     }
 
-    pub fn emit<const EVENT_TYPE: EventType>(&mut self, file_name: &[u8]) {
+    pub fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) {
         debug_assert!(EVENT_TYPE != EventType::Error);
-        let js_this = self.js_this;
+        let js_this = self.js_this.get();
         if js_this.is_empty() {
             return;
         }
@@ -906,44 +889,40 @@ fn emit_js<const EVENT_TYPE: EventType>(
 
 impl FSWatcher {
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(
-        this: &mut Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if !this.closed && !this.persistent {
-            this.persistent = true;
-            this.poll_ref.ref_(this.vm_ctx());
+    pub fn do_ref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if !self.closed.get() && !self.persistent.get() {
+            self.persistent.set(true);
+            let vm_ctx = self.vm_ctx();
+            self.poll_ref.with_mut(|r| r.ref_(vm_ctx));
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_unref(
-        this: &mut Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if this.persistent {
-            this.persistent = false;
-            this.poll_ref.unref(this.vm_ctx());
+    pub fn do_unref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if self.persistent.get() {
+            self.persistent.set(false);
+            let vm_ctx = self.vm_ctx();
+            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_ref(
-        this: &mut Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(this.persistent))
+    pub fn has_ref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::from(self.persistent.get()))
     }
 
     // this can be called from Watcher Thread or JS Context Thread
-    pub fn ref_task(&mut self) -> bool {
+    pub fn ref_task(&self) -> bool {
         let _guard = self.mutex.lock_guard();
-        if self.closed {
+        // R-2: `closed: Cell<bool>` is `!Sync`, but `FSWatcher` itself is
+        // `!Sync` (raw-pointer fields, no `unsafe impl Sync`); cross-thread
+        // access goes through `*mut FSWatcher` in `FSWatchTask.ctx` exactly as
+        // before. The mutex serialises this read against the JS-thread
+        // `close()` write — same soundness profile as the bare `bool` it
+        // replaced.
+        if self.closed.get() {
             return false;
         }
         self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
@@ -957,18 +936,18 @@ impl FSWatcher {
         self.pending_activity_count.load(Ordering::Acquire) > 0
     }
 
-    pub fn unref_task(&mut self) {
+    pub fn unref_task(&self) {
         let _guard = self.mutex.lock_guard();
         // JSC eventually will free it
         let prev = self.pending_activity_count.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(prev > 0);
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         self.mutex.lock();
-        if !self.closed {
-            self.closed = true;
-            let js_this = self.js_this;
+        if !self.closed.get() {
+            self.closed.set(true);
+            let js_this = self.js_this.get();
             self.mutex.unlock();
             self.detach();
 
@@ -992,11 +971,10 @@ impl FSWatcher {
     }
 
     // this can be called multiple times
-    pub fn detach(&mut self) {
+    pub fn detach(&self) {
+        let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
         if self.vm().test_isolation_enabled {
-            self.vm()
-                .rare_data()
-                .remove_fs_watcher_for_isolation(std::ptr::from_mut::<Self>(self).cast::<c_void>());
+            self.vm().rare_data().remove_fs_watcher_for_isolation(ctx_ptr);
         }
 
         if let Some(watcher) = self.path_watcher.take() {
@@ -1004,31 +982,28 @@ impl FSWatcher {
             // (it self-destroys via `heap::take` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
-            path_watcher::PathWatcher::detach(watcher, std::ptr::from_mut::<Self>(self).cast::<c_void>());
+            path_watcher::PathWatcher::detach(watcher, ctx_ptr);
         }
 
-        if self.persistent {
-            self.persistent = false;
-            self.poll_ref.unref(self.vm_ctx());
+        if self.persistent.get() {
+            self.persistent.set(false);
+            let vm_ctx = self.vm_ctx();
+            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
 
-        if let Some(signal) = self.signal.take() {
+        if let Some(signal) = self.signal.replace(None) {
             // PORT NOTE: Zig `signal.detach(this)` = `cleanNativeBindings` +
             // `unref`. `AbortSignalRef::Drop` already does the `unref`, so only
             // remove the listener here to avoid a double-unref.
-            signal.clean_native_bindings(std::ptr::from_mut::<Self>(self).cast::<c_void>());
+            signal.clean_native_bindings(ctx_ptr);
         }
 
-        self.js_this = JSValue::ZERO;
+        self.js_this.set(JSValue::ZERO);
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_close(
-        this: &mut Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.close();
+    pub fn do_close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        self.close();
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1051,34 +1026,38 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
-            current_task: FSWatchTask {
+            current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 count: 0,
                 ..Default::default()
-            },
+            }),
             mutex: Mutex::default(),
             // SAFETY: `args.signal` is a live borrow of the JS AbortSignal (kept
             // reachable by the caller's frame); `ref_()` bumps the C++ intrusive
             // refcount and `adopt` takes ownership of that +1.
-            signal: args
-                .signal
-                .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
-            persistent: args.persistent,
-            path_watcher: None,
+            signal: JsCell::new(
+                args.signal
+                    .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
+            ),
+            persistent: Cell::new(args.persistent),
+            path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
-            js_this: JSValue::ZERO,
+            js_this: Cell::new(JSValue::ZERO),
             encoding: args.encoding,
-            closed: false,
+            closed: Cell::new(false),
             verbose: args.verbose,
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsCell::new(KeepAlive::default()),
             pending_activity_count: AtomicU32::new(1),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
-        let ctx_ref = unsafe { &mut *ctx };
+        // R-2: deref as shared; mutation goes through `JsCell`.
+        let ctx_ref = unsafe { &*ctx };
         // SAFETY: `ctx` is the heap-stable Box address; write provenance.
-        ctx_ref.current_task.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) });
+        ctx_ref
+            .current_task
+            .with_mut(|t| t.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) }));
 
-        ctx_ref.path_watcher = if args.signal.map_or(true, |s| !s.aborted()) {
+        ctx_ref.path_watcher.set(if args.signal.map_or(true, |s| !s.aborted()) {
             // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
             // and both backends `@compileError` if they aren't exactly
             // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
@@ -1118,7 +1097,7 @@ impl FSWatcher {
             }
         } else {
             None
-        };
+        });
         // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
         // the GC wrapper via `to_js_ptr`.
         unsafe {

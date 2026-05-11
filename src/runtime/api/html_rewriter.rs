@@ -694,12 +694,13 @@ impl BufferOutputSink {
         unsafe { (*sink).response = result };
         // PORT NOTE (Stacked Borrows): `sink_error` is written via raw pointer
         // by the unhandled-rejection handler during `bufferer.run()` and via
-        // `tmp_sync_error` from `on_finished_buffering`. Derive ONE raw `*mut`
-        // via `addr_of_mut!` and route every read/write through it so all
-        // accesses share the same provenance — taking a fresh `&`/`&mut`
-        // borrow after storing the raw pointer would invalidate it.
-        let mut sink_error: JSValue = JSValue::ZERO;
-        let sink_error_ptr: *mut JSValue = core::ptr::addr_of_mut!(sink_error);
+        // `tmp_sync_error` from `on_finished_buffering`. Use a `Cell` so the
+        // exported `*mut` (via `Cell::as_ptr`, i.e. `UnsafeCell::get`) carries
+        // SharedReadWrite provenance — local `.get()` reads do NOT invalidate
+        // the stored raw pointer the way a `&`/`&mut` reborrow of a plain
+        // `mut` local would.
+        let sink_error: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
+        let sink_error_ptr: *mut JSValue = sink_error.as_ptr();
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
@@ -717,12 +718,9 @@ impl BufferOutputSink {
         unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         // Zig `defer sink_error.ensureStillAlive()` — read the *live* slot at
-        // scope exit through `sink_error_ptr` (same provenance as the writers).
+        // scope exit (Cell shares provenance with the raw-pointer writers).
         scopeguard::defer! {
-            // SAFETY: `sink_error_ptr` points at a stack local that outlives
-            // this guard (sync stack frame; guard runs at scope exit before
-            // the local is dropped).
-            unsafe { (*sink_error_ptr).ensure_still_alive() };
+            sink_error.get().ensure_still_alive();
             // SAFETY: VM outlives this guard (sync stack frame).
             let vm = VirtualMachine::get().as_mut();
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
@@ -840,10 +838,9 @@ impl BufferOutputSink {
             });
         }
 
-        // sync error occurs — read via `sink_error_ptr` (same provenance as
-        // the writers; see PORT NOTE above).
-        // SAFETY: sink_error_ptr points at the live `sink_error` stack local.
-        let captured = unsafe { *sink_error_ptr };
+        // sync error occurs — read via the Cell (shares SharedReadWrite
+        // provenance with the raw-pointer writers; see PORT NOTE above).
+        let captured = sink_error.get();
         if !captured.is_empty() {
             captured.ensure_still_alive();
             captured.unprotect();

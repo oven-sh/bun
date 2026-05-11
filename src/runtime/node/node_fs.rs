@@ -1226,8 +1226,12 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     pub task: WorkPoolTask,
     /// Written from any workpool thread (first `finish_concurrently` caller wins via
     /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
-    /// `UnsafeCell` so concurrent subtasks can hold `&Self` without aliased `&mut`.
-    pub result: core::cell::UnsafeCell<Maybe<ret::Cp>>,
+    /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
+    /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
+    /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread
+    /// read), not by `Cell` itself — `Cell` is `repr(transparent)` over
+    /// `UnsafeCell` and `set()` is exactly the prior `*ptr = val` open-coded.
+    pub result: core::cell::Cell<Maybe<ret::Cp>>,
     /// If this task is called by the shell then we shouldn't call this as
     /// it is not threadsafe and is unnecessary as the process will be kept
     /// alive by the shell instance.
@@ -1381,7 +1385,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             has_result: AtomicBool::new(false),
             // Sentinel — overwritten by `finish_concurrently` (gated by the
             // `has_result` CAS) before any read on the JS thread.
-            result: core::cell::UnsafeCell::new(Ok(())),
+            result: core::cell::Cell::new(Ok(())),
             evtloop: EventLoopHandle::init(vm.event_loop.cast()),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
@@ -1412,7 +1416,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             has_result: AtomicBool::new(false),
             // Sentinel — overwritten by `finish_concurrently` (gated by the
             // `has_result` CAS) before any read on the JS thread.
-            result: core::cell::UnsafeCell::new(Ok(())),
+            result: core::cell::Cell::new(Ok(())),
             evtloop: EventLoopHandle::Mini(mini),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
@@ -1447,11 +1451,12 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if self.has_result.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_err() {
             return;
         }
-        // SAFETY: the CAS above guarantees exactly one thread reaches this write;
-        // `result` is `UnsafeCell` so writing through `&self` is sound.
-        // (Zig clones `err.path` here to outlive the caller's stack buffer; in
-        // Rust `sys::Error::path` is already `Box<[u8]>`, so move-assign suffices.)
-        unsafe { *self.result.get() = result; }
+        // The CAS above guarantees exactly one thread reaches this write; the
+        // `subtask_count` AcqRel fence in `on_subtask_done` publishes it to the
+        // JS-thread reader. (Zig clones `err.path` here to outlive the caller's
+        // stack buffer; in Rust `sys::Error::path` is already `Box<[u8]>`, so
+        // move-assign suffices.)
+        self.result.set(result);
     }
 
     /// Called exactly once by the main directory-scan task and once by each
@@ -1475,8 +1480,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // All subtasks have finished. If none reported an error, the copy succeeded.
         if !this_ref.has_result.load(Ordering::Relaxed) {
             this_ref.has_result.store(true, Ordering::Relaxed);
-            // SAFETY: count reached zero ⇒ this thread now has exclusive access.
-            unsafe { *this_ref.result.get() = Ok(()); }
+            // count reached zero ⇒ this thread now has exclusive access.
+            this_ref.result.set(Ok(()));
         }
 
         // Count reached zero ⇒ exclusive access. `this` carries mutable

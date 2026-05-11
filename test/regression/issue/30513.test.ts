@@ -222,9 +222,7 @@ test("project .npmrc overrides home .npmrc for the same nerf-dart", async () => 
   using homeDir = tempDir("issue-30513-home", {
     // Home .npmrc: a *wrong* token keyed to the same nerf-dart the
     // project uses. If bun picks this one the tarball will 404.
-    ".npmrc": [
-      `//${server.hostname}:${server.port}${TARBALL_PATH}/:_authToken=home-wrong-token`,
-    ].join("\n"),
+    ".npmrc": [`//${server.hostname}:${server.port}${TARBALL_PATH}/:_authToken=home-wrong-token`].join("\n"),
   });
   const origin = `http://${server.hostname}:${server.port}`;
   using dir = tempDir("issue-30513-layered", {
@@ -254,7 +252,11 @@ test("project .npmrc overrides home .npmrc for the same nerf-dart", async () => 
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
@@ -292,7 +294,11 @@ test("auth token matches case-insensitively on hostname", async () => {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],

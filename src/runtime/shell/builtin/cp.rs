@@ -780,7 +780,7 @@ impl ShellCpTask {
             EventLoopHandle::Mini(mini) => {
                 let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
                     args,
-                    mini,
+                    mini.as_ptr(),
                     std::ptr::from_mut::<ShellCpTask>(self),
                 );
             }

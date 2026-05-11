@@ -238,13 +238,13 @@ impl YesTask {
                     };
                     owner.enqueue_task_concurrent(ct);
                 }
-                EventLoopHandle::Mini(mini) => {
-                    (*(*mini).loop_).tick();
+                EventLoopHandle::Mini(mut mini) => {
+                    (*mini.loop_).tick();
                     let at = match &mut (*this).concurrent_task {
                         EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
                         EventLoopTask::Js(_) => unreachable!(),
                     };
-                    (*mini).enqueue_task_concurrent(at);
+                    mini.get_mut().enqueue_task_concurrent(at);
                 }
             }
         }

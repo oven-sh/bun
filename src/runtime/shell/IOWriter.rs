@@ -596,9 +596,9 @@ impl IOWriter {
             let s = self.state();
             s.winbuf.clear();
             s.winbuf.extend_from_slice(result);
-            // SAFETY: winbuf lives as long as `self`; reborrow with unbounded
-            // lifetime to detach from the &mut on `s`.
-            return unsafe { core::slice::from_raw_parts(s.winbuf.as_ptr(), s.winbuf.len()) };
+            // `state()` ties `s` to `&self`, so the slice borrow already has
+            // the `'self` lifetime the signature wants — no raw-parts needed.
+            return s.winbuf.as_slice();
         }
         #[allow(unreachable_code)]
         result
@@ -621,14 +621,16 @@ impl IOWriter {
         if s.writer_idx >= s.writers.len() {
             return &[];
         }
-        let writer = &s.writers[s.writer_idx];
-        let remaining = writer.len - writer.written;
-        debug_assert!(writer.len != writer.written);
-        // SAFETY: detach the borrow from `s` (UnsafeCell interior) so the
-        // returned slice ties to `&self` instead. `buf` is not reallocated
-        // until after the caller's write syscall completes.
-        let ptr = s.buf.as_ptr().wrapping_add(s.total_bytes_written);
-        unsafe { core::slice::from_raw_parts(ptr, remaining) }
+        let remaining = {
+            let writer = &s.writers[s.writer_idx];
+            debug_assert!(writer.len != writer.written);
+            writer.len - writer.written
+        };
+        // `state()` already ties `s` to `&self`, so a plain slice borrow has
+        // the right lifetime. `buf` is not reallocated until after the
+        // caller's write syscall completes.
+        let start = s.total_bytes_written;
+        &s.buf[start..start + remaining]
     }
 
     // ── bump (chunk completed) ──────────────────────────────────────────

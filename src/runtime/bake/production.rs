@@ -203,8 +203,9 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     if vm.transpiler.configure_defines().is_err() {
         fail_with_build_error(vm);
     }
-    // SAFETY: vm.log was set from ctx.log above (non-null process-lifetime).
-    bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
+    // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
+    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
+    bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -259,9 +260,10 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
 #[cold]
 #[inline(never)]
 fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
-    // SAFETY: vm.log is the process-lifetime ctx.log set in build_command.
-    if let Some(log) = vm.log {
-        let _ = unsafe { log.as_ref() }.print(std::ptr::from_mut(Output::error_writer()));
+    // `vm.log` is the process-lifetime ctx.log set in build_command;
+    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
+    if let Some(log) = vm.log_ref() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
     Global::exit(1);
 }
@@ -455,8 +457,9 @@ pub fn build_with_vm(
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
-    // SAFETY: vm.log is set from ctx.log (non-null process-lifetime).
-    let vm_log = unsafe { vm.log.unwrap().as_mut() };
+    // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
+    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
+    let vm_log = vm.log_mut().unwrap();
     framework.init_transpiler_with_options(
         &options.arena,
         vm_log,

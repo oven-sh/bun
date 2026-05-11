@@ -286,7 +286,21 @@ impl MimallocArena {
             self.owns,
             "MimallocArena::reset_retain_with_limit() on a borrowing_default() arena"
         );
-        if self.bytes_since_reset.get() > limit {
+        // `bytes_since_reset` only sees allocations that flow through this
+        // struct's `Allocator` impl / `std_allocator()` vtable thunks. The
+        // `AstAlloc` ZST (`ast_alloc.rs`) reads `AST_HEAP` (a raw
+        // `*mut mi_heap_t`) and calls `mi_heap_malloc[_aligned]` directly, so
+        // every `Vec<_, AstAlloc>` / `Box<_, AstAlloc>` buffer — i.e. the bulk
+        // of a parsed module on the import() path — bypasses `track_alloc`
+        // entirely. The counter therefore stays under `limit` indefinitely and
+        // the heap is never destroyed: ~299 MB retained on
+        // require-cache.test.ts "via import() doesn't leak file paths".
+        //
+        // Query the heap's actual committed footprint instead. This is
+        // accurate regardless of which alloc path was used. Keep the cheap
+        // counter as a fast-positive: if even the *tracked* bytes already
+        // exceed `limit`, skip the page walk.
+        if self.bytes_since_reset.get() > limit || self.heap_committed_exceeds(limit) {
             self.reset();
             true
         } else {
@@ -298,12 +312,58 @@ impl MimallocArena {
         }
     }
 
+    /// Returns whether the heap's committed memory exceeds `limit`, by walking
+    /// `mi_heap_area_t`s (one per mimalloc page) and summing `committed`. The
+    /// walk early-exits once the sum crosses `limit`, so the cost is bounded
+    /// by `limit / 64 KiB` callbacks (≈128 for the 8 MiB module-arena limit) —
+    /// negligible per-module compared to parse cost. Under-limit heaps walk
+    /// every page they own (≪128 for small modules).
+    ///
+    /// Unlike [`Self::bytes_since_reset`], this sees all allocations made on
+    /// `self.heap` regardless of which Rust-side wrapper issued them.
+    fn heap_committed_exceeds(&self, limit: usize) -> bool {
+        #[repr(C)]
+        struct State {
+            sum: usize,
+            limit: usize,
+        }
+        extern "C" fn visit(
+            _heap: *const mimalloc::Heap,
+            area: *const mimalloc::mi_heap_area_t,
+            _block: *mut c_void,
+            _block_size: usize,
+            arg: *mut c_void,
+        ) -> bool {
+            // SAFETY: mimalloc passes a valid `mi_heap_area_t*` per page when
+            // `visit_blocks=false`, and `arg` is the `&mut State` we supplied.
+            let st = unsafe { &mut *arg.cast::<State>() };
+            let committed = unsafe { (*area).committed };
+            st.sum = st.sum.saturating_add(committed);
+            // `false` stops the walk early.
+            st.sum <= st.limit
+        }
+        let mut st = State { sum: 0, limit };
+        // SAFETY: `self.heap` is a live heap; `visit` matches the
+        // `mi_block_visit_fun` signature; `&mut st` is valid for the call.
+        unsafe {
+            mimalloc::mi_heap_visit_blocks(
+                self.heap_ptr(),
+                false,
+                Some(visit),
+                (&raw mut st).cast(),
+            );
+        }
+        st.sum > limit
+    }
+
     #[inline(always)]
     fn track_alloc(&self, len: usize) {
         // Non-atomic: alloc paths already require the owning thread (asserted
         // by `assert_owning_thread`), and `Cell` is `!Sync` so the only other
         // reader is `reset_retain_with_limit` which takes `&mut self`.
         // Saturating because this is a soft-limit hint, not accounting.
+        // Kept as a fast-positive for `reset_retain_with_limit`; the
+        // authoritative check is `heap_committed_exceeds`.
         self.bytes_since_reset
             .set(self.bytes_since_reset.get().saturating_add(len));
     }

@@ -525,8 +525,10 @@ test("WebView.closeAll is a static function", () => {
 // under bun, not an init) — so treat state 'Z' as dead on Linux.
 // macOS: no /proc. launchd reaps orphans eventually; kill(pid, 0) is
 // the only signal we have. Same helper is used by both tests below.
+// `readFileSync` comes from the driver's outer import (spec says you
+// can't bind the same name twice from one module), so this helper
+// only declares the function.
 const isDeadHelper = [
-  "import { readFileSync } from 'node:fs';",
   "const isReapedOrZombie = (p) => {",
   "  try { process.kill(p, 0); }",
   "  catch { return true; }", // ESRCH — reaped (or never existed)
@@ -559,18 +561,30 @@ const fakeChrome =
 
 function driver({ triggerCrash }: { triggerCrash: boolean }): string {
   return [
-    "import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+    "import { chmodSync, readFileSync, writeFileSync } from 'node:fs';",
     isDeadHelper,
     "chmodSync('./fake-chrome.sh', 0o755);",
     "const view = new Bun.WebView({",
     "  backend: { type: 'chrome', path: './fake-chrome.sh', url: false },",
     "  width: 100, height: 100,",
     "});",
-    // pid-trio is written after the shell forks; poll.
+    // Poll for the pid-trio. Shell `> $PID_OUT` O_CREAT|O_TRUNCs the
+    // file BEFORE printf writes — a plain existsSync() can see it
+    // empty. Read the content on every tick and bail only when we
+    // actually have three numeric pids.
     "const pidsDeadline = Date.now() + 5000;",
-    "while (Date.now() < pidsDeadline && !existsSync('pids.txt')) await Bun.sleep(10);",
-    "const pids = readFileSync('pids.txt', 'utf8').trim().split(' ').map(Number);",
-    "if (pids.length !== 3 || pids.some(p => !p)) throw new Error('bad pids: ' + JSON.stringify(pids));",
+    "let pids = [];",
+    "while (Date.now() < pidsDeadline) {",
+    "  try {",
+    "    const parsed = readFileSync('pids.txt', 'utf8').trim().split(' ').map(Number);",
+    "    if (parsed.length === 3 && parsed.every(p => Number.isFinite(p) && p > 0)) {",
+    "      pids = parsed;",
+    "      break;",
+    "    }",
+    "  } catch {}", // ENOENT while the shell still hasn't opened the redirect
+    "  await Bun.sleep(10);",
+    "}",
+    "if (pids.length !== 3) throw new Error('timed out waiting for pids');",
     // Sanity: every pid must be alive right now. A vacuously empty
     // survivor list at the end would "pass" even if the fixture broke.
     "const beforeDead = pids.filter(isReapedOrZombie);",

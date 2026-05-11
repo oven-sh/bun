@@ -649,6 +649,27 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test.concurrent("many custom conditions does not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-api-many-conditions", {
+      "entry.js": "export const x = 1;\n",
+    });
+    const conditions = Array.from({ length: 64 }, (_, i) => "cond" + i);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.build({ entrypoints: [${JSON.stringify(join(dir, "entry.js"))}], conditions: ${JSON.stringify(conditions)} }); if (!r.success) throw new AggregateError(r.logs); console.log("ok");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

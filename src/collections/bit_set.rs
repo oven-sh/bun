@@ -1277,8 +1277,19 @@ impl DynamicBitSetUnmanaged {
 /// Single buffer for multiple bitsets of equal length. Does not
 /// implement all methods of DynamicBitSetUnmanaged and should
 /// be used carefully.
+///
+/// `buf` is a raw heap allocation rather than `Box<[usize]>` because `at()` /
+/// `set()` / `set_union()` hand out and write through `*mut usize` views while
+/// only holding `&self`. With `Box<[usize]>`, the only way to reach the data
+/// from `&self` is `Deref` → `&[usize]` → `as_ptr()`, which yields a pointer
+/// with shared-read-only provenance — writing through it (as the old code did
+/// via `.cast_mut()`) is UB under Stacked Borrows. Owning the allocation as a
+/// raw pointer means the heap words are never covered by a `&`/`&mut`
+/// reference, so reads and writes through `at()`-derived pointers carry the
+/// original allocation's full read-write provenance.
 pub struct DynamicBitSetList {
-    pub buf: Box<[usize]>,
+    buf: ptr::NonNull<usize>,
+    buf_len: usize,
     pub n: usize,
     pub bit_length: usize,
 }
@@ -1287,22 +1298,43 @@ impl DynamicBitSetList {
     pub fn init_empty(n: usize, bit_length: usize) -> Result<Self, AllocError> {
         let masks = DynamicBitSetUnmanaged::num_masks(bit_length);
         let single_bitset_buf_size = masks + 1;
+        let buf_len = single_bitset_buf_size * n;
 
-        // TODO(port): narrow error set
-        // vec![0usize; ..] is already zero-filled; the redundant `.fill(0)` was
-        // dead. (Zig's `init_empty` writes the header words next.)
-        let mut buf = vec![0usize; single_bitset_buf_size * n].into_boxed_slice();
-
-        for i in 0..n {
-            buf[i * single_bitset_buf_size] = single_bitset_buf_size;
+        if buf_len == 0 {
+            return Ok(Self {
+                buf: ptr::NonNull::dangling(),
+                buf_len: 0,
+                n,
+                bit_length,
+            });
         }
 
-        Ok(Self { buf, n, bit_length })
+        let layout =
+            core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
+        // SAFETY: `buf_len > 0` so layout has nonzero size.
+        let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
+        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
+
+        for i in 0..n {
+            // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
+            // zero-initialized and at least `buf_len` words long.
+            unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
+        }
+
+        Ok(Self { buf, buf_len, n, bit_length })
     }
 
-    // deinit → Drop on Box<[usize]>.
-
+    /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
+    ///
+    /// The returned view's `masks` pointer aliases `self.buf`. It is a raw
+    /// pointer with no lifetime, so the borrow checker will **not** prevent
+    /// use-after-free: the caller must ensure `self` is not dropped (and `buf`
+    /// not reallocated — impossible today, no resize API) while the view is
+    /// live. All current callers (`hoisted_install`, `isolated_install`,
+    /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
+    /// alive for the view's entire use. The view must not be `deinit`ed.
     pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+        debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
         let single_bitset_buf_size = num_masks + 1;
 
@@ -1310,9 +1342,14 @@ impl DynamicBitSetList {
 
         DynamicBitSetUnmanaged {
             bit_length: self.bit_length,
-            // SAFETY: offset+1 is within `buf` for i < n; the returned view is
-            // non-owning and must not be `deinit`ed.
-            masks: unsafe { self.buf.as_ptr().add(offset).add(1).cast_mut() },
+            // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
+            // and the pointer is in-bounds. `buf` is a raw allocation never
+            // reborrowed as `&[usize]`/`&mut [usize]`, so this `*mut` carries
+            // full read-write provenance and writes through it via the returned
+            // view (e.g. from `set`/`set_union`) are sound even though we only
+            // hold `&self` here — `&self` freezes the pointer *value*, not the
+            // pointee.
+            masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
         }
     }
 
@@ -1326,6 +1363,23 @@ impl DynamicBitSetList {
         bitset.set_union(other);
     }
 }
+
+impl Drop for DynamicBitSetList {
+    fn drop(&mut self) {
+        if self.buf_len == 0 {
+            return;
+        }
+        let layout =
+            core::alloc::Layout::array::<usize>(self.buf_len).expect("unreachable");
+        // SAFETY: `buf` was allocated in `init_empty` with exactly this layout
+        // and has not been freed (no other code path deallocates it).
+        unsafe { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
+    }
+}
+
+// `buf` is a uniquely-owned heap allocation of plain `usize`s; moving the
+// owning struct between threads is as safe as moving a `Box<[usize]>`.
+unsafe impl Send for DynamicBitSetList {}
 
 // Raw allocation helpers for DynamicBitSetUnmanaged. These mirror Zig's
 // allocator.alloc/realloc/free with the size-at-[-1] header convention.

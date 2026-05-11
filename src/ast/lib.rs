@@ -1,4 +1,11 @@
 #![feature(allocator_api)]
+// `#[thread_local]` for the per-node-allocation hot-path TLS
+// (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
+// MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
+// `__thread` slot like Zig's `threadlocal var`, vs the `thread_local!`
+// macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
+// destructor, const init).
+#![feature(thread_local)]
 //! Port of `src/logger/logger.zig`.
 //!
 //! TODO(port): OWNERSHIP — almost every `[]const u8` field in this module has
@@ -3180,30 +3187,30 @@ pub mod store_ast_alloc_heap {
 
     use bun_alloc::MimallocArena;
 
-    thread_local! {
-        static ARENA: Cell<*mut MimallocArena> = const { Cell::new(ptr::null_mut()) };
-    }
+    #[thread_local]
+    static ARENA: Cell<*mut MimallocArena> = Cell::new(ptr::null_mut());
 
     pub fn enter() {
         if std::env::var_os("BUN_DISABLE_STORE_AST_HEAP").is_some() {
             return;
         }
-        let arena = ARENA.with(|c| {
-            let p = c.get();
+        let arena = {
+            let p = ARENA.get();
             if !p.is_null() {
-                return p;
+                p
+            } else {
+                let p = Box::into_raw(Box::new(MimallocArena::new()));
+                ARENA.set(p);
+                p
             }
-            let p = Box::into_raw(Box::new(MimallocArena::new()));
-            c.set(p);
-            p
-        });
+        };
         // SAFETY: `arena` is a live `Box::into_raw` allocation owned by this
         // thread; only `exit()` (on this thread) frees it.
         bun_alloc::ast_alloc::set_thread_heap(unsafe { (*arena).heap_ptr() });
     }
 
     pub fn reset() {
-        let arena = ARENA.with(|c| c.get());
+        let arena = ARENA.get();
         if arena.is_null() {
             enter();
             return;
@@ -3230,7 +3237,7 @@ pub mod store_ast_alloc_heap {
 
     #[inline]
     pub fn current_heap() -> *mut bun_alloc::mimalloc::Heap {
-        let arena = ARENA.with(|c| c.get());
+        let arena = ARENA.get();
         if arena.is_null() {
             return ptr::null_mut();
         }
@@ -3239,7 +3246,7 @@ pub mod store_ast_alloc_heap {
     }
 
     pub fn exit() {
-        let arena = ARENA.with(|c| c.replace(ptr::null_mut()));
+        let arena = ARENA.replace(ptr::null_mut());
         bun_alloc::ast_alloc::set_thread_heap(ptr::null_mut());
         if !arena.is_null() {
             // SAFETY: `arena` was `Box::into_raw`'d in `enter()` on this
@@ -3256,18 +3263,17 @@ pub mod store_ast_alloc_heap {
 // allocates boxed payloads into this arena instead of the long-lived block
 // store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
 // tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
-std::thread_local! {
-    static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
-        const { core::cell::Cell::new(core::ptr::null()) };
-}
+#[thread_local]
+static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
+    core::cell::Cell::new(core::ptr::null());
 
 #[inline]
 pub fn data_store_override() -> *const bun_alloc::Arena {
-    DATA_STORE_OVERRIDE.with(|c| c.get())
+    DATA_STORE_OVERRIDE.get()
 }
 #[inline]
 pub fn set_data_store_override(p: *const bun_alloc::Arena) {
-    DATA_STORE_OVERRIDE.with(|c| c.set(p));
+    DATA_STORE_OVERRIDE.set(p);
 }
 
 /// Copy `bytes` into the active AST arena so the slice shares the same
@@ -3279,7 +3285,7 @@ pub fn set_data_store_override(p: *const bun_alloc::Arena) {
 /// The lifetime is erased per the `StoreStr` convention — arena ownership, not
 /// a leak.
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
-    let ov = DATA_STORE_OVERRIDE.with(|c| c.get());
+    let ov = DATA_STORE_OVERRIDE.get();
     if !ov.is_null() {
         // SAFETY: override is installed by an RAII scope that outlives this
         // call; the returned slice's unbounded lifetime widens to `'static`

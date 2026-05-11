@@ -34,28 +34,33 @@ use core::ptr::NonNull;
 
 use crate::mimalloc;
 
-thread_local! {
-    /// Raw `mi_heap_t*` of the active `ASTMemoryAllocator`'s `MimallocArena`,
-    /// or null when no AST scope is entered. Set/cleared by
-    /// `bun_ast::ASTMemoryAllocator::{push,pop}` and
-    /// `ASTMemoryAllocator::Scope::{enter,exit}` (alongside the existing
-    /// `Stmt/Expr.Data.Store.MEMORY_ALLOCATOR` and
-    /// `bun_ast::data_store_override` thread-locals).
-    static AST_HEAP: Cell<*mut mimalloc::Heap> = const { Cell::new(core::ptr::null_mut()) };
-}
+/// Raw `mi_heap_t*` of the active `ASTMemoryAllocator`'s `MimallocArena`,
+/// or null when no AST scope is entered. Set/cleared by
+/// `bun_ast::ASTMemoryAllocator::{push,pop}` and
+/// `ASTMemoryAllocator::Scope::{enter,exit}` (alongside the existing
+/// `Stmt/Expr.Data.Store.MEMORY_ALLOCATOR` and
+/// `bun_ast::data_store_override` thread-locals).
+///
+/// `#[thread_local]` (not `thread_local!`) so this is a bare `__thread` slot
+/// like Zig's `threadlocal var`: every `AstAlloc` allocation reads this, and
+/// the macro form's `LocalKey::__getit` wrapper showed up under
+/// `pthread_getspecific` in next-lint profiles. `Cell<*mut _>` has no
+/// destructor and a const initializer, so no dtor registration is needed.
+#[thread_local]
+static AST_HEAP: Cell<*mut mimalloc::Heap> = Cell::new(core::ptr::null_mut());
 
 /// Install `heap` as the thread's AST heap. Pass `null` to clear.
 /// Intended caller: `ASTMemoryAllocator` (push/pop/Scope) only.
 #[inline]
 pub fn set_thread_heap(heap: *mut mimalloc::Heap) {
-    AST_HEAP.with(|c| c.set(heap));
+    AST_HEAP.set(heap);
 }
 
 /// Current thread's AST heap, or null if no `ASTMemoryAllocator` scope is
 /// active.
 #[inline]
 pub fn thread_heap() -> *mut mimalloc::Heap {
-    AST_HEAP.with(|c| c.get())
+    AST_HEAP.get()
 }
 
 /// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc

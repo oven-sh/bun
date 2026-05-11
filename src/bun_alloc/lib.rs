@@ -1,6 +1,12 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
+// `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
+// `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
+// `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
+// Used for the per-allocation hot-path TLS in `ast_alloc::AST_HEAP`; matches
+// Zig's `threadlocal var` semantics exactly.
+#![feature(thread_local)]
 
 use core::fmt::Write as _;
 use core::mem::{size_of, MaybeUninit};

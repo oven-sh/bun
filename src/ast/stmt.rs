@@ -791,33 +791,39 @@ pub mod data {
         use super::*;
         use stmt_store::Store as Backing;
 
-        thread_local! {
-            // `*mut Backing` (not NonNull) because the Zig stores raw `?*StoreType`.
-            pub static INSTANCE: Cell<*mut Backing> = const { Cell::new(core::ptr::null_mut()) };
-            pub static MEMORY_ALLOCATOR: Cell<*mut ASTMemoryAllocator> =
-                const { Cell::new(core::ptr::null_mut()) };
-            pub static DISABLE_RESET: Cell<bool> = const { Cell::new(false) };
-        }
+        // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
+        // read on every `Stmt::alloc`, and the `thread_local!` macro's
+        // `LocalKey` wrapper showed up in next-lint profiles. All three are
+        // `Cell<ptr|bool>` (no destructor, const init) so no dtor
+        // registration is needed; matches Zig `threadlocal var`.
+        // `*mut Backing` (not NonNull) because the Zig stores raw `?*StoreType`.
+        #[thread_local]
+        pub static INSTANCE: Cell<*mut Backing> = Cell::new(core::ptr::null_mut());
+        #[thread_local]
+        pub static MEMORY_ALLOCATOR: Cell<*mut ASTMemoryAllocator> =
+            Cell::new(core::ptr::null_mut());
+        #[thread_local]
+        pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
 
         #[inline]
         fn instance() -> *mut Backing {
-            INSTANCE.with(|c| c.get())
+            INSTANCE.get()
         }
 
         #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
-            MEMORY_ALLOCATOR.with(|c| c.get())
+            MEMORY_ALLOCATOR.get()
         }
         #[inline]
         pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
-            MEMORY_ALLOCATOR.with(|c| c.set(p));
+            MEMORY_ALLOCATOR.set(p);
         }
 
         pub fn create() {
             if !instance().is_null() || !memory_allocator().is_null() {
                 return;
             }
-            INSTANCE.with(|c| c.set(Backing::init()));
+            INSTANCE.set(Backing::init());
         }
 
         /// create || reset
@@ -829,14 +835,14 @@ pub mod data {
                 create();
                 return;
             }
-            if !DISABLE_RESET.with(|c| c.get()) {
+            if !DISABLE_RESET.get() {
                 // SAFETY: checked non-null above; thread-local, no concurrent mutation.
                 Backing::reset(unsafe { &mut *instance() });
             }
         }
 
         pub fn reset() {
-            if DISABLE_RESET.with(|c| c.get()) || !memory_allocator().is_null() {
+            if DISABLE_RESET.get() || !memory_allocator().is_null() {
                 return;
             }
             // SAFETY: caller contract — instance is set when reset() is called.
@@ -847,11 +853,11 @@ pub mod data {
         /// callers that want the Store to persist across multiple parse calls.
         #[inline]
         pub fn set_disable_reset(b: bool) {
-            DISABLE_RESET.with(|c| c.set(b));
+            DISABLE_RESET.set(b);
         }
         #[inline]
         pub fn disable_reset() -> bool {
-            DISABLE_RESET.with(|c| c.get())
+            DISABLE_RESET.get()
         }
 
         pub fn deinit() {
@@ -860,7 +866,7 @@ pub mod data {
             }
             // SAFETY: checked non-null above; destroy frees the PreAlloc.
             unsafe { Backing::destroy(instance()) };
-            INSTANCE.with(|c| c.set(core::ptr::null_mut()));
+            INSTANCE.set(core::ptr::null_mut());
         }
 
         #[inline]

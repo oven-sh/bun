@@ -1674,13 +1674,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
             var listener = this.listener orelse {
-                if (comptime has_h3) {
-                    if (this.h3_app != null) {
-                        this.unref();
-                        this.notifyInspectorServerStopped();
-                        if (abrupt) this.flags.terminated = true;
-                    }
-                }
                 // Upgrading from graceful (`stop(false)`) to abrupt:
                 // `stop(false)` already nulled the listener, but the uWS
                 // App still owns open/idle keep-alive connections that
@@ -1688,12 +1681,25 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // force-closes every remaining socket on the app. This is
                 // the path that makes `server.close(); server.closeAllConnections();`
                 // actually drain msal-style loopback servers.
+                //
+                // This runs BEFORE the h3 branch below, because the h3
+                // branch flips `this.flags.terminated = true` on abrupt
+                // stops, which would make our `!this.flags.terminated`
+                // guard false and skip the app close for h3-enabled
+                // servers (HTTPS + h3: true).
                 if (abrupt and !this.flags.terminated and this.app != null) {
                     if (this.config.websocket) |*ws| {
                         ws.handler.app = null;
                     }
                     this.flags.terminated = true;
                     this.app.?.close();
+                }
+                if (comptime has_h3) {
+                    if (this.h3_app != null) {
+                        this.unref();
+                        this.notifyInspectorServerStopped();
+                        if (abrupt) this.flags.terminated = true;
+                    }
                 }
                 return;
             };

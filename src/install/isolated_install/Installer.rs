@@ -51,7 +51,7 @@ type StoreEntryId = store::entry::Id;
 type StoreNodeId = store::node::Id;
 
 // ── Path option presets ───────────────────────────────────────────────────
-use paths::path_options::{Kind as PathKind, PathSeparators};
+use paths::path_options::{AssumeOk as _, Kind as PathKind, PathSeparators};
 /// `bun.Path(.{ .sep = .auto })`
 type AutoPath = paths::Path<u8, { PathKind::ANY }, { PathSeparators::AUTO }>;
 /// `bun.AbsPath(.{ .unit = .os, .sep = .auto })`
@@ -1057,7 +1057,7 @@ impl Task {
                         }
                     };
                     let mut pkg_cache_dir_subpath =
-                        bun_core::handle_oom(AutoRelPath::from(pkg_cache_dir_subpath_init));
+                        AutoRelPath::from(pkg_cache_dir_subpath_init).assume_ok();
 
                     // SAFETY: idempotent cache-dir initialization (once-init internally).
                     // Scoped tightly so the `&mut PackageManager` does not outlive this
@@ -1247,9 +1247,7 @@ impl Task {
                                     }
                                 };
 
-                                let mut src = bun_core::handle_oom(
-                                    OsAutoAbsPath::from_long_path(cache_dir_path.slice()),
-                                );
+                                let mut src = OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
                                 let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                 let mut hardlinker = Hardlinker::init(
@@ -1306,7 +1304,7 @@ impl Task {
                                 };
 
                                 let mut src_path =
-                                    bun_core::handle_oom(OsAutoAbsPath::from(cache_dir_path.slice()));
+                                    OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
                                 let _ = src_path.append(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                 let mut file_copier = FileCopier::init(

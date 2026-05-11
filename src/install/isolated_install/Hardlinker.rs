@@ -7,6 +7,7 @@ use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
+use bun_paths::path_options::AssumeOk as _;
 
 type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
 type OsPath = Path<
@@ -109,12 +110,11 @@ impl Hardlinker {
                 let src_saved_len = self.src.len();
                 // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
                 // `Err(MaxPathExceeded)` arm is statically unreachable (Zig returns
-                // `void` here). Route through `handle_oom` to crash loudly if that
-                // invariant ever breaks — matches the parent module's convention.
-                bun_core::handle_oom(self.src.append(entry.path.as_slice()));
+                // `void` here) -- see `path_options::AssumeOk`.
+                self.src.append(entry.path.as_slice()).assume_ok();
 
                 let dest_saved_len = self.dest.len();
-                bun_core::handle_oom(self.dest.append(entry.path.as_slice()));
+                self.dest.append(entry.path.as_slice()).assume_ok();
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {

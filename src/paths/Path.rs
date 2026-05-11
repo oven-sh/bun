@@ -140,6 +140,41 @@ pub mod options {
     // expose `_unchecked` variants.
     pub type Result<T> = core::result::Result<T, Error>;
 
+    /// `Result::unwrap` for the `CheckLength::AssumeAlwaysLessThanMaxPath`
+    /// configuration (every `Auto*`/`Os*` `Path` alias).
+    ///
+    /// In Zig, `Path(.{ .check_length = .assume_always_less_than_max_path })`
+    /// `from`/`append`/`appendFmt` return bare `T` (not `Error!T`), so call
+    /// sites are `path.append(x)` with no `try`. The Rust port returns
+    /// `Result<T, Error>` unconditionally (see PORT NOTE above), but the
+    /// `from`/`append` bodies *skip the length check entirely* in `ASSUME`
+    /// mode -- `Err(MaxPathExceeded)` is dead code, and an over-long input
+    /// instead panics inside `PooledBuf::append` slice indexing. So callers
+    /// on `ASSUME` types should use this instead of `?`/`handle_oom`: it
+    /// makes the infallibility explicit and, unlike `handle_oom`, panics with
+    /// the real reason if the invariant is ever violated rather than
+    /// misreporting it as "out of memory".
+    pub trait AssumeOk<T> {
+        fn assume_ok(self) -> T;
+    }
+    impl<T> AssumeOk<T> for Result<T> {
+        #[inline]
+        #[track_caller]
+        fn assume_ok(self) -> T {
+            match self {
+                Ok(v) => v,
+                // Not `unreachable_unchecked` -- keep the panic so a future
+                // `CheckForGreaterThanMaxPath` caller misusing this surfaces
+                // a real diagnostic instead of UB.
+                Err(Error::MaxPathExceeded) => unreachable!(
+                    "MaxPathExceeded on a CheckLength::ASSUME Path \
+                     (Err arm is dead under ASSUME; over-long input panics in \
+                     PooledBuf::append slice indexing first)"
+                ),
+            }
+        }
+    }
+
     // Zig: `pub fn inputChildType(opts, InputType) type` — strips array-ness
     // off string literals to get the element type. In Rust the generic `&[C]`
     // parameter already names `C` directly, so this helper disappears.

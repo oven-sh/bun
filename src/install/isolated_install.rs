@@ -34,6 +34,7 @@ use bun_collections::{
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_alloc::AllocError;
 use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 use bun_semver as semver;
@@ -1673,12 +1674,12 @@ pub fn install_isolated_packages(
                     // `[:0]const u16`. The Rust `sys::mkdirat`/`renameat` take
                     // `&ZStr` (u8) and widen internally, so a single u8
                     // `AutoRelPath` covers both the mkdir and rename targets.
-                    let mut rename_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
+                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
                     let rand = fast_random();
-                    bun_core::handle_oom(rename_path.append_fmt(format_args!(
+                    rename_path.append_fmt(format_args!(
                         ".old_modules-{}",
                         bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                    )));
+                    )).assume_ok();
 
                     // 1
                     if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), 0o755).is_err() {
@@ -1700,7 +1701,7 @@ pub fn install_isolated_packages(
                         fd.close();
                     });
 
-                    let mut entry_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
+                    let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
 
                     // 2
                     let mut node_modules_iter = sys::iterate_dir(node_modules);
@@ -1719,10 +1720,10 @@ pub fn install_isolated_packages(
                         // holds `*Path`; capture lengths and truncate manually so
                         // the paths stay unborrowed across the loop body.
                         let entry_path_save = entry_path.len();
-                        bun_core::handle_oom(entry_path.append(entry.name.slice()));
+                        entry_path.append(entry.name.slice()).assume_ok();
 
                         let rename_path_save = rename_path.len();
-                        bun_core::handle_oom(rename_path.append(entry.name.slice()));
+                        rename_path.append(entry.name.slice()).assume_ok();
 
                         let _ = sys::renameat(Fd::cwd(), entry_path.slice_z(), Fd::cwd(), rename_path.slice_z());
 
@@ -1733,22 +1734,22 @@ pub fn install_isolated_packages(
                     // 3
                     for workspace_path in lockfile.workspace_paths.values() {
                         let mut workspace_node_modules =
-                            bun_core::handle_oom(AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)));
+                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
                         // the buffer across an append-with-separator).
                         let basename = workspace_node_modules.basename().to_vec();
 
-                        bun_core::handle_oom(workspace_node_modules.append(b"node_modules"));
+                        workspace_node_modules.append(b"node_modules").assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — capture length instead
                         // of `save()` so `rename_path` stays unborrowed.
                         let rename_path_save = rename_path.len();
-                        bun_core::handle_oom(rename_path.append_fmt(format_args!(
+                        rename_path.append_fmt(format_args!(
                             ".old_{}_modules",
                             BStr::new(&basename)
-                        )));
+                        )).assume_ok();
 
                         let _ = sys::renameat(
                             Fd::cwd(),
@@ -1792,23 +1793,23 @@ pub fn install_isolated_packages(
                         Global::exit(1);
                     }
 
-                    let mut rename_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
+                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
 
                     let rand = fast_random();
-                    bun_core::handle_oom(rename_path.append_fmt(format_args!(
+                    rename_path.append_fmt(format_args!(
                         ".old_modules-{}",
                         bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                    )));
+                    )).assume_ok();
 
                     // 3
                     if sys::renameat(Fd::cwd(), temp_node_modules, Fd::cwd(), rename_path.slice_z()).is_err() {
                         break 'is_new_bun_modules true;
                     }
 
-                    bun_core::handle_oom(rename_path.append(b".cache"));
+                    rename_path.append(b".cache").assume_ok();
 
-                    let mut cache_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
-                    bun_core::handle_oom(cache_path.append(b".cache"));
+                    let mut cache_path = AutoRelPath::from(b"node_modules").assume_ok();
+                    cache_path.append(b".cache").assume_ok();
 
                     // 4
                     let _ = sys::renameat(Fd::cwd(), rename_path.slice_z(), Fd::cwd(), cache_path.slice_z());
@@ -1819,24 +1820,24 @@ pub fn install_isolated_packages(
                     // 5
                     for workspace_path in lockfile.workspace_paths.values() {
                         let mut workspace_node_modules =
-                            bun_core::handle_oom(AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)));
+                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
                         // the buffer across an append-with-separator).
                         let basename = workspace_node_modules.basename().to_vec();
 
-                        bun_core::handle_oom(workspace_node_modules.append(b"node_modules"));
+                        workspace_node_modules.append(b"node_modules").assume_ok();
 
                         // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
                         // holds a `*Path`; capture the length and truncate manually
                         // so `rename_path` stays unborrowed between save/restore.
                         let rename_path_save = rename_path.len();
 
-                        bun_core::handle_oom(rename_path.append_fmt(format_args!(
+                        rename_path.append_fmt(format_args!(
                             ".old_{}_modules",
                             BStr::new(&basename)
-                        )));
+                        )).assume_ok();
 
                         let _ = sys::renameat(
                             Fd::cwd(),
@@ -2144,7 +2145,7 @@ pub fn install_isolated_packages(
                             if pkg_res_tag == ResolutionTag::Npm {
                                 // if it's from npm, it should always have a package.json.
                                 // in other cases, probably yes but i'm less confident.
-                                bun_core::handle_oom(store_path.append(b"package.json"));
+                                store_path.append(b"package.json").assume_ok();
                             }
                             let exists = sys::exists_z(store_path.slice_z());
 
@@ -2156,7 +2157,7 @@ pub fn install_isolated_packages(
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
                                     store_path.set_length(scope_for_patch_tag_path);
-                                    bun_core::handle_oom(store_path.append(&*hash));
+                                    store_path.append(&*hash).assume_ok();
                                     !sys::exists_z(store_path.slice_z())
                                 }
                             };
@@ -2219,7 +2220,7 @@ pub fn install_isolated_packages(
                         _ => unreachable!(),
                     };
                     let mut pkg_cache_dir_subpath: AutoRelPath =
-                        bun_core::handle_oom(AutoRelPath::from(cache_subpath_z.as_bytes()));
+                        AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
 
                     let (cache_dir, cache_dir_path) = manager.get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit (Zig: defer cache_dir_path.deinit())
@@ -2233,7 +2234,7 @@ pub fn install_isolated_packages(
                                         // PORT NOTE: reshaped for borrowck — capture length
                                         // instead of `save()` so the path stays unborrowed.
                                         let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        bun_core::handle_oom(pkg_cache_dir_subpath.append(b"package.json"));
+                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
                                         let exists = sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
                                         exists

@@ -17,6 +17,7 @@ use bun_paths::PathBuffer;
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_runtime_types::reader::RuntimePipeKind;
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
@@ -1307,12 +1308,22 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
     // event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
+    // SAFETY: `subprocess_ptr` is the live heap allocation; `exit_state` is an
+    // embedded field and remains live until `Subprocess::finalize` detaches the
+    // process and reader targets.
+    let exit_state = unsafe {
+        bun_runtime_types::subprocess::SubprocessExitStateHandle::from_live_state(
+            &mut subprocess.exit_state,
+        )
+    };
     subprocess.stdout = Readable::init(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
         event_loop_nn,
         subprocess_nn,
         spawned_stdout,
         subprocess.stdout_maxbuf,
+        exit_state,
+        RuntimePipeKind::Stdout,
         IS_SYNC,
     );
     if let Some(reader) = subprocess.stdout.buffered_reader_handle() {
@@ -1324,6 +1335,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess_nn,
         spawned_stderr,
         subprocess.stderr_maxbuf,
+        exit_state,
+        RuntimePipeKind::Stderr,
         IS_SYNC,
     );
     if let Some(reader) = subprocess.stderr.buffered_reader_handle() {
@@ -1348,14 +1361,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         bun_spawn_types::ProcessHandle::from_ptr(subprocess.process.as_ptr())
             .expect("subprocess Process pointer is non-null"),
     );
-    // SAFETY: `subprocess_ptr` is the live heap allocation; `exit_state` is an
-    // embedded field and remains live until `Subprocess::finalize` detaches the
-    // process target.
-    let exit_state = unsafe {
-        bun_runtime_types::subprocess::SubprocessExitStateHandle::from_live_state(
-            &mut subprocess.exit_state,
-        )
-    };
     unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_target(
         bun_spawn::ProcessExitTarget::Runtime(RuntimeProcessExitTarget::Subprocess {
             state: exit_state,

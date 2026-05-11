@@ -196,7 +196,6 @@ pub use max_buf as MaxBuf;
 // trait impl — see `buffered_reader_parent_link!` below.
 bun_dispatch::link_interface! {
     pub BufferedReaderParentLink[
-        SubprocessPipeReader,
         ShellPipeReader,
         ShellIoReader,
         FileReader,
@@ -209,8 +208,8 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
-        // Only the `SubprocessPipeReader` arm acts on this; everything else
-        // no-ops (no other parent type wires a `MaxBuf`).
+        // Link-interface parents do not wire `MaxBuf`; typed reader targets
+        // handle the subprocess max-buffer path directly.
         fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }

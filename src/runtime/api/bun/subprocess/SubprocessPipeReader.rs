@@ -2,17 +2,21 @@ use core::ptr::NonNull;
 
 use bun_io::Loop as AsyncLoop;
 use bun_io::BufferedReader;
+use bun_io::BufferedReaderTarget;
 use bun_io::FilePollFlag;
 use bun_io::max_buf::MaxBuf;
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
-use bun_io::pipes::ReadState;
+use bun_io::pipe_reader::PosixFlags;
+use bun_io_types::reader::BufferedReaderHandle;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted, ScopedRef};
 use crate::webcore::ReadableStream;
 use bun_sys;
+use bun_runtime_types::reader::{
+    RuntimeBufferedReaderTarget, RuntimePipeKind, RuntimeReaderError,
+};
+use bun_runtime_types::subprocess::SubprocessExitStateHandle;
 
-use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
 pub type IOReader = BufferedReader;
@@ -32,15 +36,18 @@ impl Default for State {
 
 pub struct PipeReader {
     pub reader: IOReader,
-    // TODO(port): lifetime — backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
-    // NonNull is a raw pointer; `'static` erases the borrow-checker lifetime since this is only
-    // dereferenced unsafely while the owning Subprocess is known-live.
+    // TODO(port): lifetime — attachment marker for the owning Subprocess; cleared in
+    // detach()/onReaderDone()/onReaderError(). The typed target path recovers the
+    // Subprocess through `exit_state`, so this pointer is no longer part of the
+    // cross-crate reader callback contract.
     pub process: Option<NonNull<Subprocess<'static>>>,
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
+    pub exit_state: SubprocessExitStateHandle,
+    pub pipe: RuntimePipeKind,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
@@ -119,13 +126,18 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
     ) -> IntrusiveRc<PipeReader> {
+        let event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
             process: Some(process),
-            reader: IOReader::init::<PipeReader>(),
+            reader: IOReader::init_target(Self::reader_target(event_loop_handle, exit_state, pipe)),
             event_loop,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop_handle,
+            exit_state,
+            pipe,
             stdio_result: result,
             state: State::Pending,
         });
@@ -143,9 +155,20 @@ impl PipeReader {
 
         let raw: *mut PipeReader = bun_core::heap::into_raw(this);
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
-        unsafe {
-            (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
-            IntrusiveRc::from_raw(raw)
+        unsafe { IntrusiveRc::from_raw(raw) }
+    }
+
+    fn reader_target(
+        event_loop: bun_jsc::EventLoopHandle,
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+    ) -> BufferedReaderTarget {
+        BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::SubprocessPipeReader {
+                state: exit_state,
+                pipe,
+            },
+            event_loop: event_loop.as_event_loop_ctx(),
         }
     }
 
@@ -164,6 +187,11 @@ impl PipeReader {
         self.process = Some(process);
         self.event_loop = event_loop;
         self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.reader.set_target(Self::reader_target(
+            self.event_loop_handle,
+            self.exit_state,
+            self.pipe,
+        ));
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();
@@ -220,33 +248,24 @@ impl PipeReader {
     }
 
     pub fn on_reader_done(&mut self) {
+        self.on_reader_done_from_target(self.exit_state, self.pipe);
+    }
+
+    pub fn on_reader_done_from_target(
+        &mut self,
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+    ) {
         let owned = self.to_owned_slice();
         self.state = State::Done(owned);
-        if let Some(process) = self.process.take() {
-            // SAFETY: `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { (*process.as_ptr()).on_close_io(kind) };
+        if self.process.take().is_some() {
+            let subprocess = Self::subprocess_from_exit_state(exit_state);
+            subprocess.on_close_io(stdio_kind(pipe));
             // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
             // write provenance, and the caller (BufferedReader vtable) holds only a
             // raw parent pointer, so freeing here does not invalidate any live `&mut`.
             unsafe { PipeReader::deref(self) };
         }
-    }
-
-    pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if let Readable::Pipe(pipe) = &process.stdout {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
-                return StdioKind::Stdout;
-            }
-        }
-
-        if let Readable::Pipe(pipe) = &process.stderr {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
-                return StdioKind::Stderr;
-            }
-        }
-
-        unreachable!("We should be either stdout or stderr");
     }
 
     pub fn to_owned_slice(&mut self) -> Vec<u8> {
@@ -342,12 +361,20 @@ impl PipeReader {
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+        self.on_reader_error_from_target(self.exit_state, self.pipe, err);
+    }
+
+    pub fn on_reader_error_from_target(
+        &mut self,
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+        err: bun_sys::Error,
+    ) {
         // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
         self.state = State::Err(err);
-        if let Some(process) = self.process.take() {
-            // SAFETY: `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { (*process.as_ptr()).on_close_io(kind) };
+        if self.process.take().is_some() {
+            let subprocess = Self::subprocess_from_exit_state(exit_state);
+            subprocess.on_close_io(stdio_kind(pipe));
             // SAFETY: last use of `self`; see `on_reader_done` for rationale.
             unsafe { PipeReader::deref(self) };
         }
@@ -383,6 +410,74 @@ impl PipeReader {
         #[cfg(not(windows))]
         {
             uws.cast()
+        }
+    }
+
+    pub fn dispatch_reader_done(
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+        reader: BufferedReaderHandle,
+    ) {
+        let this = unsafe { Self::from_reader_handle(reader) };
+        debug_assert_eq!(this.pipe, pipe);
+        this.on_reader_done_from_target(exit_state, pipe);
+    }
+
+    pub fn dispatch_reader_error(
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+        reader: BufferedReaderHandle,
+        error: RuntimeReaderError,
+    ) {
+        let this = unsafe { Self::from_reader_handle(reader) };
+        debug_assert_eq!(this.pipe, pipe);
+        this.on_reader_error_from_target(
+            exit_state,
+            pipe,
+            bun_sys::Error {
+                errno: error.errno,
+                syscall: bun_sys::Tag::read,
+                ..Default::default()
+            },
+        );
+    }
+
+    pub fn dispatch_max_buffer_overflow(
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
+    ) {
+        let subprocess = Self::subprocess_from_exit_state(exit_state);
+        let kind = maxbuf_kind(pipe);
+        match pipe {
+            RuntimePipeKind::Stdout => {
+                bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut subprocess.stdout_maxbuf)
+            }
+            RuntimePipeKind::Stderr => {
+                bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf)
+            }
+        }
+        subprocess.on_max_buffer(kind);
+    }
+
+    unsafe fn from_reader_handle(reader: BufferedReaderHandle) -> &'static mut PipeReader {
+        unsafe {
+            &mut *bun_core::from_field_ptr!(
+                PipeReader,
+                reader,
+                reader.as_ptr::<IOReader>()
+            )
+        }
+    }
+
+    fn subprocess_from_exit_state(
+        exit_state: SubprocessExitStateHandle,
+    ) -> &'static mut Subprocess<'static> {
+        unsafe {
+            &mut *bun_core::from_field_ptr!(
+                Subprocess<'static>,
+                exit_state,
+                exit_state.as_ptr()
+            )
         }
     }
 
@@ -422,58 +517,17 @@ impl PipeReader {
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
-// `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
-bun_io::buffered_reader_parent_link!(SubprocessPipeReader for PipeReader);
-impl BufferedReaderParent for PipeReader {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SubprocessPipeReader;
-    const HAS_ON_READ_CHUNK: bool = false;
+fn stdio_kind(pipe: RuntimePipeKind) -> StdioKind {
+    match pipe {
+        RuntimePipeKind::Stdout => StdioKind::Stdout,
+        RuntimePipeKind::Stderr => StdioKind::Stderr,
+    }
+}
 
-    unsafe fn on_read_chunk(_this: *mut Self, _chunk: &[u8], _has_more: ReadState) -> bool {
-        // Never called when HAS_ON_READ_CHUNK == false.
-        true
-    }
-
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. `on_reader_done`/`on_reader_error` are
-    // tail-position (the reader is finished with `self`), so `&mut *this` is OK.
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done() };
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { (*this).on_reader_error(err) };
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Raw `addr_of!` projection — no `&Self` materialized (reader field may
-        // be borrowed mutably by the caller).
-        unsafe { (*this).loop_().cast() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: `this` is non-null/live per trait contract.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
-    unsafe fn on_max_buffer_overflow(
-        this: *mut Self,
-        maxbuf: NonNull<bun_io::max_buf::MaxBuf>,
-    ) {
-        // SAFETY: `this` is live per trait contract; raw place read of the
-        // `process` backref (the embedded reader may hold `&mut self` higher
-        // on the stack, so no `&Self` is materialized).
-        let Some(mut process) = (unsafe { (*this).process }) else { return };
-        // SAFETY: `process` is the owning Subprocess back-pointer; live until
-        // `detach()`/finalize, both of which clear `(*this).process` first.
-        let sp = unsafe { process.as_mut() };
-        let kind = if sp.stdout_maxbuf == Some(maxbuf) {
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
-            bun_io::max_buf::Kind::Stdout
-        } else {
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
-            bun_io::max_buf::Kind::Stderr
-        };
-        sp.on_max_buffer(kind);
+fn maxbuf_kind(pipe: RuntimePipeKind) -> bun_io::max_buf::Kind {
+    match pipe {
+        RuntimePipeKind::Stdout => bun_io::max_buf::Kind::Stdout,
+        RuntimePipeKind::Stderr => bun_io::max_buf::Kind::Stderr,
     }
 }
 

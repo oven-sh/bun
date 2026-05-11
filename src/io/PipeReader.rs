@@ -33,7 +33,9 @@ use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
-use bun_runtime_types::reader::{RuntimeBufferedReaderDelivery, RuntimeBufferedReaderTarget};
+use bun_runtime_types::reader::{
+    RuntimeBufferedReaderDelivery, RuntimeBufferedReaderTarget, RuntimeReaderError,
+};
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -143,7 +145,7 @@ impl BufferedReaderTarget {
     }
 
     #[inline]
-    fn on_reader_done(self, _reader: BufferedReaderHandle) {
+    fn on_reader_done(self, reader: BufferedReaderHandle) {
         match self {
             Self::Install { target, event_loop } => {
                 if let Some(delivery) = target.on_reader_done() {
@@ -157,7 +159,7 @@ impl BufferedReaderTarget {
                 }
             }
             Self::Runtime { target, event_loop } => {
-                if let Some(delivery) = target.on_reader_done() {
+                if let Some(delivery) = target.on_reader_done(reader) {
                     // SAFETY: done delivery carries no borrowed bytes and is
                     // consumed synchronously by the high-tier dispatcher.
                     unsafe {
@@ -172,7 +174,7 @@ impl BufferedReaderTarget {
     }
 
     #[inline]
-    fn on_reader_error(self, _reader: BufferedReaderHandle, err: sys::Error) {
+    fn on_reader_error(self, reader: BufferedReaderHandle, err: sys::Error) {
         match self {
             Self::Install { target, event_loop } => {
                 if matches!(target, InstallBufferedReaderTarget::SecurityScanIpc { .. }) {
@@ -193,12 +195,35 @@ impl BufferedReaderTarget {
                         );
                     }
                 }
-              }
-              Self::Runtime { target, event_loop } => {
-                  if let Some(delivery) =
-                      target.on_reader_error(<&'static str>::from(err.get_errno()))
-                  {
+            }
+            Self::Runtime { target, event_loop } => {
+                if let Some(delivery) = target.on_reader_error(
+                    RuntimeReaderError {
+                        errno: err.errno,
+                        name: <&'static str>::from(err.get_errno()),
+                    },
+                    reader,
+                ) {
                     // SAFETY: error delivery carries no borrowed bytes and is
+                    // consumed synchronously by the high-tier dispatcher.
+                    unsafe {
+                        let _ = __bun_dispatch_runtime_buffered_reader_delivery(
+                            delivery,
+                            event_loop.current_context(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn on_max_buffer_overflow(self, _maxbuf: NonNull<MaxBuf>) {
+        match self {
+            Self::Install { .. } => {}
+            Self::Runtime { target, event_loop } => {
+                if let Some(delivery) = target.on_max_buffer_overflow() {
+                    // SAFETY: max-buffer delivery carries no borrowed bytes and is
                     // consumed synchronously by the high-tier dispatcher.
                     unsafe {
                         let _ = __bun_dispatch_runtime_buffered_reader_delivery(
@@ -249,9 +274,8 @@ pub trait BufferedReaderParent {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// Fired when this reader's `MaxBuf` budget goes negative. Only
-    /// `SubprocessPipeReader` overrides this; the default no-ops because no
-    /// other parent type wires a `MaxBuf`.
+    /// Fired when this reader's `MaxBuf` budget goes negative. Link-interface
+    /// parents do not wire `MaxBuf`; typed reader targets handle that path.
     unsafe fn on_max_buffer_overflow(this: *mut Self, maxbuf: NonNull<MaxBuf>) {
         let _ = (this, maxbuf);
     }
@@ -337,6 +361,9 @@ impl BufferedReaderVTable {
     }
 
     pub fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
+        if let Some(target) = self.target {
+            return target.on_max_buffer_overflow(maxbuf);
+        }
         self.link().on_max_buffer_overflow(maxbuf)
     }
 }

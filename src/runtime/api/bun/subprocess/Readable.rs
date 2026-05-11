@@ -11,6 +11,8 @@ use bun_io::max_buf::MaxBuf;
 use bun_io_types::reader::BufferedReaderHandle;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
+use bun_runtime_types::reader::RuntimePipeKind;
+use bun_runtime_types::subprocess::SubprocessExitStateHandle;
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::ReadableStream;
@@ -92,6 +94,8 @@ impl Readable {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         max_size: Option<NonNull<MaxBuf>>,
+        exit_state: SubprocessExitStateHandle,
+        pipe: RuntimePipeKind,
         _is_sync: bool,
     ) -> Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
@@ -147,7 +151,14 @@ impl Readable {
                     Readable::Fd(dup2.out.to_fd())
                 }
             }
-            Stdio::Pipe => Readable::Pipe(PipeReader::create(event_loop, process, result, max_size)),
+            Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                event_loop,
+                process,
+                result,
+                max_size,
+                exit_state,
+                pipe,
+            )),
             Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
                 panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
             }

@@ -14,6 +14,14 @@ const A = typeof args === "string" ? JSON.parse(args) : args || {};
 const TASKS = A.tasks || [];
 if (!TASKS.length) throw new Error("args.tasks: [{id, path}] required");
 const REPO = A.repo || "/root/bun-5";
+// `allowExec`: lift the read-only constraint for tasks that need runtime
+// repro (flakes that round-3 had to skip). Fix-agents may then `bun bd` +
+// run tests under a cgroup. They MUST run sequentially in that mode (shared
+// build dir), so the pipeline is forced to width 1 — see SEQUENTIAL gate.
+const ALLOW_EXEC = !!A.allowExec;
+// `reviewRounds`: review→apply loops "until dry" — repeat until both
+// reviewers accept or this many rounds exhausted (default 1 = legacy).
+const REVIEW_ROUNDS = A.reviewRounds || 1;
 
 const FIX_S = {
   type: "object",
@@ -59,11 +67,27 @@ const APPLY_S = {
   required: ["task", "applied"],
 };
 
-const HARD = `**HARD RULES (per-agent):** READ-ONLY analysis + Edit src/ files. **DO NOT** run \`cargo\`, \`bun bd\`, \`bun test\`, \`bun build\`, or ANY build/exec/spawn command (parallel agents would race). **DO NOT** use git (commit/reset/checkout/stash/pull/push/diff). Edit files via the Edit tool ONLY; the orchestrator commits. NO new unsafe outside FFI. Read .zig spec for the matching file. If the task is a duplicate / known debug-artifact / needs test/ edit (forbidden) — set skipped:true + skip_reason and edit nothing.`;
+const HARD_RO = `**HARD RULES (per-agent):** READ-ONLY analysis + Edit src/ files. **DO NOT** run \`cargo\`, \`bun bd\`, \`bun test\`, \`bun build\`, or ANY build/exec/spawn command (parallel agents would race). **DO NOT** use git (commit/reset/checkout/stash/pull/push/diff). Edit files via the Edit tool ONLY; the orchestrator commits. NO new unsafe outside FFI. Read .zig spec for the matching file. If the task is a duplicate / known debug-artifact / needs test/ edit (forbidden) — set skipped:true + skip_reason and edit nothing.`;
+const HARD_EXEC = `**RULES (exec mode):** You MAY \`bun bd --version\` and run tests under \`systemd-run --scope --user -p MemoryMax=4G -- timeout 60 build/debug/bun-debug test ...\`. You run SEQUENTIALLY (sole owner of the build dir during your turn). **DO NOT** use git (commit/reset/checkout/stash/pull/push). Edit src/ or test/ via the Edit tool ONLY; the orchestrator commits. ALLOWED to diverge from .zig spec. NO new unsafe outside FFI. If you cannot reproduce after 5 cgroup'd runs, set skipped:true + skip_reason="not reproducible locally" and edit nothing.`;
+const HARD = ALLOW_EXEC ? HARD_EXEC : HARD_RO;
 
 phase("Fix");
-log(`processing ${TASKS.length} tasks`);
-const results = await pipeline(
+log(`processing ${TASKS.length} tasks (exec=${ALLOW_EXEC}, reviewRounds=${REVIEW_ROUNDS})`);
+// SEQUENTIAL gate: when fix-agents may build, they share ${REPO}/build/ and
+// would clobber each other. Process one task end-to-end before starting the
+// next. Reviewers within a task still run in parallel (read-only).
+const runner = ALLOW_EXEC
+  ? async (items, ...stages) => {
+      const out = [];
+      for (const it of items) {
+        let v = it;
+        for (const [i, s] of stages.entries()) v = await s(v, it, i);
+        out.push(v);
+      }
+      return out;
+    }
+  : pipeline;
+const results = await runner(
   TASKS,
   t =>
     agent(
@@ -113,20 +137,50 @@ Return {accept, bugs:[{file,what,why_wrong,fix,severity}]}.`,
           return { task: t.id, fix, accepted, bugs };
         })
       : { task: t.id, fix, accepted: !!(fix && fix.skipped), bugs: [], skipped: !!(fix && fix.skipped) },
-  (vr, t) =>
-    vr && !vr.skipped && !vr.accepted && vr.bugs && vr.bugs.length > 0
-      ? agent(
-          `Apply reviewer corrections for **${t.id}**. Original fix touched: ${JSON.stringify((vr.fix || {}).files_edited)}.
+  async (vr, t) => {
+    // review→apply loops "until dry": re-review after each apply round.
+    let cur = vr;
+    for (let round = 1; round <= REVIEW_ROUNDS; round++) {
+      if (!cur || cur.skipped || cur.accepted || !(cur.bugs && cur.bugs.length > 0)) break;
+      const a = await agent(
+        `Apply reviewer corrections for **${t.id}** (round ${round}/${REVIEW_ROUNDS}). Original fix touched: ${JSON.stringify((cur.fix || {}).files_edited)}.
 
-**${vr.bugs.length} reviewer findings:**
-${vr.bugs.map((b, i) => `${i + 1}. [${b.severity}] **${b.file}**: ${b.what}\n   WHY: ${b.why_wrong}\n   FIX: ${b.fix}`).join("\n")}
+**${cur.bugs.length} reviewer findings:**
+${cur.bugs.map((b, i) => `${i + 1}. [${b.severity}] **${b.file}**: ${b.what}\n   WHY: ${b.why_wrong}\n   FIX: ${b.fix}`).join("\n")}
 
 Edit the files to apply each correction. ${HARD}
 
 Return {task:"${t.id}", applied:N, files_edited:[...]}.`,
-          { label: `apply:${t.id}`, phase: "Apply", schema: APPLY_S },
-        ).then(a => ({ ...vr, apply: a }))
-      : vr,
+        { label: `apply${round}:${t.id}`, phase: "Apply", schema: APPLY_S },
+      );
+      cur = { ...cur, apply: a };
+      if (round >= REVIEW_ROUNDS) break;
+      // Re-review the post-apply state.
+      const votes = await parallel(
+        [0, 1].map(
+          i => () =>
+            agent(
+              `Adversarially RE-review **${t.id}** after apply round ${round}. Task: \`cat ${t.path}\`. Edited: ${JSON.stringify([...(cur.fix?.files_edited || []), ...((a && a.files_edited) || [])])}. Read current state of those files + .zig spec.
+
+**Check:** Root cause or paper-over? UB? NEW non-FFI unsafe? Breaks callers? Would actually fix the CI symptom?
+
+Return {accept, bugs:[...]}.`,
+              { label: `rev${i}r${round + 1}:${t.id}`, phase: "Review", schema: REVIEW_S },
+            ),
+        ),
+      );
+      const all = (votes || []).filter(Boolean).flatMap(v => v.bugs || []);
+      const seen = {};
+      const bugs = all.filter(b => {
+        const k = `${b.file}::${(b.what || "").slice(0, 60)}`;
+        if (seen[k]) return false;
+        seen[k] = 1;
+        return true;
+      });
+      cur = { ...cur, accepted: (votes || []).filter(Boolean).every(v => v && v.accept), bugs };
+    }
+    return cur;
+  },
 );
 
 const all_files = new Set();

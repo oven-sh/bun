@@ -2028,35 +2028,32 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     };
 
-    // PORT NOTE: Zig stashes the heap libuv pipe in
+    // PORT NOTE / OWNERSHIP: Zig stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
     // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` unconditionally `heap::take`s the raw
-    // `Stdio::Buffer` pointer back into a second Box on success
-    // (process.rs:1980-1982). We keep `stderr_reader.source` as the SOLE
-    // owner (matches the Zig spec, where the reader frees it) and pass a raw
-    // non-owning alias to `Stdio::Buffer`; the duplicate Box that comes back
-    // in `spawned.stderr` is disarmed via `mem::forget` below before
-    // `spawned` drops. On spawn-error paths `heap::take` never ran, so
-    // `stderr_reader.source` remains the only owner there too.
-    //
-    // ORDERING: this block is the LAST fallible pre-spawn step. It must run
-    // AFTER `which`/envp above because `T::finish` on those error paths drops
-    // the job → `WindowsBufferedReader::Drop` → `close_impl` → `uv_close` on
-    // a still-zeroed handle (NULL `loop_`, type 0) = crash. In Zig the
-    // equivalent path merely leaked a raw `*uv.Pipe`; the Rust Box+Drop
-    // tightened that leak into uv_close-on-uninit, so we reorder instead.
+    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
+    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
+    // Box in `stderr_reader.source` here (the original transliteration) would
+    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
+    // Borrows even with a `mem::forget` of the duplicate, because moving the
+    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
+    // raw pointer's provenance before `spawn_process_windows` ever
+    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
+    // alone (sole owner), let `spawn_process_windows` round-trip it through
+    // `heap::take`, and stash the returned Box in `stderr_reader.source`
+    // AFTER spawn — see the `#[cfg(windows)]` block below and
+    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
+    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
+    // explicitly via `spawn_options.stderr.deinit()`.
     #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
-        let mut pipe =
-            Box::new(bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>());
-        let ptr: *mut bun_sys::windows::libuv::Pipe = core::ptr::from_mut(pipe.as_mut());
-        s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
-        ptr
-    };
+    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = bun_core::heap::into_raw(
+        Box::new(bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>()),
+    );
     let cwd = FileSystem::get().top_level_dir;
-    let spawn_options = SpawnOptions {
+    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
+    #[allow(unused_mut)]
+    let mut spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
@@ -2077,6 +2074,12 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
+            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
+            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
+            // ownership stays with the caller and `WindowsStdio` has no
+            // `Drop`. Reclaim it (uv_close + free if init'd) here.
+            #[cfg(windows)]
+            spawn_options.stderr.deinit();
             s.set_err(format_args!(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
@@ -2084,6 +2087,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             return unsafe { T::finish(this) };
         }
         Err(e) => {
+            #[cfg(windows)]
+            spawn_options.stderr.deinit();
             s.set_err(format_args!("Failed to spawn process: {}", e.name()));
             return unsafe { T::finish(this) };
         }
@@ -2123,16 +2128,18 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        // `spawn_process_windows` reconstructed a SECOND `Box<uv::Pipe>` from
-        // `stderr_pipe_ptr` via `heap::take` into `spawned.stderr`. The real
-        // owner is `stderr_reader.source` (set above); leaving the duplicate
-        // in `spawned` would free the live, libuv-registered handle when
-        // `spawned` drops at the end of this function (`to_process` takes
-        // `&mut`, not `self`) → use-after-free in the read callback +
-        // double-free on reader close. Take it out and forget it.
-        if let spawn::WindowsStdioResult::Buffer(dup) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&dup), stderr_pipe_ptr));
-            core::mem::forget(dup);
+        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
+        // `Stdio::Buffer` into `spawned.stderr` as
+        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
+        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
+        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
+        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
+        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
+        // `uv_close`+free the live, libuv-registered handle (UAF in the read
+        // callback + double-free on reader close).
+        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
+            s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
             s.stderr_reader()
                 .set_parent(this.cast::<core::ffi::c_void>());
             *s.remaining_fds() += 1;

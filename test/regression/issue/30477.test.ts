@@ -112,18 +112,39 @@ test.concurrent("child experimentalDecorators: false overrides parent true (disa
 });
 
 test.concurrent("child emitDecoratorMetadata: false overrides parent true", async () => {
-  // When emitDecoratorMetadata is true, Bun emits __legacyMetadataTS(...)
-  // calls into __legacyDecorateClassTS. A child that sets it back to false
-  // must prevent that emission.
+  // When emitDecoratorMetadata is true, Bun imports reflect-metadata and
+  // emits __metadata() calls — the decorator receives argument-type info
+  // reflected into `design:paramtypes`. A child that sets the flag back to
+  // false must disable that emission, leaving the legacy decorator call
+  // with no reflect-metadata lookup at all.
+  //
+  // We verify via runtime observation (is Reflect.getMetadata reachable?)
+  // rather than scanning bundler output — the test is then insensitive to
+  // how the bundled runtime helpers happen to be named.
   const META_SOURCE = `
-function probe(target: unknown, key: unknown) { /* legacy signature */ }
+// Report whether the decorated class saw design:paramtypes metadata.
+// If emitDecoratorMetadata is on, the decorator calls below would have
+// invoked Reflect.metadata("design:paramtypes", [Number]) and we'd read
+// it back via Reflect.getMetadata.
+(globalThis as any).Reflect = (globalThis as any).Reflect ?? {};
+const metaMap = new WeakMap<object, any>();
+(globalThis as any).Reflect.metadata = (k: string, v: unknown) => (t: object, p: string) => {
+  let entry = metaMap.get(t);
+  if (!entry) metaMap.set(t, entry = {});
+  entry[p] = entry[p] ?? {};
+  entry[p][k] = v;
+};
+
+function probe(target: unknown, key: unknown) {}
 
 class Foo {
   @probe
   foo(a: number) {}
 }
 
-console.log(typeof Foo);
+// If the child's emitDecoratorMetadata: false was respected, our
+// Reflect.metadata shim was never called and the WeakMap is empty.
+console.log(metaMap.has(Foo.prototype) ? "HAS_METADATA" : "NO_METADATA");
 `;
   using dir = tempDir("bun-30477-child-false-meta", {
     "base-tsconfig.json": JSON.stringify({
@@ -140,9 +161,8 @@ console.log(typeof Foo);
     "index.ts": META_SOURCE,
   });
 
-  // `bun build` lets us inspect the transpiled output directly.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--target", "bun", "./index.ts"],
+    cmd: [bunExe(), "./index.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -150,9 +170,9 @@ console.log(typeof Foo);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // __legacyMetadataTS is only emitted when emitDecoratorMetadata is on.
-  // Child opted out, so the bundled output must NOT contain it.
-  expect(stdout).not.toContain("__legacyMetadataTS");
+  // Child opted out of decorator metadata — the runtime shim must not have
+  // been called, so the map stays empty.
+  expect(stdout).toBe("NO_METADATA\n");
   if (exitCode !== 0) {
     expect(stderr).toBe("");
   }

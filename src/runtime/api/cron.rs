@@ -2183,16 +2183,27 @@ fn find_crontab() -> Option<*const c_char> {
     #[cfg(not(windows))]
     {
         // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
-        // PORTING.md §Global mutable state: single-thread (JS) scratch buffer →
-        // RacyCell. The returned `*const c_char` borrows from this buffer, so
-        // it must remain a static (not a stack local).
-        static BUF: bun_core::RacyCell<bun_core::PathBuffer> =
-            bun_core::RacyCell::new(bun_core::PathBuffer([0u8; bun_core::MAX_PATH_BYTES]));
+        // The returned `*const c_char` borrows this buffer, so it must outlive
+        // the call. `Bun.cron` is exposed on every `BunObject`, so this is
+        // reachable from the main JS thread *and* any Worker thread
+        // concurrently — a process-global `static` would be a data race.
+        // `thread_local!` gives each JS thread its own scratch buffer; the
+        // returned pointer is consumed on the same thread (copied by
+        // `posix_spawn`) before any later call can overwrite it. Non-Windows
+        // only, so `MAX_PATH_BYTES` is ≤4 KiB and inline TLS is fine.
+        thread_local! {
+            static BUF: core::cell::UnsafeCell<bun_core::PathBuffer> =
+                const { core::cell::UnsafeCell::new(bun_core::PathBuffer::ZEROED) };
+        }
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        // SAFETY: single-threaded JS access.
-        let buf = unsafe { &mut *BUF.get() };
-        let found = bun_which::which(buf, path_env, b"", b"crontab")?;
-        Some(found.as_ptr().cast())
+        BUF.with(|cell| {
+            // SAFETY: per-thread storage; `bun_which::which` is a pure PATH
+            // walk that cannot reenter `find_crontab`, so this `&mut` is the
+            // only live reference for its lifetime.
+            let buf = unsafe { &mut *cell.get() };
+            let found = bun_which::which(buf, path_env, b"", b"crontab")?;
+            Some(found.as_ptr().cast())
+        })
     }
 }
 

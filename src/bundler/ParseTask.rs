@@ -2176,6 +2176,40 @@ fn run_with_source_code(
     }
     *step = Step::Parse;
 
+    // ─── React Compiler (experimental) ──────────────────────────────────
+    // Source-to-source pass: run before `bun_js_parser` so the compiler's
+    // output (which still contains JSX) flows through the normal parse →
+    // visit → print pipeline. Gate matches fast-refresh below (JSX loader,
+    // not inside node_modules); `topts` isn't bound yet so reborrow the
+    // disjoint `options` field through the raw `transpiler`.
+    //
+    // Writing `entry.contents` here is fine: the WARNING above is about
+    // `task.contents_or_fd`'s variant tag (which governs who frees the
+    // bytes on the *error* path), not `entry.contents`'s variant. The new
+    // `Contents::Owned` vec is freed by `entry.deinit` / drop exactly as a
+    // freshly-read file would be.
+    #[cfg(feature = "react-compiler")]
+    {
+        // SAFETY: `transpiler` just derived from a live `&mut` above; reborrow
+        // only the disjoint `options` field (same as `topts` below).
+        let wants_react_compiler = unsafe { (*transpiler).options.react_compiler };
+        if wants_react_compiler && loader.is_jsx() && !file_path.is_node_module() {
+            let original = entry.contents.as_slice();
+            if !strings::is_all_whitespace(original) {
+                // `file_path.text` is `&[u8]`; the compiler only uses it for
+                // diagnostics so lossy is fine (and almost always already UTF-8).
+                let path_str = String::from_utf8_lossy(file_path.text);
+                if let Some(transformed) = bun_react_compiler::compile(
+                    &path_str,
+                    original,
+                    bun_react_compiler::Options::default(),
+                ) {
+                    entry.contents = crate::cache::Contents::Owned(transformed);
+                }
+            }
+        }
+    }
+
     let entry_contents: &[u8] = entry.contents.as_slice();
     let is_empty = strings::is_all_whitespace(entry_contents);
 

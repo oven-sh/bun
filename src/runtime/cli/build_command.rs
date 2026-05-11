@@ -163,6 +163,7 @@ impl BuildCommand {
         this_transpiler.options.asset_naming = ctx.bundler_options.asset_naming.clone();
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
+        this_transpiler.options.react_compiler = ctx.bundler_options.react_compiler;
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;

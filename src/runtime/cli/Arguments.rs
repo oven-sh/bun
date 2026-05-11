@@ -310,6 +310,7 @@ pub const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             parse_param!("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\""),
             parse_param!("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\""),
             parse_param!("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"),
+            parse_param!("--react-compiler                 Enable the React Compiler (experimental Rust port; auto-memoizes components and hooks)"),
             parse_param!("--no-bundle                      Transpile file only, do not bundle"),
             parse_param!("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."),
             parse_param!("--minify                         Enable all minification flags"),
@@ -1804,6 +1805,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if args.flag(b"--react-fast-refresh") {
             ctx.bundler_options.react_fast_refresh = true;
+        }
+
+        if args.flag(b"--react-compiler") {
+            ctx.bundler_options.react_compiler = true;
         }
 
         if let Some(setting) = args.option(b"--sourcemap") {

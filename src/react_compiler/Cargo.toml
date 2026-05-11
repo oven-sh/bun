@@ -1,0 +1,36 @@
+[package]
+name = "bun_react_compiler"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+# ─── Rust port of the React Compiler ─────────────────────────────────────────
+# `oxc_react_compiler` is a community port of Meta's `babel-plugin-react-compiler`
+# on top of the OXC toolchain, claiming 100% conformance with upstream's fixture
+# suite: <https://github.com/eve0415/oxc-plugin-react-compiler>.
+#
+# It is NOT on crates.io; pinned by git rev so `Cargo.lock` is reproducible.
+# The upstream repo vendors `facebook/react` as a git submodule for its
+# conformance test fixtures — cargo fetches that submodule as part of the git
+# dep, so the first build with `--features react-compiler` is heavy.
+#
+# This crate is a thin façade exposing a single `compile(path, source) -> Option<Vec<u8>>`
+# so `bun_bundler` does not have to name any `oxc_*` types. The actual OXC crate
+# graph (parser, semantic, codegen, allocator) only enters the build when the
+# `react-compiler` feature is enabled on `bun_bundler` — see src/bundler/Cargo.toml.
+# This crate is deliberately `exclude`d from the root workspace so the OXC
+# deps stay out of the default `Cargo.lock`.
+#
+# Known caveats of the source-to-source approach (TODO(react-compiler)):
+#   • Source maps are dropped — the OXC side emits its own map, but Bun's parser
+#     then re-parses the transformed text and emits a fresh map against it, so
+#     line/col point into compiler output rather than the original source. A
+#     proper fix needs compound-map stitching in `bun_sourcemap`.
+#   • The React Compiler runs *before* Bun's own JSX transform, so its output
+#     still contains JSX — Bun's parser handles that as usual. The compiler's
+#     `target: "19"` default means it emits `react/compiler-runtime` imports;
+#     resolve failures there surface as normal bundler errors.
+[dependencies]
+oxc_react_compiler = { git = "https://github.com/eve0415/oxc-plugin-react-compiler", rev = "59df01f2b094211a8671caf087692252cd77b858" }

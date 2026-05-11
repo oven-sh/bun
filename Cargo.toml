@@ -117,7 +117,13 @@ members = [
 # `[profile]` section is ignored and its heavy dev-dependencies (criterion,
 # html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
 # by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
-exclude = ["vendor"]
+#
+# `src/react_compiler` is excluded for the same lockfile-hygiene reason: it
+# pulls in the entire OXC crate graph (oxc_parser/semantic/codegen + deps) via
+# a git dependency. Keeping it outside the workspace means those deps only
+# resolve when `bun_bundler`'s optional `react-compiler` feature is enabled,
+# so a plain `cargo check` of the workspace stays OXC-free.
+exclude = ["vendor", "src/react_compiler"]
 
 [workspace.package]
 version = "0.0.0"

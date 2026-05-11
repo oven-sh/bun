@@ -68,8 +68,19 @@ bun_wyhash.workspace = true
 # from `bun_hash::XxHash64Streaming` (twox-hash) so the workspace has exactly
 # one xxhash implementation.
 bun_hash.workspace = true
+# React Compiler (experimental) — Rust port of `babel-plugin-react-compiler`
+# on OXC. Optional so the sizeable OXC crate graph (parser/semantic/codegen)
+# only enters the build when `--features react-compiler` is requested; the
+# option plumbing compiles either way and no-ops without it. Path-dep (not
+# `workspace = true`) because `src/react_compiler` is excluded from the
+# workspace to keep OXC out of the default `Cargo.lock` — see the root
+# Cargo.toml `exclude` comment.
+bun_react_compiler = { path = "../react_compiler", optional = true }
 
 [features]
 default = []
 debug_logs = []
 show_crash_trace = ["bun_crash_handler/show_crash_trace"]
+# Pulls in `oxc_react_compiler` + its OXC deps. Experimental — source-to-source
+# pass that runs before `bun_js_parser`; see src/react_compiler/Cargo.toml.
+react-compiler = ["dep:bun_react_compiler"]

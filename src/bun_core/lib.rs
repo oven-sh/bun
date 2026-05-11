@@ -2004,18 +2004,25 @@ pub mod ffi {
     pub fn abort_on_panic(
         payload: std::boxed::Box<dyn core::any::Any + Send + 'static>,
     ) -> ! {
-        let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-            s
-        } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
-            s.as_str()
-        } else {
-            "<non-string panic payload>"
-        };
-        // Best-effort write to stderr; ignore errors (we're about to abort).
-        let _ = std::io::Write::write_all(
-            &mut std::io::stderr(),
-            format!("panic in extern \"C\" callback (aborting): {msg}\n").as_bytes(),
-        );
+        // The `std::panic` hook installed by `bun_crash_handler::install_hooks`
+        // runs *before* unwinding starts, so by the time `catch_unwind_ffi`
+        // hands us the payload the trace string + upload have already happened.
+        // Only print the fallback line if the hook didn't fire (very-early
+        // startup before `init()`, or a re-entrant panic the hook suppressed).
+        if !crate::PANIC_REPORTED.with(|c| c.replace(false)) {
+            let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                s
+            } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
+                s.as_str()
+            } else {
+                "<non-string panic payload>"
+            };
+            // Best-effort write to stderr; ignore errors (we're about to abort).
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                format!("panic in extern \"C\" callback (aborting): {msg}\n").as_bytes(),
+            );
+        }
         std::process::abort()
     }
 }

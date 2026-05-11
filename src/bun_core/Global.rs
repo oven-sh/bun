@@ -48,6 +48,16 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    /// Set by `bun_crash_handler`'s `std::panic` hook after it has printed the
+    /// trace string + uploaded the report for the *current* unwind. Consumed
+    /// (read-and-clear) by `catch_unwind` boundaries (`ffi::abort_on_panic`,
+    /// `host_fn`, `BundleThread`) so they know the crash report already went
+    /// out and can skip their own fallback stderr line. Lives in T0 so the
+    /// boundaries don't need a forward dep on `bun_crash_handler`.
+    pub static PANIC_REPORTED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.

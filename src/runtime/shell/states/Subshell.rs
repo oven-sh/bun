@@ -31,7 +31,7 @@ impl Subshell {
     /// `init_dupe_shell_state` for the Stmt/Binary path; Pipeline dupes the
     /// env itself before calling this). `Subshell::deinit` frees it.
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Subshell,
         parent: NodeId,
@@ -50,7 +50,7 @@ impl Subshell {
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
     pub fn init_dupe_shell_state(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
         node: &ast::Subshell,
         parent: NodeId,
@@ -61,11 +61,11 @@ impl Subshell {
         Ok(Self::init(interp, duped, node, parent, io))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (state_tag, parent) = {
             let me = interp.as_subshell(this);
             (<&'static str>::from(&me.state), me.base.parent)
@@ -99,7 +99,7 @@ impl Subshell {
 
     /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
@@ -119,7 +119,7 @@ impl Subshell {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -133,7 +133,7 @@ impl Subshell {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Subshell {} deinit", this);
         let me = interp.as_subshell_mut(this);
         // The env was duped at construction (either by Pipeline or by

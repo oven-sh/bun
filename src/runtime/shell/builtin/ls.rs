@@ -56,11 +56,11 @@ enum ParseFlag {
 }
 
 impl Ls {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — match on a tag, drop the
             // borrow, then act.
@@ -122,7 +122,7 @@ impl Ls {
                     let cwd = Builtin::cwd(interp, cmd);
                     let opts = Self::state_mut(interp, cmd).opts;
                     let evtloop = Builtin::event_loop(interp, cmd);
-                    let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
+                    let interp_ptr = interp.as_ctx_ptr();
                     if let Some(start) = paths_start {
                         let print_directory = task_count > 1;
                         for i in start..argc {
@@ -177,7 +177,7 @@ impl Ls {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -200,7 +200,7 @@ impl Ls {
 
     /// Spec: ls.zig `onShellLsTaskDone`.
     pub fn on_shell_ls_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task: *mut ShellLsTask,
     ) {
@@ -227,7 +227,7 @@ impl Ls {
     /// Spec: ls.zig `parseOpts` / `parseFlags`. Returns the index of the
     /// first non-flag arg, or `None` if there are no positional args.
     fn parse_opts(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
     ) -> Result<Option<usize>, LsParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
@@ -276,7 +276,7 @@ impl Ls {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Ls {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Ls {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Ls(l) => &mut **l,
             _ => unreachable!(),
@@ -288,7 +288,7 @@ pub type ShellLsOutputTask = OutputTask<Ls>;
 
 impl OutputTaskVTable for Ls {
     fn write_err(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
@@ -312,13 +312,13 @@ impl OutputTaskVTable for Ls {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
@@ -342,12 +342,12 @@ impl OutputTaskVTable for Ls {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
-    fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -632,7 +632,7 @@ impl ShellLsTask {
         err.with_path(self.path.as_bytes())
     }
 
-    pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Ls::on_shell_ls_task_done(interp, cmd, this);
@@ -749,7 +749,7 @@ impl bun_event_loop::Taskable for ShellLsTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }

@@ -66,7 +66,7 @@ pub struct EbusyState {
 }
 
 impl Cp {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let (sources_start, target_idx) = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -102,7 +102,7 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
+    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
         let buf: Vec<u8> = match &e {
             ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
                 interp,
@@ -127,7 +127,7 @@ impl Cp {
         Builtin::write_failing_error(interp, cmd, &buf, 1)
     }
 
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             #[allow(dead_code)]
             enum Action { Done(ExitCode), Schedule { start: usize, target: usize }, Ebusy(ExitCode) }
@@ -198,7 +198,7 @@ impl Cp {
                     let evtloop = Builtin::event_loop(interp, cmd);
                     let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                     let operands = 1 + (target - start);
-                    let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
+                    let interp_ptr = interp.as_ctx_ptr();
                     for i in start..target {
                         let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                         let task = ShellCpTask::create(
@@ -215,7 +215,7 @@ impl Cp {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -236,7 +236,7 @@ impl Cp {
     /// for the same absolute src/tgt, the EBUSY is benign and the task is
     /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
     #[cfg(windows)]
-    fn ignore_ebusy_error_if_possible(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — pop tasks one at a time
             // (Zig iterated `tasks.items[idx..]` and bumped `idx` on the
@@ -284,7 +284,7 @@ impl Cp {
 
     /// Spec: cp.zig `onShellCpTaskDone`.
     pub fn on_shell_cp_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task: *mut ShellCpTask,
     ) {
@@ -333,7 +333,7 @@ impl Cp {
 
     /// Spec: cp.zig `printShellCpTask`.
     fn print_shell_cp_task(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task: *mut ShellCpTask,
     ) -> Yield {
@@ -356,7 +356,7 @@ impl Cp {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Cp {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cp {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Cp(c) => &mut **c,
             _ => unreachable!(),
@@ -368,7 +368,7 @@ pub type ShellCpOutputTask = OutputTask<Cp>;
 
 impl OutputTaskVTable for Cp {
     fn write_err(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
@@ -390,13 +390,13 @@ impl OutputTaskVTable for Cp {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
@@ -418,12 +418,12 @@ impl OutputTaskVTable for Cp {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
-    fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -475,7 +475,7 @@ impl ShellCpTask {
             task: ShellTask::new(evtloop),
         });
         // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
-        // dispatch.rs bounce-back) can recover `&mut Interpreter`.
+        // dispatch.rs bounce-back) can recover `&Interpreter`.
         task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
@@ -789,7 +789,7 @@ impl ShellCpTask {
         None
     }
 
-    pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
@@ -812,7 +812,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }

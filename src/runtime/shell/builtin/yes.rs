@@ -32,7 +32,7 @@ pub struct Yes {
 }
 
 impl Yes {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Build one copy of the output line.
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let mut one = Vec::new();
@@ -65,7 +65,7 @@ impl Yes {
         }
 
         let evtloop = Builtin::event_loop(interp, cmd);
-        let interp_ptr: *mut Interpreter = interp;
+        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         {
             let me = Self::state_mut(interp, cmd);
             me.buffer = buf;
@@ -88,7 +88,7 @@ impl Yes {
 
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
     /// thread. Spec: yes.zig `writeNoIO`.
-    fn write_no_io_loop(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
         // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
         // `writeFailingError`.
@@ -138,7 +138,7 @@ impl Yes {
     }
 
     fn enqueue_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
@@ -150,7 +150,7 @@ impl Yes {
     }
 
     pub fn write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
@@ -160,7 +160,7 @@ impl Yes {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -180,7 +180,7 @@ impl Yes {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Yes {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Yes {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             Impl::Yes(y) => &mut **y,
             _ => unreachable!(),
@@ -257,7 +257,7 @@ impl YesTask {
     /// `interp` outlives the builtin.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract — `interp` set in `Yes::start`, outlives the builtin.
-        let (interp, cmd) = unsafe { (&mut *(*this).interp, (*this).cmd) };
+        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 

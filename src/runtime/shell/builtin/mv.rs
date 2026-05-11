@@ -50,13 +50,13 @@ pub enum MvParseError {
 }
 
 impl Mv {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
     /// Spec: mv.zig `writeFailingError`.
     fn write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
@@ -73,7 +73,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `next`.
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
             enum Tag { Idle, CheckTarget, Executing, WaitingWriteErr, Done, Err }
@@ -112,7 +112,7 @@ impl Mv {
                         done: false,
                         task: ShellTask::new(evtloop),
                     });
-                    task.task.interp = interp;
+                    task.task.interp = interp.as_ctx_ptr();
                     // SAFETY: `task` is heap-allocated and outlives the worker
                     // call (held in `MvState::CheckTarget` below).
                     unsafe { ShellTask::schedule(&raw mut *task) };
@@ -243,7 +243,7 @@ impl Mv {
                     };
                     // Now that the AtomicBool has its final address, point
                     // every task at it and schedule.
-                    let interp_ptr: *mut Interpreter = interp;
+                    let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                     if let MvState::Executing { error_signal, tasks, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
@@ -270,7 +270,7 @@ impl Mv {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -288,7 +288,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `checkTargetTaskDone`.
-    pub fn check_target_task_done(interp: &mut Interpreter, cmd: NodeId) {
+    pub fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
             t.done = true;
         }
@@ -297,7 +297,7 @@ impl Mv {
 
     /// Spec: mv.zig `batchedMoveTaskDone`.
     pub fn batched_move_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task_idx: usize,
     ) {
@@ -335,7 +335,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `parseOpts` + `parseFlags`.
-    fn parse_opts(interp: &mut Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Err(MvParseError::ShowUsage);
@@ -392,7 +392,7 @@ impl Mv {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Mv {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Mv {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Mv(m) => &mut **m,
             _ => unreachable!(),
@@ -443,7 +443,7 @@ impl ShellMvCheckTargetTask {
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 
-    pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
         // SAFETY: `this` is a live boxed task.
         let cmd = unsafe { (*this).cmd };
         Mv::check_target_task_done(interp, cmd);
@@ -560,7 +560,7 @@ impl ShellMvBatchedTask {
     #[allow(dead_code)]
     fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
 
-    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
         // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.
         let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
         Mv::batched_move_task_done(interp, cmd, idx);
@@ -577,7 +577,7 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }
@@ -585,7 +585,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! In Zig this carried `interpreter: *Interpreter` and `shell: *ShellExecEnv`
 //! back-pointers. In the NodeId-arena port the interpreter is passed as
-//! `&mut Interpreter` to every method, so only `parent: NodeId` and the
+//! `&Interpreter` to every method, so only `parent: NodeId` and the
 //! `*mut ShellExecEnv` (which may be owned or borrowed — see field doc) are
 //! stored here.
 

@@ -20,7 +20,7 @@ enum State {
 }
 
 impl Export {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             // No args: print all exported vars.
@@ -49,7 +49,7 @@ impl Export {
         Builtin::done(interp, cmd, 0)
     }
 
-    fn print_all(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
             .export_env
             .iter()
@@ -77,7 +77,7 @@ impl Export {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
@@ -87,7 +87,7 @@ impl Export {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Export {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Export {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Export(e) => e,
             _ => unreachable!(),

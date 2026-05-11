@@ -84,7 +84,7 @@ pub struct ExpansionOpts {
 
 impl Expansion {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Atom,
         parent: NodeId,
@@ -97,7 +97,7 @@ impl Expansion {
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&mut Interpreter` reborrow.
+            // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
             io,
             state: ExpansionState::Idle,
@@ -111,7 +111,7 @@ impl Expansion {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
@@ -119,16 +119,18 @@ impl Expansion {
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
             // field, so `expand_simple_no_io` can expand `$N` without aliasing.
+            // R-2: both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
+            // disjoint `&mut` from `&Interpreter`.
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            let vm_args_utf8 = &mut interp.vm_args_utf8;
-            let Node::Expansion(me) = &mut interp.nodes[this.idx()] else {
-                unreachable!()
-            };
+            // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
+            // disjoint `JsCell` fields (no aliasing between the two borrows).
+            let vm_args_utf8 = unsafe { &mut *interp.vm_args_utf8.as_ptr() };
+            let me = interp.as_expansion_mut(this);
             match me.state {
                 ExpansionState::Idle => {
                     me.state = ExpansionState::Walking;
@@ -300,7 +302,7 @@ impl Expansion {
 
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
-    fn transition_to_glob_state(interp: &mut Interpreter, this: NodeId) -> Yield {
+    fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobTask;
         let pattern: Vec<u8>;
         let cwd: Vec<u8>;
@@ -447,7 +449,7 @@ impl Expansion {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -500,7 +502,7 @@ impl Expansion {
     /// off-thread glob walker — splice each match as a separate word into
     /// `out` then resume the atom-walk trampoline.
     pub fn on_glob_walk_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         result: Vec<Vec<u8>>,
         err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
@@ -565,7 +567,7 @@ impl Expansion {
 
     /// Take the error out of `state == Err(_)` (called by the parent on
     /// `child_done(_, 1)` to print it). Leaves `state == Done`.
-    pub fn take_err(interp: &mut Interpreter, this: NodeId) -> Option<ShellErr> {
+    pub fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
             ExpansionState::Err(e) => Some(e),
@@ -576,7 +578,7 @@ impl Expansion {
         }
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Expansion {} deinit", this);
         let child = interp.as_expansion_mut(this).child_script.take();
         if let Some(c) = child {
@@ -590,7 +592,7 @@ impl Expansion {
     }
 
     /// Take the expanded output (called by the parent after `child_done`).
-    pub fn take_out(interp: &mut Interpreter, this: NodeId) -> ExpansionOut {
+    pub fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
         out.out_exit_code = me.out_exit_code;

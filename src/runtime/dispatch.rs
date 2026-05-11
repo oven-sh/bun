@@ -181,7 +181,7 @@ pub fn run_task(
             unsafe {
                 let st = &raw mut (*t).task.task;
                 (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &mut *(*st).interp;
+                let interp = &*(*st).interp;
                 <$ty>::run_from_main_thread(t, interp);
             }
         }};
@@ -233,7 +233,7 @@ pub fn run_task(
             // (interp, NodeId).
             let t = cast!(crate::shell::dispatch_tasks::ShellAsyncTask);
             // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &mut *t.interp };
+            let interp = unsafe { &*t.interp };
             ShellAsync::run_from_main_thread(interp, t.node);
         }
         task_tag::ShellAsyncSubprocessDone => {

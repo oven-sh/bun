@@ -201,7 +201,7 @@ pub struct CmdHandle {
 
 impl CmdHandle {
     /// Resolve to the live `Cmd` slot. Single-threaded; the caller must not
-    /// hold another `&mut Interpreter` across this borrow.
+    /// hold another `&Interpreter` across this borrow.
     ///
     /// # Safety
     /// `interp` must be live and `id` must still index a `Node::Cmd` slot
@@ -1884,7 +1884,7 @@ impl PipeReader {
         }
         // SAFETY: interp outlives every PipeReader (it owns the Cmd that
         // spawned the subprocess holding this reader). Single-threaded.
-        y.run(unsafe { &mut *interp });
+        y.run(unsafe { &*interp });
     }
 
     pub fn create(

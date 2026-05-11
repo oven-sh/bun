@@ -17,7 +17,7 @@ pub struct Binary {
 
 impl Binary {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Binary,
         parent: NodeId,
@@ -33,12 +33,12 @@ impl Binary {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         log!("Binary {} start", this);
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.base.shell, me.node)
@@ -71,7 +71,7 @@ impl Binary {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -89,7 +89,7 @@ impl Binary {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         let exec = interp.as_binary_mut(this).currently_executing.take();
         if let Some(exec) = exec {
             interp.deinit_node(exec);

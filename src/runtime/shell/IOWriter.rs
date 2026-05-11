@@ -898,8 +898,10 @@ impl IOWriter {
             return;
         };
         // SAFETY: interp outlives every IOWriter (it owns the IO struct that
-        // holds the Arc). Single-threaded; constructed via `from_raw_mut`.
-        y.run(unsafe { interp.assume_mut() });
+        // holds the Arc). Single-threaded; R-2: `Interpreter::run` takes
+        // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
+        // shared borrow without `assume_mut()`.
+        y.run(&interp);
     }
 
     // ── enqueue ─────────────────────────────────────────────────────────
@@ -1211,7 +1213,7 @@ impl Drop for IOWriter {
 /// hot-path). Called by `Yield::OnIoWriterChunk` and by the writer's poll
 /// callback.
 pub fn on_io_writer_chunk(
-    interp: &mut Interpreter,
+    interp: &Interpreter,
     child: ChildPtr,
     written: usize,
     err: Option<sys::SystemError>,

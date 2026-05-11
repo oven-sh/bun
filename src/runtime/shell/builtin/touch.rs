@@ -40,7 +40,7 @@ pub struct ExecState {
 }
 
 impl Touch {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let args_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -72,7 +72,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
+    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
         let buf: Vec<u8> = match &e {
             ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
                 interp,
@@ -97,7 +97,7 @@ impl Touch {
         Builtin::write_failing_error(interp, cmd, &buf, 1)
     }
 
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action { Done(ExitCode), Schedule(usize) }
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
@@ -133,7 +133,7 @@ impl Touch {
                 let opts = Self::state_mut(interp, cmd).opts;
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp;
+                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
                     let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                     let task =
@@ -147,7 +147,7 @@ impl Touch {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -170,7 +170,7 @@ impl Touch {
 
     /// Spec: touch.zig `onShellTouchTaskDone`.
     pub fn on_shell_touch_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task: *mut ShellTouchTask,
     ) {
@@ -192,7 +192,7 @@ impl Touch {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Touch {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Touch {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Touch(t) => &mut **t,
             _ => unreachable!(),
@@ -204,7 +204,7 @@ pub type ShellTouchOutputTask = OutputTask<Touch>;
 
 impl OutputTaskVTable for Touch {
     fn write_err(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
@@ -228,13 +228,13 @@ impl OutputTaskVTable for Touch {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
@@ -258,12 +258,12 @@ impl OutputTaskVTable for Touch {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
-    fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -349,7 +349,7 @@ impl ShellTouchTask {
         // this returns (Zig: `event_loop.enqueueTaskConcurrent(...)`).
     }
 
-    pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Touch::on_shell_touch_task_done(interp, cmd, this);
@@ -363,7 +363,7 @@ impl bun_event_loop::Taskable for ShellTouchTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }

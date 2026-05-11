@@ -23,7 +23,7 @@ enum State {
 }
 
 impl Cd {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
         if args.len() > 1 {
             return Self::write_stderr_non_blocking(
@@ -67,7 +67,7 @@ impl Cd {
     }
 
     fn handle_change_cwd_err(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         err: bun_sys::Error,
         new_cwd: &[u8],
@@ -101,7 +101,7 @@ impl Cd {
     }
 
     fn write_stderr_non_blocking(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -119,7 +119,7 @@ impl Cd {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         _err: Option<bun_sys::SystemError>,
@@ -129,7 +129,7 @@ impl Cd {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Cd {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cd {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Cd(c) => c,
             _ => unreachable!(),

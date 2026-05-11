@@ -193,7 +193,7 @@ impl BufferedIoClosed {
 
 impl Cmd {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Cmd,
         parent: NodeId,
@@ -213,11 +213,11 @@ impl Cmd {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
@@ -302,7 +302,7 @@ impl Cmd {
 
     /// Spec: Cmd.zig `onIOWriterChunk` (lines 355-362).
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         _written: usize,
         e: Option<bun_sys::SystemError>,
@@ -320,7 +320,7 @@ impl Cmd {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -424,7 +424,7 @@ impl Cmd {
     /// Spec: Cmd.zig `transitionToExecStateAndYield()` + `initSubproc()` up
     /// through the `Builtin.Kind.fromStr` branch. Resolves argv[0] to a
     /// builtin or falls through to subprocess spawn (still gated).
-    fn transition_to_exec(interp: &mut Interpreter, this: NodeId) -> Yield {
+    fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
         // (Zig stored argv as `[*:0]const u8`; the Rust port collected them as
         // `Vec<u8>` from Expansion.)
@@ -471,7 +471,7 @@ impl Cmd {
 
         let mut arena = bun_alloc::Arena::new();
         let mut spawn_args =
-            SpawnArgs::default::<false>(&mut arena, interp as *mut Interpreter, event_loop);
+            SpawnArgs::default::<false>(&mut arena, interp.as_ctx_ptr(), event_loop);
         // Cache the raw `*mut ShellExecEnv` and deref it directly so the
         // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
         // `*interp` — `Base::shell()` would tie the slice's lifetime to
@@ -547,12 +547,12 @@ impl Cmd {
         // `out_subproc`. `interp` is left null until `spawn_async` and the
         // `did_exit_immediately` handling have returned: a synchronous
         // `Cmd::on_exit` reached via the process exit handler would otherwise
-        // drive the trampoline (`Yield::run(&mut *interp)`) while this frame
-        // still holds `&mut Interpreter`, tearing the Cmd down (and freeing
+        // drive the trampoline (`Yield::run(&*interp)`) while this frame
+        // still holds `&Interpreter`, tearing the Cmd down (and freeing
         // `child`) underneath the live `subproc` borrow. With `interp` null,
         // `on_exit` records `exit_code`/`state = Done` and returns; we resume
         // via the Yield we hand back below.
-        let interp_ptr: *mut Interpreter = interp;
+        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
             child: core::ptr::null_mut(),
@@ -563,7 +563,7 @@ impl Cmd {
 
         // Derive the raw backrefs `spawn_async` needs from a single
         // short-lived `&mut Cmd` borrow, then let it end before the call so no
-        // `&mut Interpreter` is live across the re-entrant spawn. `child_out`
+        // `&Interpreter` is live across the re-entrant spawn. `child_out`
         // points into the `Box<SubprocExec>` heap allocation, which is
         // address-stable for the lifetime of the Cmd (only dropped in
         // `deinit`). argv pointers borrow `cmd.args[i]` storage, which is not
@@ -662,7 +662,7 @@ impl Cmd {
     /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
     /// failing-error write was queued; `Err` when a JS exception was raised.
     fn init_subproc_redirections(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
     ) -> crate::jsc::JsResult<Option<Yield>> {
@@ -694,7 +694,7 @@ impl Cmd {
 
         match redirect {
             ast::Redirect::JsBuf(val) => {
-                let global = interp.global_this;
+                let global = interp.global_this.get();
                 if global.is_null() {
                     panic!("JS values not allowed in this context");
                 }
@@ -832,7 +832,7 @@ impl Cmd {
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
-    pub fn on_exec_done(interp: &mut Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    pub fn on_exec_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
         log!("Cmd {} execDone exit={}", this, exit_code);
         {
             let me = interp.as_cmd_mut(this);
@@ -846,11 +846,11 @@ impl Cmd {
     /// Main-thread re-entry for a subprocess exit posted from off-thread —
     /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
     /// since the dispatcher discards the [`Yield`].
-    pub fn on_subprocess_done(interp: &mut Interpreter, this: NodeId, exit_code: ExitCode) {
+    pub fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
         Self::on_exec_done(interp, this, exit_code).run(interp);
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
         let me = interp.as_cmd_mut(this);
         me.args.clear();
@@ -893,7 +893,7 @@ impl Cmd {
     // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
     // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
     // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
-    // `PipeReader::run_yield` without aliasing `&mut Interpreter` against
+    // `PipeReader::run_yield` without aliasing `&Interpreter` against
     // `&mut self`.
 
     /// Spec: Cmd.zig `hasFinished`.
@@ -1041,10 +1041,10 @@ impl Cmd {
             }
             // SAFETY: `interp` outlives every spawned subprocess (it owns the
             // arena slot containing `self`). `&mut self` is dead by NLL after
-            // this point so the `&mut Interpreter` borrow does not alias it.
+            // this point so the `&Interpreter` borrow does not alias it.
             // The caller (`ShellSubprocess::on_process_exit`) does not touch
             // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &mut *interp });
+            Yield::Next(this_id).run(unsafe { &*interp });
         }
     }
 }

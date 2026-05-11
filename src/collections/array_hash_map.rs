@@ -1369,19 +1369,92 @@ impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
 // loosen the bound there.
 #[derive(Clone)]
 pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone = DefaultAlloc> {
-    inner: hashbrown::HashMap<Box<[u8], A>, V, bun_wyhash::BuildHasher, A>,
+    inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
 }
 
 /// Public alias for the underlying `hashbrown` map so downstream signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
 pub type StringHashMapInner<V, A = DefaultAlloc> =
-    hashbrown::HashMap<Box<[u8], A>, V, bun_wyhash::BuildHasher, A>;
+    hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
 
-/// Owned-key type stored in `StringHashMap`. Exposed so callers that name
-/// hashbrown's iterator types in their own struct fields don't have to spell
-/// `Box<[u8], A>` (which would force `#![feature(allocator_api)]` into every
-/// such crate).
-pub type StringHashMapKey<A = DefaultAlloc> = Box<[u8], A>;
+/// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
+/// default produced by `put`/`get_or_put`) or a borrowed `&'static [u8]`
+/// (`Static`, produced by `put_static_key`).
+///
+/// Zig's `std.StringHashMap` always *borrows* the caller's `[]const u8` key —
+/// the map never copies it. The Rust port originally heap-boxed every key on
+/// `put` for safety, which profiling showed as the dominant cost of
+/// `DirEntry::add_entry` (the resolver's per-file hot path): the key bytes
+/// there already live in the process-static `FilenameStore`/`EntryStore`, so
+/// the `Box<[u8]>` was a redundant second copy. The `Static` variant lets such
+/// callers store the existing slice directly, matching Zig's zero-copy
+/// behaviour without giving up owned-key safety for everyone else.
+///
+/// `Deref<Target = [u8]>` + `Borrow<[u8]>` keep `.get(&[u8])`,
+/// `.contains_key(&[u8])`, and `&**key` working unchanged at every call site,
+/// so this is a drop-in replacement for the previous `Box<[u8], A>` alias.
+pub enum StringHashMapKey<A: Allocator = DefaultAlloc> {
+    Owned(Box<[u8], A>),
+    Static(&'static [u8]),
+}
+
+impl<A: Allocator> Deref for StringHashMapKey<A> {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Owned(b) => b,
+            Self::Static(s) => s,
+        }
+    }
+}
+
+impl<A: Allocator> core::borrow::Borrow<[u8]> for StringHashMapKey<A> {
+    #[inline]
+    fn borrow(&self) -> &[u8] {
+        self
+    }
+}
+
+impl<A: Allocator> AsRef<[u8]> for StringHashMapKey<A> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
+impl<A: Allocator> Hash for StringHashMapKey<A> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Must match `<[u8] as Hash>` so `Borrow<[u8]>`-keyed lookups agree.
+        (**self).hash(state)
+    }
+}
+
+impl<A: Allocator> PartialEq for StringHashMapKey<A> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+impl<A: Allocator> Eq for StringHashMapKey<A> {}
+
+impl<A: Allocator + Clone> Clone for StringHashMapKey<A> {
+    #[inline]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Owned(b) => Self::Owned(b.clone()),
+            Self::Static(s) => Self::Static(s),
+        }
+    }
+}
+
+impl<A: Allocator> From<Box<[u8], A>> for StringHashMapKey<A> {
+    #[inline]
+    fn from(b: Box<[u8], A>) -> Self {
+        Self::Owned(b)
+    }
+}
 
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringHashMap<V, A> {
     fn default() -> Self {
@@ -1419,6 +1492,14 @@ fn box_key<A: Allocator + Default>(key: &[u8]) -> Box<[u8], A> {
     v.into_boxed_slice()
 }
 
+/// `box_key` wrapped in the `StringHashMap` key enum. Kept separate from
+/// `box_key` because `StringArrayHashMap` (which still stores plain
+/// `Box<[u8], A>` keys) shares the bare helper.
+#[inline]
+fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
+    StringHashMapKey::Owned(box_key::<A>(key))
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     pub fn new() -> Self {
         Self::default()
@@ -1442,12 +1523,12 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// Zig `valueIterator()`. Inherent forwarder so callers can name
     /// `StringHashMap::values` without relying on `Deref` resolution.
     #[inline]
-    pub fn values(&self) -> hashbrown::hash_map::Values<'_, Box<[u8], A>, V> {
+    pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
         self.inner.values()
     }
 
     #[inline]
-    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, Box<[u8], A>, V> {
+    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, StringHashMapKey<A>, V> {
         self.inner.values_mut()
     }
 
@@ -1463,7 +1544,20 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     }
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        self.inner.insert(box_key::<A>(key), value);
+        self.inner.insert(owned_key::<A>(key), value);
+        Ok(())
+    }
+
+    /// Insert `value` under `key` **without copying the key bytes**. This is
+    /// the zero-copy path that matches Zig's `StringHashMap.put` (which always
+    /// borrows). `key` is stored as `StringHashMapKey::Static`, so the caller
+    /// must guarantee the bytes genuinely live for `'static` — in practice
+    /// that means slices into a process-lifetime arena (`FilenameStore`,
+    /// `EntryStore`, AST heap) where the `'static` was minted via an explicit
+    /// `unsafe` lifetime widen at the call site.
+    #[inline]
+    pub fn put_static_key(&mut self, key: &'static [u8], value: V) -> Result<(), AllocError> {
+        self.inner.insert(StringHashMapKey::Static(key), value);
         Ok(())
     }
 
@@ -1472,7 +1566,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// `error.OutOfMemory`); callers can roll back side effects on failure.
     pub fn put_owned(&mut self, key: Box<[u8], A>, value: V) -> Result<(), AllocError> {
         self.inner.try_reserve(1).map_err(|_| AllocError)?;
-        self.inner.insert(key, value);
+        self.inner.insert(StringHashMapKey::Owned(key), value);
         Ok(())
     }
 
@@ -1480,12 +1574,12 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// just `put` without the `Result`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        self.inner.insert(box_key::<A>(key), value);
+        self.inner.insert(owned_key::<A>(key), value);
     }
 
     /// Zig `putNoClobber` — asserts the key was not already present.
     pub fn put_no_clobber(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        let prev = self.inner.insert(box_key::<A>(key), value);
+        let prev = self.inner.insert(owned_key::<A>(key), value);
         debug_assert!(prev.is_none(), "put_no_clobber: key already present");
         Ok(())
     }
@@ -1535,7 +1629,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        Ok(self.inner.entry(box_key::<A>(key)).or_insert(value))
+        Ok(self.inner.entry(owned_key::<A>(key)).or_insert(value))
     }
 
     /// Zig `getOrPutContextAdapted` on `StringHashMap` — see `get_adapted` for
@@ -1546,7 +1640,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
         _adapter: C,
     ) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::Entry as HbEntry;
-        match self.inner.entry(box_key::<A>(key)) {
+        match self.inner.entry(owned_key::<A>(key)) {
             HbEntry::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,
                 value_ptr: o.into_mut(),

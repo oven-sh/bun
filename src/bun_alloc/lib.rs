@@ -1789,21 +1789,36 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         unsafe { (*head_ptr.as_ptr()).append(value) }
     }
 
-    pub fn append(
-        &mut self,
+    /// Append `value`, returning a stable `*mut` to its slot.
+    ///
+    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
+    /// `bss_list!` singleton pointer directly without first materializing a
+    /// `&mut Self` — which would be aliased UB if two threads did so
+    /// concurrently *before* reaching the inner `self.mutex.lock()`. This
+    /// matches Zig's `*Self` receiver: the inner mutex is the sole
+    /// serialization point, so no caller-side outer lock is needed.
+    ///
+    /// SAFETY: `this` must point to a live, initialized `BSSList` (typically
+    /// the `bss_list!` singleton). Concurrent callers are allowed.
+    pub unsafe fn append(
+        this: *mut Self,
         value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError> {
-        let _guard = self.mutex.lock();
-        // TODO(port): Zig reads `instance.*` here even though `self == instance`; kept as `self`.
-        if self.used as usize > Self::MAX_INDEX {
-            self.append_overflow(value)
+    ) -> core::result::Result<*mut ValueType, AllocError> {
+        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
+        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
+        // `&mut *this` formed below does not alias a live guard borrow.
+        let _guard = unsafe { (*this).mutex.lock() };
+        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+        let this = unsafe { &mut *this };
+        if this.used as usize > Self::MAX_INDEX {
+            this.append_overflow(value).map(core::ptr::from_mut)
         } else {
-            let index = self.used as usize;
+            let index = this.used as usize;
             // Raw write — slot is uninit; Zig assignment has no drop glue.
-            self.backing_buf[index].write(value);
-            self.used += 1;
+            this.backing_buf[index].write(value);
+            this.used += 1;
             // SAFETY: just initialized on the line above.
-            Ok(unsafe { self.backing_buf[index].assume_init_mut() })
+            Ok(core::ptr::from_mut(unsafe { this.backing_buf[index].assume_init_mut() }))
         }
     }
 

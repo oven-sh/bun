@@ -795,14 +795,18 @@ pub mod fs {
         pub struct EntryStore(());
         impl EntryStore {
             #[inline]
-            pub fn instance() -> &'static mut EntryStoreBacking {
-                // SAFETY: `entry_store_backing()` returns the raw `*mut` singleton (Zig `*Self`);
-                // the singleton serializes all mutation through its internal `mutex`.
-                unsafe { &mut *entry_store_backing() }
+            pub fn instance() -> *mut EntryStoreBacking {
+                // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
+                // materialize a `&'static mut` here — concurrent callers would alias.
+                entry_store_backing()
             }
+            #[inline]
             pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_core::Error> {
-                let r = Self::instance().append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
-                Ok(std::ptr::from_mut::<Entry>(r))
+                // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
+                // `BSSList::append` takes `*mut Self` and serializes on its own inner
+                // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
+                unsafe { EntryStoreBacking::append(Self::instance(), value) }
+                    .map_err(|_| bun_core::err!("OutOfMemory"))
             }
         }
 
@@ -1096,8 +1100,20 @@ pub mod fs {
             // SAFETY: just produced from EntryStore append or prev_map lookup
             let stored_ref = unsafe { &mut *stored };
 
+            // PERF(port): Zig's `StringHashMap.put` borrows the key slice; the
+            // generic `put` here would heap-box a second copy. `base_lowercase`
+            // points either into the `Entry`'s inline `StringOrTinyString`
+            // buffer (≤31B names) or into the process-static `FilenameStore`;
+            // the `Entry` itself lives in the process-lifetime `EntryStore`
+            // BSSList, so in both cases the bytes are address-stable for the
+            // life of the process. Widen to `'static` and store the slice
+            // directly — same ownership model as Zig.
+            // SAFETY: `stored` is an `EntryStore` slot (never freed, never
+            // moved); `base_lowercase_` is never mutated after construction.
+            let key: &'static [u8] =
+                unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
             self.data
-                .put(stored_ref.base_lowercase(), stored)
+                .put_static_key(key, stored)
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
 
             if !I::IS_VOID {

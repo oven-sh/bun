@@ -5962,6 +5962,15 @@ where
     }
 
     fn print_identifier_ascii_only(&mut self, identifier: &[u8]) {
+        // Fast path: ~all identifiers are pure ASCII. A single SIMD scan + one
+        // print() beats the per-byte CodepointIterator loop below. Valid JS
+        // identifier bytes in the ASCII range are [$_a-zA-Z0-9], so the < 0x80
+        // check is equivalent to the FIRST_ASCII..=LAST_ASCII range here.
+        if strings::is_all_ascii(identifier) {
+            self.print(identifier);
+            return;
+        }
+
         let mut ascii_start: usize = 0;
         let mut is_ascii = false;
         let mut iter = CodepointIterator::init(identifier);
@@ -6473,32 +6482,32 @@ impl<C: WriterContext> Writer<C> {
 }
 
 impl<C: WriterContext> WriterTrait for Writer<C> {
-    fn written(&self) -> i32 { self.written }
-    fn prev_char(&self) -> u8 { self.prev_char() }
-    fn prev_prev_char(&self) -> u8 { self.prev_prev_char() }
-    fn print_byte(&mut self, b: u8) { self.print_byte(b) }
-    fn print_slice(&mut self, s: &[u8]) { self.print_slice(s) }
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { self.reserve(count) }
-    fn advance(&mut self, count: u64) { self.advance(count) }
-    fn slice(&self) -> &[u8] { self.slice() }
-    fn get_error(&self) -> Result<(), bun_core::Error> { self.get_error() }
-    fn done(&mut self) -> Result<(), bun_core::Error> { self.done() }
-    fn take_buffer(&mut self) -> MutableString { self.take_buffer() }
+    #[inline] fn written(&self) -> i32 { self.written }
+    #[inline] fn prev_char(&self) -> u8 { self.prev_char() }
+    #[inline] fn prev_prev_char(&self) -> u8 { self.prev_prev_char() }
+    #[inline] fn print_byte(&mut self, b: u8) { self.print_byte(b) }
+    #[inline] fn print_slice(&mut self, s: &[u8]) { self.print_slice(s) }
+    #[inline] fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { self.reserve(count) }
+    #[inline] fn advance(&mut self, count: u64) { self.advance(count) }
+    #[inline] fn slice(&self) -> &[u8] { self.slice() }
+    #[inline] fn get_error(&self) -> Result<(), bun_core::Error> { self.get_error() }
+    #[inline] fn done(&mut self) -> Result<(), bun_core::Error> { self.done() }
+    #[inline] fn take_buffer(&mut self) -> MutableString { self.take_buffer() }
 }
 
 // `&mut W` forwards to `W` so `printWithWriter(*BufferPrinter, ...)` works.
 impl<W: WriterTrait> WriterTrait for &mut W {
-    fn written(&self) -> i32 { (**self).written() }
-    fn prev_char(&self) -> u8 { (**self).prev_char() }
-    fn prev_prev_char(&self) -> u8 { (**self).prev_prev_char() }
-    fn print_byte(&mut self, b: u8) { (**self).print_byte(b) }
-    fn print_slice(&mut self, s: &[u8]) { (**self).print_slice(s) }
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { (**self).reserve(count) }
-    fn advance(&mut self, count: u64) { (**self).advance(count) }
-    fn slice(&self) -> &[u8] { (**self).slice() }
-    fn get_error(&self) -> Result<(), bun_core::Error> { (**self).get_error() }
-    fn done(&mut self) -> Result<(), bun_core::Error> { (**self).done() }
-    fn take_buffer(&mut self) -> MutableString { (**self).take_buffer() }
+    #[inline] fn written(&self) -> i32 { (**self).written() }
+    #[inline] fn prev_char(&self) -> u8 { (**self).prev_char() }
+    #[inline] fn prev_prev_char(&self) -> u8 { (**self).prev_prev_char() }
+    #[inline] fn print_byte(&mut self, b: u8) { (**self).print_byte(b) }
+    #[inline] fn print_slice(&mut self, s: &[u8]) { (**self).print_slice(s) }
+    #[inline] fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { (**self).reserve(count) }
+    #[inline] fn advance(&mut self, count: u64) { (**self).advance(count) }
+    #[inline] fn slice(&self) -> &[u8] { (**self).slice() }
+    #[inline] fn get_error(&self) -> Result<(), bun_core::Error> { (**self).get_error() }
+    #[inline] fn done(&mut self) -> Result<(), bun_core::Error> { (**self).done() }
+    #[inline] fn take_buffer(&mut self) -> MutableString { (**self).take_buffer() }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -6573,6 +6582,7 @@ impl BufferWriter {
         self.write_byte_n_times(byte, n)
     }
 
+    #[inline]
     pub fn write_byte(&mut self, byte: u8) -> Result<usize, bun_core::Error> {
         self.buffer.append_char(byte)?;
         self.approximate_newline_count += (byte == b'\n') as usize;
@@ -6580,6 +6590,7 @@ impl BufferWriter {
         Ok(1)
     }
 
+    #[inline]
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
         self.buffer.append(bytes)?;
         self.approximate_newline_count += (!bytes.is_empty() && bytes[bytes.len() - 1] == b'\n') as usize;
@@ -6593,10 +6604,10 @@ impl BufferWriter {
         Ok(bytes.len())
     }
 
-    pub fn slice(&self) -> &[u8] { self.buffer.list.as_slice() }
+    #[inline] pub fn slice(&self) -> &[u8] { self.buffer.list.as_slice() }
 
-    pub fn get_last_byte(&self) -> u8 { self.last_bytes[1] }
-    pub fn get_last_last_byte(&self) -> u8 { self.last_bytes[0] }
+    #[inline] pub fn get_last_byte(&self) -> u8 { self.last_bytes[1] }
+    #[inline] pub fn get_last_last_byte(&self) -> u8 { self.last_bytes[0] }
 
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
         self.buffer.grow_if_needed(usize::try_from(count).expect("int cast"))?;
@@ -6653,18 +6664,18 @@ impl BufferWriter {
 }
 
 impl WriterContext for BufferWriter {
-    fn write_byte(&mut self, c: u8) -> Result<usize, bun_core::Error> { self.write_byte(c) }
-    fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> { self.write_all(buf) }
-    fn get_last_byte(&self) -> u8 { self.get_last_byte() }
-    fn get_last_last_byte(&self) -> u8 { self.get_last_last_byte() }
-    fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { self.reserve_next(count) }
-    fn advance_by(&mut self, count: u64) { self.advance_by(count) }
-    fn slice(&self) -> &[u8] { self.slice() }
-    fn get_mutable_buffer(&mut self) -> &mut MutableString { self.get_mutable_buffer() }
-    fn take_buffer(&mut self) -> MutableString { self.take_buffer() }
-    fn get_written(&self) -> &[u8] { self.get_written() }
-    fn flush(&mut self) -> Result<(), bun_core::Error> { self.flush() }
-    fn done(&mut self) -> Result<(), bun_core::Error> { self.done() }
+    #[inline] fn write_byte(&mut self, c: u8) -> Result<usize, bun_core::Error> { self.write_byte(c) }
+    #[inline] fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> { self.write_all(buf) }
+    #[inline] fn get_last_byte(&self) -> u8 { self.get_last_byte() }
+    #[inline] fn get_last_last_byte(&self) -> u8 { self.get_last_last_byte() }
+    #[inline] fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> { self.reserve_next(count) }
+    #[inline] fn advance_by(&mut self, count: u64) { self.advance_by(count) }
+    #[inline] fn slice(&self) -> &[u8] { self.slice() }
+    #[inline] fn get_mutable_buffer(&mut self) -> &mut MutableString { self.get_mutable_buffer() }
+    #[inline] fn take_buffer(&mut self) -> MutableString { self.take_buffer() }
+    #[inline] fn get_written(&self) -> &[u8] { self.get_written() }
+    #[inline] fn flush(&mut self) -> Result<(), bun_core::Error> { self.flush() }
+    #[inline] fn done(&mut self) -> Result<(), bun_core::Error> { self.done() }
 }
 
 pub type BufferPrinter = Writer<BufferWriter>;

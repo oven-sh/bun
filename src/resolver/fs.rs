@@ -443,32 +443,19 @@ pub(crate) mod dir_entry {
     /// ZST handle resolving to the `entry_store_backing()` singleton.
     pub(crate) struct EntryStore(());
 
-    // PORT NOTE: external lock serializing formation of `&mut *entry_store_backing()`.
-    // `BSSList::append(&mut self, ...)` only acquires its internal mutex *after* the
-    // `&mut self` auto-ref has been formed; concurrent `EntryStore::append` calls (from
-    // `DirEntry::add_entry` across the resolver thread pool) would otherwise each hold a
-    // live `&mut BSSList` to the same singleton — aliased `&mut`, UB. Zig's `*Self` raw
-    // pointer carries no noalias, so its inner mutex suffices there; Rust needs the
-    // outer lock so only one `&mut` exists at a time.
-    static ENTRY_STORE_MUTEX: std::sync::LazyLock<Mutex> =
-        std::sync::LazyLock::new(Mutex::default);
-
     impl EntryStore {
         #[inline]
         pub(crate) fn instance() -> *mut EntryStoreBacking {
             // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
-            // materialize a `&'static mut` here — concurrent callers would alias the
-            // same object via `&mut` (UB) regardless of the backing's internal mutex.
-            // Form the `&mut` only for the duration of a single locked operation.
+            // materialize a `&'static mut` here — concurrent callers would alias.
             entry_store_backing()
         }
+        #[inline]
         pub(crate) fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
-            let _guard = ENTRY_STORE_MUTEX.lock_guard();
-            // SAFETY: `ENTRY_STORE_MUTEX` is held, so this is the only live `&mut` to
-            // the process-lifetime singleton; `append` further serializes via its
-            // (now-redundant) internal mutex.
-            let r = unsafe { (*Self::instance()).append(value)? };
-            Ok(std::ptr::from_mut::<Entry>(r))
+            // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
+            // `BSSList::append` takes `*mut Self` and serializes on its own inner
+            // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
+            unsafe { EntryStoreBacking::append(Self::instance(), value) }
         }
     }
 
@@ -592,7 +579,19 @@ impl DirEntry {
         // SAFETY: just produced from EntryStore append or prev_map lookup
         let stored_ref = unsafe { &mut *stored };
 
-        self.data.put(stored_ref.base_lowercase(), stored)?;
+        // PERF(port): Zig's `StringHashMap.put` borrows the key slice; the
+        // generic `put` here would heap-box a second copy. `base_lowercase`
+        // points either into the `Entry`'s inline `StringOrTinyString` buffer
+        // (≤31B names) or into the process-static `FilenameStore`; the `Entry`
+        // itself lives in the process-lifetime `EntryStore` BSSList, so in
+        // both cases the bytes are address-stable for the life of the process.
+        // Widen to `'static` and store the slice directly — same ownership
+        // model as Zig.
+        // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
+        // `base_lowercase_` is never mutated after construction.
+        let key: &'static [u8] =
+            unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
+        self.data.put_static_key(key, stored)?;
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);

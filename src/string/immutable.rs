@@ -303,7 +303,12 @@ pub mod unicode {
 
     impl<'a> NewCodePointIterator<'a> {
         /// Zig-style cursor advance. Returns `false` at end.
-        #[inline]
+        // PERF(port): `#[inline]` alone is hint-only; LLVM declined to inline
+        // this cross-crate into `bun_js_printer::print_identifier_ascii_only`
+        // (the multibyte slow path makes the body look heavy). Called per-byte
+        // of every printed identifier under `ASCII_ONLY=true`. Zig's `iter.next`
+        // lives in the same TU and inlines. Force it.
+        #[inline(always)]
         pub fn next(&self, cursor: &mut Cursor) -> bool {
             let bytes = self.bytes;
             let pos = cursor.i as usize + cursor.width as usize;
@@ -801,10 +806,17 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 }
 
 // 31 character string or a slice
+//
+// PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
+// only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
+// reads `[0..remainder_len]`. Zig leaves the tail `undefined`; the original
+// Rust port zeroed `[0; 31]` on every call which showed up as ~0.45% of cycles
+// in the next-lint profile (~6M calls × ~24B avg waste). Tail bytes have no
+// validity requirement, so we leave them uninit to match Zig.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct StringOrTinyString {
-    remainder_buf: [u8; StringOrTinyString::MAX],
+    remainder_buf: core::mem::MaybeUninit<[u8; StringOrTinyString::MAX]>,
     meta: StringOrTinyStringMeta,
 }
 
@@ -834,19 +846,25 @@ impl StringOrTinyString {
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
+        let buf = self.remainder_buf.as_ptr() as *const u8;
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         match self.meta.is_tiny_string() {
-            1 => &self.remainder_buf[0..self.meta.remainder_len() as usize],
+            1 => {
+                // SAFETY: init()/init_lower_case() wrote exactly remainder_len bytes
+                // into the start of remainder_buf; tail bytes are uninit but unread.
+                unsafe { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
+            }
             0 => {
-                let ptr = usize::from_le_bytes(
-                    self.remainder_buf[0..core::mem::size_of::<usize>()].try_into().expect("infallible: size matches"),
-                ) as *const u8;
-                let len = usize::from_le_bytes(
-                    self.remainder_buf
-                        [core::mem::size_of::<usize>()..core::mem::size_of::<usize>() * 2]
-                        .try_into()
-                        .unwrap(),
-                );
+                const USZ: usize = core::mem::size_of::<usize>();
+                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
+                let mut ptr_bytes = [0u8; USZ];
+                let mut len_bytes = [0u8; USZ];
+                unsafe {
+                    core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
+                    core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
+                }
+                let ptr = usize::from_le_bytes(ptr_bytes) as *const u8;
+                let len = usize::from_le_bytes(len_bytes);
                 // SAFETY: ptr/len were stored from a live &[u8] in init(); caller keeps it alive.
                 unsafe { core::slice::from_raw_parts(ptr, len) }
             }
@@ -877,58 +895,91 @@ impl StringOrTinyString {
     }
 
     pub fn init(stringy: &[u8]) -> StringOrTinyString {
+        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
         match stringy.len() {
             0 => StringOrTinyString {
-                remainder_buf: [0; Self::MAX],
+                remainder_buf: buf,
                 meta: StringOrTinyStringMeta::new(0, 1),
             },
             1..=Self::MAX => {
-                let mut tiny = StringOrTinyString {
-                    remainder_buf: [0; Self::MAX],
+                // SAFETY: stringy.len() ∈ 1..=31, fits in buf; src/dst can't overlap (dst is local).
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        stringy.as_ptr(),
+                        buf.as_mut_ptr() as *mut u8,
+                        stringy.len(),
+                    );
+                }
+                StringOrTinyString {
+                    remainder_buf: buf,
                     meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                };
-                let len = tiny.meta.remainder_len() as usize;
-                tiny.remainder_buf[0..len].copy_from_slice(&stringy[0..len]);
-                tiny
+                }
             }
             _ => {
-                let mut tiny = StringOrTinyString {
-                    remainder_buf: [0; Self::MAX],
+                const USZ: usize = core::mem::size_of::<usize>();
+                let dst = buf.as_mut_ptr() as *mut u8;
+                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
+                        dst,
+                        USZ,
+                    );
+                    core::ptr::copy_nonoverlapping(
+                        stringy.len().to_le_bytes().as_ptr(),
+                        dst.add(USZ),
+                        USZ,
+                    );
+                }
+                StringOrTinyString {
+                    remainder_buf: buf,
                     meta: StringOrTinyStringMeta::new(0, 0),
-                };
-                tiny.remainder_buf[0..core::mem::size_of::<usize>()]
-                    .copy_from_slice(&(stringy.as_ptr() as usize).to_le_bytes());
-                tiny.remainder_buf[core::mem::size_of::<usize>()..core::mem::size_of::<usize>() * 2]
-                    .copy_from_slice(&stringy.len().to_le_bytes());
-                tiny
+                }
             }
         }
     }
 
     pub fn init_lower_case(stringy: &[u8]) -> StringOrTinyString {
+        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
         match stringy.len() {
             0 => StringOrTinyString {
-                remainder_buf: [0; Self::MAX],
+                remainder_buf: buf,
                 meta: StringOrTinyStringMeta::new(0, 1),
             },
             1..=Self::MAX => {
-                let mut tiny = StringOrTinyString {
-                    remainder_buf: [0; Self::MAX],
+                // Inline ASCII-lowercase loop (≤31 iters). Avoids forming `&mut [u8]`
+                // over uninit storage that `copy_lowercase` would need; semantics are
+                // identical (Zig's copyLowercase only ASCII-lowercases).
+                let dst = buf.as_mut_ptr() as *mut u8;
+                for (i, &c) in stringy.iter().enumerate() {
+                    // SAFETY: i < stringy.len() <= 31 == MAX.
+                    unsafe { *dst.add(i) = c.to_ascii_lowercase() };
+                }
+                StringOrTinyString {
+                    remainder_buf: buf,
                     meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                };
-                let _ = copy_lowercase(stringy, &mut tiny.remainder_buf);
-                tiny
+                }
             }
             _ => {
-                let mut tiny = StringOrTinyString {
-                    remainder_buf: [0; Self::MAX],
+                const USZ: usize = core::mem::size_of::<usize>();
+                let dst = buf.as_mut_ptr() as *mut u8;
+                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
+                        dst,
+                        USZ,
+                    );
+                    core::ptr::copy_nonoverlapping(
+                        stringy.len().to_le_bytes().as_ptr(),
+                        dst.add(USZ),
+                        USZ,
+                    );
+                }
+                StringOrTinyString {
+                    remainder_buf: buf,
                     meta: StringOrTinyStringMeta::new(0, 0),
-                };
-                tiny.remainder_buf[0..core::mem::size_of::<usize>()]
-                    .copy_from_slice(&(stringy.as_ptr() as usize).to_le_bytes());
-                tiny.remainder_buf[core::mem::size_of::<usize>()..core::mem::size_of::<usize>() * 2]
-                    .copy_from_slice(&stringy.len().to_le_bytes());
-                tiny
+                }
             }
         }
     }

@@ -1463,48 +1463,60 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // PORT NOTE (intentional divergence from Zig spec): process-exit
-            // and fd-3-readable race in the event loop. `ipc_reader.start()`
-            // only registers a poll on POSIX — it does not synchronously read.
-            // If `watch_or_reap()`/SIGCHLD delivers the exit before the poll
-            // fires (a fast-exiting scanner under CI load), tearing down the
-            // reader here drops the kernel-buffered IPC payload on the floor
-            // and `handle_results` reports "exited without sending data".
+            // PORT NOTE (intentional divergence from Zig spec): the spec tears
+            // down `ipc_reader` here unconditionally. That races process-exit
+            // against fd-3-readable: `ipc_reader.start()` only registers a
+            // poll on POSIX (no sync read), and `MiniEventLoop::tick_once`
+            // skips the uws tick whenever a concurrent task (the WaiterThread
+            // exit notification) is already queued. So a fast-exiting scanner
+            // under CI load reaches this branch with the JSON still sitting in
+            // the kernel pipe buffer, and `deinit()` drops it on the floor —
+            // `handle_results` then reports "exited without sending data".
             //
-            // The child has exited, so the write end of fd 3 is closed: a
-            // synchronous drain cannot block. Read until EOF before closing.
+            // Two earlier band-aids (fcbbb52f0b2b sync drain; 230c8ef7f7df
+            // EINTR/EAGAIN retry) caught the common case but left a window:
+            // the bounded EAGAIN spin can give up before the kernel makes the
+            // write-end close visible, and tearing down at that point still
+            // discards the payload (or truncates it mid-JSON).
+            //
+            // Fix: try a best-effort sync drain (waitpid has returned, so the
+            // write end is closed and a blocking-ish drain is bounded), but
+            // ONLY tear down the reader if the drain actually reached EOF.
+            // If it bailed early (EAGAIN limit / unexpected errno / fd already
+            // invalid) leave the FilePoll registered: the next `tick_once`
+            // has no pending task, so it ticks uws, the poll delivers
+            // readable+HUP, `read_with_fn` drains to `Ok(0)`, and
+            // `on_reader_done` decrements `remaining_fds` exactly once.
+            //
             // Windows reads via libuv (async) and the fd here is a uv-owned
-            // pipe handle — skip the sync drain there.
-            //
-            // EINTR: on macOS `bun_sys::read` is single-shot (`read$NOCANCEL`,
-            // no retry — sys.zig:2138). The install path always uses the
-            // WaiterThread (PackageManager.rs:1929), and the TTY matrix arms
-            // spawn under a PTY, so signals can land mid-drain; retrying
-            // EINTR is mandatory or we bail with `ipc_data` empty and report
-            // "exited without sending data" exactly like the pre-drain race.
-            // EAGAIN cannot legitimately occur once the sole writer is gone,
-            // but treat it as retry too (bounded) rather than truncating —
-            // truncation here is unrecoverable.
+            // pipe handle — skip the sync drain there and keep the spec's
+            // teardown (the libuv exit/read ordering is not the failing path).
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();
                 if fd != Fd::INVALID {
+                    let mut saw_eof = false;
                     let mut buf = [0u8; 4096];
                     let mut spins: u32 = 0;
                     loop {
                         match bun_sys::read(fd, &mut buf) {
-                            Ok(0) => break,
+                            Ok(0) => {
+                                saw_eof = true;
+                                break;
+                            }
                             Ok(n) => {
                                 self.ipc_data.extend_from_slice(&buf[..n]);
                                 spins = 0;
                             }
                             Err(e) => match e.get_errno() {
+                                // macOS `bun_sys::read` is single-shot
+                                // (`read$NOCANCEL`, sys.zig:2138); WaiterThread
+                                // + PTY matrix arms can land signals mid-drain.
                                 bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
-                                    // Writer is gone; this is a transient
-                                    // kernel-visibility window at most. Spin
-                                    // briefly, then give up to avoid a hard
-                                    // loop if something is genuinely wedged.
+                                    // Bounded spin only — if we don't converge
+                                    // to EOF here, fall through to the poll
+                                    // path below instead of busy-looping.
                                     spins += 1;
                                     if spins > 64 {
                                         break;
@@ -1516,7 +1528,21 @@ impl<'a> SecurityScanSubprocess<'a> {
                         }
                     }
                     self.has_received_ipc = !self.ipc_data.is_empty();
+                    if !saw_eof {
+                        // Drain bailed before EOF — payload may be incomplete
+                        // and the write-end close not yet visible. Leave the
+                        // reader's poll in place; `on_reader_done` fires once
+                        // the event loop sees readable+HUP and performs the
+                        // single `remaining_fds -= 1` for fd 3. (`is_done()`
+                        // stays false until then; `tick_once` has no pending
+                        // task so it ticks uws on the next round.)
+                        return;
+                    }
                 }
+                // fd == INVALID falls through to the spec teardown below:
+                // the reader was never started (or already torn down), so
+                // there is no poll to wait on and `on_reader_done` will not
+                // fire — decrement here or `sleep_until` hangs.
             }
             // Must use deinit() (close-without-reporting), NOT close(): close()
             // would re-enter on_reader_done and decrement remaining_fds a

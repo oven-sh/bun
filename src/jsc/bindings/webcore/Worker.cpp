@@ -414,6 +414,22 @@ bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
+    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
+    // a message post racing this transition either queues (drained below by
+    // fireEarlyMessages) or posts directly — never both, never neither.
+    //
+    // This MUST happen BEFORE the open event is posted to the parent: the
+    // parent's `online` handler may immediately call getHeapSnapshot() (or
+    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
+    // the state flip happens after the post, a fast parent thread can run the
+    // open task while m_state is still Pending and observe
+    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
+    // worker.getHeapSnapshot()` in worker_threads.test.ts.
+    {
+        Locker lock(m_pendingTasksMutex);
+        m_state.store(State::Running);
+    }
+
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
@@ -427,12 +443,6 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
-
-    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
-    // a message post racing this transition either queues (drained below by
-    // fireEarlyMessages) or posts directly — never both, never neither.
-    Locker lock(m_pendingTasksMutex);
-    m_state.store(State::Running);
 }
 
 // Kick off the first drain of messages that arrived before the worker was

@@ -1158,6 +1158,33 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
+                        // PORT NOTE (diverges from Zig spec — flake fix): when no
+                        // `outdir`/`outfile` was given, the Zig path stores only
+                        // the basename here and `doCompilation` later resolves it
+                        // against the process-wide `top_level_dir`. Under the JS
+                        // API that means every `Bun.build({compile: true,
+                        // entrypoints: [tmp + "/app.js"]})` from any test process
+                        // writes the *same* `<cwd>/app`, so concurrently-running
+                        // test files race on the executable (observed flake in
+                        // bun-build-compile-sourcemap.test.ts). Placing the
+                        // auto-derived executable next to its entry point — the
+                        // only path the caller actually supplied — keeps each
+                        // build's output inside its own (temp) directory and is
+                        // also the more intuitive default for a programmatic API.
+                        // Explicit `outfile`/`outdir` are unaffected.
+                        let entry_dir =
+                            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                entry_point,
+                            );
+                        if this.outdir.is_empty()
+                            && !entry_dir.is_empty()
+                            && bun_paths::is_absolute(entry_dir)
+                        {
+                            compile.outfile.append_slice_exact(entry_dir)?;
+                            compile
+                                .outfile
+                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
+                        }
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }

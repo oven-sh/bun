@@ -176,8 +176,12 @@ runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
 an `InstallProcessExitTarget::SecurityScan(NonNull<SecurityScanExit>)` and only
-marks typed install state; `bun_install` consumes any local IO action before it
-reports the scanner done. The Windows sync-spawn path is a local spawn-internal
+marks typed install state. Security scanner IPC reader callbacks also record
+into `SecurityScanExit` through `bun_io::BufferedReaderTarget::SecurityScanIpc`,
+so the reader side no longer asks `bun_io` to call back into
+`SecurityScanSubprocess*`; `bun_install` still owns the local drain/deinit and
+result parsing effects before it reports the scanner done. The Windows
+sync-spawn path is a local spawn-internal
 case: `SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
 `ProcessExitTarget::SyncWindows` arm inside `bun_spawn`. `bun run --filter` and
 `bun run --parallel` use runtime sidecar targets keyed by their existing handle
@@ -272,6 +276,7 @@ pub struct SecurityScanExit {
     pub pending_ipc_reader_close: bool,
     pub remaining_fds: i8,
     pub exit_status: Option<Status>,
+    pub ipc_data: Vec<u8>,
 }
 
 pub enum InstallProcessExitTarget {
@@ -290,8 +295,10 @@ Process-exit production wiring
   ├─> install/PackageManager/security_scanner.rs
   │     ├─> initializes SecurityScanExit with ipc_reader + json_writer count
   │     ├─> installs ProcessExitTarget::Install(SecurityScan(exit_state))
+  │     ├─> installs BufferedReaderTarget::SecurityScanIpc(exit_state, event_loop)
+  │     ├─> IPC reader chunks append into SecurityScanExit::ipc_data
   │     ├─> JSON writer close calls record_json_writer_closed()
-  │     ├─> IPC reader done/error calls record_ipc_done()
+  │     ├─> IPC reader done/error calls record_ipc_done() in bun_io
   │     ├─> bun_spawn process exit calls SecurityScanExit::on_process_exit()
   │     └─> is_done() drains/deinits a pending IPC reader close in bun_install before completion
   ├─> runtime/webview/ChromeProcess.rs and HostProcess.rs
@@ -435,6 +442,25 @@ BufferedReader target shape
         ├─> max-buffer behavior
         ├─> promise / callback delivery
         └─> package-manager or runtime-local cleanup
+```
+
+The SecurityScan reader is the first production reader-side conversion:
+
+```
+SecurityScan IPC reader target
+  ├─> bun_install_types::SecurityScanExit
+  │     ├─> owns the IPC byte buffer
+  │     ├─> records reader completion/error
+  │     └─> stays incomplete while bun_install still owes local drain/deinit work
+  ├─> bun_io::BufferedReaderTarget::SecurityScanIpc
+  │     ├─> stores NonNull<SecurityScanExit> + EventLoopHandle
+  │     ├─> provides the reader loop / event loop without naming SecurityScanSubprocess
+  │     ├─> appends chunks into the typed state
+  │     └─> marks IPC done on EOF/error
+  └─> bun_install::SecurityScanSubprocess
+        ├─> installs the target after ProcessIdentity exists
+        ├─> drains a pending process-exit-first close locally before completion
+        └─> parses SecurityScanExit::ipc_data() in handle_results()
 ```
 
 ## Safety Invariants

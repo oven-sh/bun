@@ -196,7 +196,6 @@ bun_dispatch::link_interface! {
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
-        SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
         fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
@@ -245,7 +244,7 @@ pub use source::Source;
 #[cfg(not(windows))]
 pub enum Source {}
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, BufferedReaderTarget, PosixFlags};
 /// Downstream alias (Zig: `bun.io.BufferedReader` is sometimes referenced as
 /// `PipeReader`).
 pub type PipeReader = BufferedReader;

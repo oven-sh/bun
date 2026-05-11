@@ -76,6 +76,7 @@ pub struct SecurityScanExit {
     pub pending_ipc_reader_close: bool,
     pub remaining_fds: i8,
     pub exit_status: Option<Status>,
+    pub ipc_data: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +101,7 @@ impl InstallProcessExitTarget {
 
 impl SecurityScanExit {
     #[inline]
-    pub const fn new(process: ProcessIdentity, remaining_fds: i8) -> Self {
+    pub fn new(process: ProcessIdentity, remaining_fds: i8) -> Self {
         Self {
             process,
             has_process_exited: false,
@@ -108,6 +109,7 @@ impl SecurityScanExit {
             pending_ipc_reader_close: false,
             remaining_fds,
             exit_status: None,
+            ipc_data: Vec::new(),
         }
     }
 
@@ -146,6 +148,21 @@ impl SecurityScanExit {
     pub fn record_ipc_reader_closed(&mut self) -> SecurityScanExitAction {
         self.pending_ipc_reader_close = false;
         self.done_action(false)
+    }
+
+    #[inline]
+    pub fn record_ipc_chunk(&mut self, chunk: &[u8]) {
+        self.ipc_data.extend_from_slice(chunk);
+    }
+
+    #[inline]
+    pub fn reserve_ipc_capacity(&mut self, additional: usize) {
+        self.ipc_data.reserve(additional);
+    }
+
+    #[inline]
+    pub fn ipc_data(&self) -> &[u8] {
+        self.ipc_data.as_slice()
     }
 
     #[inline]

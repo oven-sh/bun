@@ -7,6 +7,7 @@ use std::sync::Arc;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
+use bun_install_types::process_exit::SecurityScanExit;
 use bun_io_types::file_poll;
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
@@ -50,7 +51,93 @@ use bun_sys::ReturnCodeExt as _;
 // https://github.com/ziglang/zig/issues/18664
 pub struct BufferedReaderVTable {
     pub parent: *mut c_void,
-    pub kind: crate::BufferedReaderParentLinkKind,
+    pub kind: Option<crate::BufferedReaderParentLinkKind>,
+    pub target: Option<BufferedReaderTarget>,
+}
+
+#[derive(Clone, Copy)]
+pub enum BufferedReaderTarget {
+    SecurityScanIpc {
+        state: NonNull<SecurityScanExit>,
+        event_loop: EventLoopHandle,
+    },
+}
+
+impl BufferedReaderTarget {
+    #[inline]
+    fn event_loop(self) -> EventLoopHandle {
+        match self {
+            Self::SecurityScanIpc { event_loop, .. } => event_loop,
+        }
+    }
+
+    #[inline]
+    fn loop_ptr(self) -> *mut Loop {
+        match self {
+            Self::SecurityScanIpc { event_loop, .. } => {
+                #[cfg(not(windows))]
+                { event_loop.loop_().cast() }
+                #[cfg(windows)]
+                // SAFETY: Windows uws loop wrapper stores the live uv loop.
+                unsafe { (*event_loop.loop_()).uv_loop }
+            }
+        }
+    }
+
+    #[inline]
+    fn has_on_read_chunk(self) -> bool {
+        match self {
+            Self::SecurityScanIpc { .. } => true,
+        }
+    }
+
+    #[inline]
+    fn with_security_scan_state<R>(
+        state: NonNull<SecurityScanExit>,
+        f: impl FnOnce(&mut SecurityScanExit) -> R,
+    ) -> R {
+        let mut state = state;
+        // SAFETY: target was installed from the owning SecurityScanSubprocess
+        // state before the reader started, and that owner keeps the state live
+        // until the reader is done or deinitialized.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    fn on_read_chunk(self, chunk: &[u8], _has_more: ReadState) -> bool {
+        match self {
+            Self::SecurityScanIpc { state, .. } => {
+                Self::with_security_scan_state(state, |state| state.record_ipc_chunk(chunk));
+                true
+            }
+        }
+    }
+
+    #[inline]
+    fn on_reader_done(self) {
+        match self {
+            Self::SecurityScanIpc { state, .. } => {
+                Self::with_security_scan_state(state, |state| {
+                    let _ = state.record_ipc_done();
+                });
+            }
+        }
+    }
+
+    #[inline]
+    fn on_reader_error(self, err: sys::Error) {
+        match self {
+            Self::SecurityScanIpc { state, .. } => {
+                bun_core::Output::err_generic(
+                    "Failed to read security scanner IPC: {}",
+                    (err,),
+                );
+                Self::with_security_scan_state(state, |state| {
+                    let _ = state.record_ipc_done();
+                });
+            }
+        }
+    }
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
@@ -100,25 +187,55 @@ pub trait BufferedReaderParent {
 
 impl BufferedReaderVTable {
     pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
-        BufferedReaderVTable { parent: core::ptr::null_mut(), kind: T::KIND }
+        BufferedReaderVTable {
+            parent: core::ptr::null_mut(),
+            kind: Some(T::KIND),
+            target: None,
+        }
+    }
+
+    pub fn detached() -> BufferedReaderVTable {
+        BufferedReaderVTable {
+            parent: core::ptr::null_mut(),
+            kind: None,
+            target: None,
+        }
+    }
+
+    pub fn target(target: BufferedReaderTarget) -> BufferedReaderVTable {
+        BufferedReaderVTable {
+            parent: core::ptr::null_mut(),
+            kind: None,
+            target: Some(target),
+        }
     }
 
     #[inline]
     fn link(&self) -> crate::BufferedReaderParentLink {
+        let kind = self.kind.expect("BufferedReader has no parent link");
         // SAFETY: `parent` is a `*mut T` matching `kind` per `set_parent`'s
         // contract; raw-ptr passthrough, no `&mut T` materialized.
-        unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
+        unsafe { crate::BufferedReaderParentLink::new(kind, self.parent) }
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
+        if let Some(target) = self.target {
+            return target.event_loop();
+        }
         self.link().event_loop()
     }
 
     pub fn loop_(&self) -> *mut Loop {
+        if let Some(target) = self.target {
+            return target.loop_ptr();
+        }
         self.link().loop_ptr()
     }
 
     pub fn is_streaming_enabled(&self) -> bool {
+        if let Some(target) = self.target {
+            return target.has_on_read_chunk();
+        }
         self.link().has_on_read_chunk()
     }
 
@@ -127,14 +244,23 @@ impl BufferedReaderVTable {
     ///
     /// Returning false prevents the reader from reading more data.
     pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+        if let Some(target) = self.target {
+            return target.on_read_chunk(chunk, has_more);
+        }
         self.link().on_read_chunk(chunk, has_more)
     }
 
     pub fn on_reader_done(&self) {
+        if let Some(target) = self.target {
+            return target.on_reader_done();
+        }
         self.link().on_reader_done()
     }
 
     pub fn on_reader_error(&self, err: sys::Error) {
+        if let Some(target) = self.target {
+            return target.on_reader_error(err);
+        }
         self.link().on_reader_error(err)
     }
 
@@ -195,6 +321,24 @@ impl PosixBufferedReader {
         }
     }
 
+    pub fn init_detached() -> PosixBufferedReader {
+        PosixBufferedReader {
+            handle: PollOrFd::Closed,
+            _buffer: Vec::new(),
+            _offset: 0,
+            vtable: BufferedReaderVTable::detached(),
+            flags: PosixFlags::new(),
+            count: 0,
+            maxbuf: None,
+        }
+    }
+
+    pub fn init_target(target: BufferedReaderTarget) -> PosixBufferedReader {
+        let mut reader = Self::init_detached();
+        reader.set_target(target);
+        reader
+    }
+
     pub fn update_ref(&self, value: bool) {
         let Some(poll) = self.handle.get_poll() else {
             return;
@@ -215,12 +359,13 @@ impl PosixBufferedReader {
 
     pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
         let kind = self.vtable.kind;
+        let target = self.vtable.target;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             flags: other.flags,
-            vtable: BufferedReaderVTable { kind, parent },
+            vtable: BufferedReaderVTable { kind, parent, target },
             count: 0,
             maxbuf: None,
         };
@@ -239,7 +384,16 @@ impl PosixBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
+        self.vtable.target = None;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
+        self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
+    }
+
+    pub fn set_target(&mut self, target: BufferedReaderTarget) {
+        self.vtable.parent = core::ptr::null_mut();
+        self.vtable.kind = None;
+        self.vtable.target = Some(target);
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Owner::typed::<file_poll::BufferedReader>(owner.cast()));
     }
@@ -1096,6 +1250,24 @@ impl WindowsBufferedReader {
         }
     }
 
+    pub fn init_detached() -> WindowsBufferedReader {
+        WindowsBufferedReader {
+            source: None,
+            _offset: 0,
+            _buffer: Vec::new(),
+            flags: WindowsFlags::new(),
+            maxbuf: None,
+            parent: core::ptr::null_mut(),
+            vtable: BufferedReaderVTable::detached(),
+        }
+    }
+
+    pub fn init_target(target: BufferedReaderTarget) -> WindowsBufferedReader {
+        let mut reader = Self::init_detached();
+        reader.set_target(target);
+        reader
+    }
+
     #[inline]
     pub fn is_done(&self) -> bool {
         self.flags.intersects(
@@ -1140,10 +1312,24 @@ impl WindowsBufferedReader {
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.parent = parent;
         self.vtable.parent = parent;
+        self.vtable.target = None;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             // `Source::set_data` only writes the libuv `.data` field (raw ptr
             // store); take a raw self-pointer first to dodge the
             // immutable-then-mutable-borrow conflict.
+            let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
+            if let Some(source) = self.source.as_mut() {
+                source.set_data(self_ptr);
+            }
+        }
+    }
+
+    pub fn set_target(&mut self, target: BufferedReaderTarget) {
+        self.parent = core::ptr::null_mut();
+        self.vtable.parent = core::ptr::null_mut();
+        self.vtable.kind = None;
+        self.vtable.target = Some(target);
+        if !self.flags.contains(WindowsFlags::IS_DONE) {
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(source) = self.source.as_mut() {
                 source.set_data(self_ptr);

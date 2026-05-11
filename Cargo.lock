@@ -1123,6 +1123,7 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
+ "bun_install_types",
  "bun_io_types",
  "bun_opaque",
  "bun_paths",

@@ -4,12 +4,9 @@ use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bstr::BStr;
-
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
-// on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+// `bun_io::Loop` is the reader's nominal loop type: `us_loop_t` on POSIX,
+// `uv_loop_t` on Windows. `SecurityScanSubprocess::loop_` projects the
+// PackageManager event loop into that shape for the fd-4 writer setup.
 use bun_io::Loop as AsyncLoop;
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
@@ -20,8 +17,8 @@ use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
 use bun_install_types::process_exit::{InstallProcessExitTarget, SecurityScanExit};
-use bun_io::{BufferedReader, ReadState};
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::{BufferedReader, BufferedReaderTarget};
+use bun_io::pipe_reader::PosixFlags;
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
@@ -903,8 +900,7 @@ fn attempt_security_scan_with_retry(
         code: Box::<[u8]>::from(code.as_slice()),
         json_data: Box::<[u8]>::from(&*json_data),
         process: None,
-        ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
-        ipc_data: Vec::new(),
+        ipc_reader: BufferedReader::init_detached(),
         stderr_data: Vec::new(),
         exit_state: None,
         json_writer: None,
@@ -952,7 +948,6 @@ pub struct SecurityScanSubprocess<'a> {
     /// it in `Drop`.
     process: Option<*mut Process>,
     ipc_reader: BufferedReader,
-    ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
     exit_state: Option<SecurityScanExit>,
     /// Intrusive `RefPtr` (Zig `?*StaticPipeWriter`). `StaticPipeWriter<P>` is
@@ -1004,38 +999,9 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
     }
 }
 
-// Wire the buffered-reader vtable to this type so `BufferedReader::init::<Self>()`
-// resolves. The reader stores `*mut Self` (set via `set_parent`) and calls back
-// through these raw-pointer hooks.
-bun_io::buffered_reader_parent_link!(SecurityScan for SecurityScanSubprocess<'static>);
-impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SecurityScan;
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: `this` was registered via `set_parent(self)`; live for the
-        // duration of the read loop and not aliased by another `&mut`.
-        unsafe { (*this).on_read_chunk(chunk, has_more) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        unsafe { (*this).loop_() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see `loop_`.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
-    }
-}
-
 impl<'a> SecurityScanSubprocess<'a> {
     pub fn spawn(&mut self) -> Result<(), Error> {
-        self.ipc_data = Vec::new();
         self.stderr_data = Vec::new();
-        let parent: *mut Self = self;
-        self.ipc_reader.set_parent(parent.cast());
 
         // Two extra pipes for communicating with the scanner subprocess:
         // - fd 3: child writes JSON response, parent reads
@@ -1323,6 +1289,10 @@ impl<'a> SecurityScanSubprocess<'a> {
                 .exit_state
                 .as_mut()
                 .expect("security scan exit state was just initialized");
+            (*parent).ipc_reader.set_target(BufferedReaderTarget::SecurityScanIpc {
+                state: core::ptr::NonNull::from(&mut *exit_state),
+                event_loop: event_loop.as_event_loop_ctx(),
+            });
             (*process).set_exit_target(ProcessExitTarget::Install(
                 InstallProcessExitTarget::SecurityScan(core::ptr::NonNull::from(exit_state)),
             ));
@@ -1433,39 +1403,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         { unsafe { (*self.manager.event_loop.loop_()).uv_loop } }
     }
 
-    pub fn on_reader_done(&mut self) {
-        if let Some(exit_state) = self.exit_state.as_mut() {
-            let _ = exit_state.record_ipc_done();
-        }
-    }
-
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        Output::err_generic("Failed to read security scanner IPC: {}", (err,));
-        if let Some(exit_state) = self.exit_state.as_mut() {
-            let _ = exit_state.record_ipc_done();
-        }
-    }
-
     pub fn on_stderr_chunk(&mut self, chunk: &[u8]) {
         self.stderr_data.extend_from_slice(chunk);
-    }
-
-    pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        // PORT NOTE: Zig returns `unusedCapacitySlice()` (uninitialized spare
-        // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
-        // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
-        // into this region, never reads uninit bytes.
-        let cap = self.ipc_data.capacity();
-        let len = self.ipc_data.len();
-        if cap - len < 4096 {
-            self.ipc_data.reserve((cap + 4096).saturating_sub(len));
-        }
-        self.ipc_data.spare_capacity_mut()
-    }
-
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
-        self.ipc_data.extend_from_slice(chunk);
-        true
     }
 
     fn drain_pending_ipc_reader_close(&mut self) {
@@ -1509,7 +1448,9 @@ impl<'a> SecurityScanSubprocess<'a> {
                     match bun_sys::read(fd, &mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            self.ipc_data.extend_from_slice(&buf[..n]);
+                            if let Some(exit_state) = self.exit_state.as_mut() {
+                                exit_state.record_ipc_chunk(&buf[..n]);
+                            }
                             spins = 0;
                         }
                         Err(e) => match e.get_errno() {
@@ -1553,11 +1494,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     ) -> Result<ScanAttemptResult, Error> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
-        let Some(status) = self
-            .exit_state
-            .as_ref()
-            .and_then(|exit_state| exit_state.exit_status.clone())
-        else {
+        let Some(exit_state) = self.exit_state.as_ref() else {
             Output::err_generic(
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
                 (),
@@ -1565,7 +1502,17 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(err!("SecurityScannerProcessFailedWithoutExitStatus"));
         };
 
-        if self.ipc_data.is_empty() {
+        let Some(status) = exit_state.exit_status.clone() else {
+            Output::err_generic(
+                "Security scanner terminated without an exit status. This is a bug in Bun.",
+                (),
+            );
+            return Err(err!("SecurityScannerProcessFailedWithoutExitStatus"));
+        };
+
+        let ipc_data = exit_state.ipc_data();
+
+        if ipc_data.is_empty() {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
                     Output::err_generic(
@@ -1589,8 +1536,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(err!("NoSecurityScanData"));
         }
 
-        let json_source =
-            logger::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
+        let json_source = logger::Source::init_path_string("ipc-message.json", ipc_data);
 
         let mut temp_log = logger::Log::init();
         let bump = bun_alloc::Arena::new();
@@ -1602,8 +1548,8 @@ impl<'a> SecurityScanSubprocess<'a> {
                     "Security scanner sent invalid JSON: {}",
                     (e.name(),),
                 );
-                if self.ipc_data.len() < 1000 {
-                    Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
+                if ipc_data.len() < 1000 {
+                    Output::err_generic("Response: {}", (BStr::new(ipc_data),));
                 }
                 return Err(err!("InvalidIPCMessage"));
             }

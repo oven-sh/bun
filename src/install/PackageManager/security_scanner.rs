@@ -19,7 +19,7 @@ use crate::bun_json::{Expr, ExprAccessors as _, ExprData};
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
-use bun_install_types::process_exit::{SecurityScanExit, SecurityScanExitAction};
+use bun_install_types::process_exit::{InstallProcessExitTarget, SecurityScanExit};
 use bun_io::{BufferedReader, ReadState};
 use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
@@ -27,8 +27,8 @@ use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_logger as logger;
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
-use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
-use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
+use bun_spawn::{self as spawn, Exited, Process, ProcessExitTarget, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn_types::ProcessIdentity;
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -981,13 +981,6 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    SecurityScan for SecurityScanSubprocess => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, &*rusage),
-    }
-}
-
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
         if let Some(p) = self.process.take() {
@@ -1311,10 +1304,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         let process: *mut Process = spawned_owned.to_process(event_loop, false);
 
         // Derive the raw backref once and use it for all subsequent field
-        // access. `start()`/`watch_or_reap()` below may re-enter
-        // `on_close_io`/`on_process_exit` via this pointer while we are still
-        // inside this frame, so from here on we touch `*self` only through
-        // `parent` to keep a single provenance path (no overlapping `&mut`).
+        // access. `start()` below may re-enter `on_close_io` via this pointer
+        // while we are still inside this frame, so from here on we touch
+        // `*self` only through `parent` to keep a single provenance path (no
+        // overlapping `&mut`).
         let parent: *mut Self = self;
         // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
         // isDone() returns true, otherwise we risk freeing this struct while
@@ -1326,7 +1319,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
             (*parent).exit_state = Some(SecurityScanExit::new(process_identity, 2));
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
+            let exit_state = (*parent)
+                .exit_state
+                .as_mut()
+                .expect("security scan exit state was just initialized");
+            (*process).set_exit_target(ProcessExitTarget::Install(
+                InstallProcessExitTarget::SecurityScan(core::ptr::NonNull::from(exit_state)),
+            ));
             (*parent).process = Some(process);
         }
 
@@ -1387,8 +1386,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         writer_local.deref();
 
         // SAFETY: `process` is live (we hold a ref); reached via the local raw
-        // ptr per the single-provenance note. `watch_or_reap` may re-enter
-        // `on_process_exit` synchronously (already-exited child).
+        // ptr per the single-provenance note. `watch_or_reap` may mark the
+        // typed exit state synchronously (already-exited child).
         match unsafe { (*process).watch_or_reap() } {
             Err(_) => return Err(err!("ProcessWatchFailed")),
             Ok(_) => {}
@@ -1410,7 +1409,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
     }
 
-    pub fn is_done(&self) -> bool {
+    pub fn is_done(&mut self) -> bool {
+        self.drain_pending_ipc_reader_close();
         self.exit_state
             .as_ref()
             .is_some_and(SecurityScanExit::is_done)
@@ -1468,86 +1468,75 @@ impl<'a> SecurityScanSubprocess<'a> {
         true
     }
 
-    pub fn on_process_exit(&mut self, process: &mut Process, status: Status, rusage: &Rusage) {
-        let process_identity = ProcessIdentity::from_ref(process);
-        let Some(exit_state) = self.exit_state.as_mut() else {
-            Output::debug_warn(format_args!(
-                "<d>[SecurityScanSubprocess]<r> onProcessExit called before exit state was initialized"
-            ));
+    fn drain_pending_ipc_reader_close(&mut self) {
+        let should_close = self
+            .exit_state
+            .as_ref()
+            .is_some_and(|exit_state| exit_state.pending_ipc_reader_close);
+        if !should_close {
             return;
-        };
-        let action =
-            exit_state.on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
-        let close_ipc_reader = match action {
-            SecurityScanExitAction::WrongProcess => {
-                Output::debug_warn(format_args!(
-                    "<d>[SecurityScanSubprocess]<r> onProcessExit called with wrong process"
-                ));
-                false
-            }
-            SecurityScanExitAction::Pending { close_ipc_reader }
-            | SecurityScanExitAction::Ready { close_ipc_reader } => close_ipc_reader,
-        };
+        }
 
-        if close_ipc_reader {
-            // PORT NOTE (intentional divergence from Zig spec): process-exit
-            // and fd-3-readable race in the event loop. `ipc_reader.start()`
-            // only registers a poll on POSIX — it does not synchronously read.
-            // If `watch_or_reap()`/SIGCHLD delivers the exit before the poll
-            // fires (a fast-exiting scanner under CI load), tearing down the
-            // reader here drops the kernel-buffered IPC payload on the floor
-            // and `handle_results` reports "exited without sending data".
-            //
-            // The child has exited, so the write end of fd 3 is closed: a
-            // synchronous drain cannot block. Read until EOF before closing.
-            // Windows reads via libuv (async) and the fd here is a uv-owned
-            // pipe handle — skip the sync drain there.
-            //
-            // EINTR: on macOS `bun_sys::read` is single-shot (`read$NOCANCEL`,
-            // no retry — sys.zig:2138). The install path always uses the
-            // WaiterThread (PackageManager.rs:1929), and the TTY matrix arms
-            // spawn under a PTY, so signals can land mid-drain; retrying
-            // EINTR is mandatory or we bail with `ipc_data` empty and report
-            // "exited without sending data" exactly like the pre-drain race.
-            // EAGAIN cannot legitimately occur once the sole writer is gone,
-            // but treat it as retry too (bounded) rather than truncating —
-            // truncation here is unrecoverable.
-            #[cfg(not(windows))]
-            {
-                let fd = self.ipc_reader.get_fd();
-                if fd != Fd::INVALID {
-                    let mut buf = [0u8; 4096];
-                    let mut spins: u32 = 0;
-                    loop {
-                        match bun_sys::read(fd, &mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                self.ipc_data.extend_from_slice(&buf[..n]);
-                                spins = 0;
-                            }
-                            Err(e) => match e.get_errno() {
-                                bun_sys::E::EINTR => continue,
-                                bun_sys::E::EAGAIN => {
-                                    // Writer is gone; this is a transient
-                                    // kernel-visibility window at most. Spin
-                                    // briefly, then give up to avoid a hard
-                                    // loop if something is genuinely wedged.
-                                    spins += 1;
-                                    if spins > 64 {
-                                        break;
-                                    }
-                                    continue;
-                                }
-                                _ => break,
-                            },
+        // PORT NOTE (intentional divergence from Zig spec): process-exit
+        // and fd-3-readable race in the event loop. `ipc_reader.start()`
+        // only registers a poll on POSIX — it does not synchronously read.
+        // If `watch_or_reap()`/SIGCHLD delivers the exit before the poll
+        // fires (a fast-exiting scanner under CI load), tearing down the
+        // reader here drops the kernel-buffered IPC payload on the floor
+        // and `handle_results` reports "exited without sending data".
+        //
+        // The child has exited, so the write end of fd 3 is closed: a
+        // synchronous drain cannot block. Read until EOF before closing.
+        // Windows reads via libuv (async) and the fd here is a uv-owned
+        // pipe handle — skip the sync drain there.
+        //
+        // EINTR: on macOS `bun_sys::read` is single-shot (`read$NOCANCEL`,
+        // no retry — sys.zig:2138). The install path always uses the
+        // WaiterThread (PackageManager.rs:1929), and the TTY matrix arms
+        // spawn under a PTY, so signals can land mid-drain; retrying
+        // EINTR is mandatory or we bail with `ipc_data` empty and report
+        // "exited without sending data" exactly like the pre-drain race.
+        // EAGAIN cannot legitimately occur once the sole writer is gone,
+        // but treat it as retry too (bounded) rather than truncating —
+        // truncation here is unrecoverable.
+        #[cfg(not(windows))]
+        {
+            let fd = self.ipc_reader.get_fd();
+            if fd != Fd::INVALID {
+                let mut buf = [0u8; 4096];
+                let mut spins: u32 = 0;
+                loop {
+                    match bun_sys::read(fd, &mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            self.ipc_data.extend_from_slice(&buf[..n]);
+                            spins = 0;
                         }
+                        Err(e) => match e.get_errno() {
+                            bun_sys::E::EINTR => continue,
+                            bun_sys::E::EAGAIN => {
+                                // Writer is gone; this is a transient
+                                // kernel-visibility window at most. Spin
+                                // briefly, then give up to avoid a hard
+                                // loop if something is genuinely wedged.
+                                spins += 1;
+                                if spins > 64 {
+                                    break;
+                                }
+                                continue;
+                            }
+                            _ => break,
+                        },
                     }
                 }
             }
-            // Must use deinit() (close-without-reporting), NOT close(): close()
-            // would re-enter on_reader_done and decrement the type-owned exit
-            // state a second time, hanging sleep_until.
-            self.ipc_reader.deinit();
+        }
+        // Must use deinit() (close-without-reporting), NOT close(): close()
+        // would re-enter on_reader_done and decrement the type-owned exit
+        // state a second time, hanging sleep_until.
+        self.ipc_reader.deinit();
+        if let Some(exit_state) = self.exit_state.as_mut() {
+            exit_state.record_ipc_reader_closed();
         }
     }
 

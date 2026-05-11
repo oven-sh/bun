@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,8 +73,29 @@ pub struct SecurityScanExit {
     pub process: ProcessIdentity,
     pub has_process_exited: bool,
     pub has_received_ipc: bool,
+    pub pending_ipc_reader_close: bool,
     pub remaining_fds: i8,
     pub exit_status: Option<Status>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallProcessExitTarget {
+    SecurityScan(NonNull<SecurityScanExit>),
+}
+
+impl InstallProcessExitTarget {
+    /// # Safety
+    /// The target must point at the live exit state for the process being
+    /// reported. Its owner must outlive the process exit callback.
+    #[inline]
+    pub unsafe fn on_process_exit(mut self, ctx: &ProcessExitContext<'_>) {
+        match &mut self {
+            Self::SecurityScan(state) => {
+                // SAFETY: upheld by the caller's target lifetime contract.
+                unsafe { state.as_mut() }.on_process_exit(ctx);
+            }
+        }
+    }
 }
 
 impl SecurityScanExit {
@@ -82,6 +105,7 @@ impl SecurityScanExit {
             process,
             has_process_exited: false,
             has_received_ipc: false,
+            pending_ipc_reader_close: false,
             remaining_fds,
             exit_status: None,
         }
@@ -100,6 +124,7 @@ impl SecurityScanExit {
             false
         } else {
             self.has_received_ipc = true;
+            self.pending_ipc_reader_close = true;
             self.decrement_fd();
             true
         };
@@ -113,6 +138,13 @@ impl SecurityScanExit {
             self.has_received_ipc = true;
             self.decrement_fd();
         }
+        self.pending_ipc_reader_close = false;
+        self.done_action(false)
+    }
+
+    #[inline]
+    pub fn record_ipc_reader_closed(&mut self) -> SecurityScanExitAction {
+        self.pending_ipc_reader_close = false;
         self.done_action(false)
     }
 
@@ -124,12 +156,12 @@ impl SecurityScanExit {
 
     #[inline]
     pub const fn is_done(&self) -> bool {
-        self.has_process_exited && self.remaining_fds == 0
+        self.has_process_exited && self.remaining_fds == 0 && !self.pending_ipc_reader_close
     }
 
     #[inline]
     fn done_action(&self, close_ipc_reader: bool) -> SecurityScanExitAction {
-        if self.is_done() {
+        if self.has_process_exited && self.remaining_fds == 0 {
             SecurityScanExitAction::Ready { close_ipc_reader }
         } else {
             SecurityScanExitAction::Pending { close_ipc_reader }
@@ -201,11 +233,21 @@ mod tests {
         );
         assert_eq!(exit.remaining_fds, 1);
         assert!(exit.has_received_ipc);
+        assert!(exit.pending_ipc_reader_close);
+        assert!(!exit.is_done());
         assert_eq!(
             exit.record_json_writer_closed(),
             SecurityScanExitAction::Ready {
                 close_ipc_reader: false
             }
         );
+        assert!(!exit.is_done());
+        assert_eq!(
+            exit.record_ipc_reader_closed(),
+            SecurityScanExitAction::Ready {
+                close_ipc_reader: false
+            }
+        );
+        assert!(exit.is_done());
     }
 }

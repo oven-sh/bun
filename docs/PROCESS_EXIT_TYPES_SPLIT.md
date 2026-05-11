@@ -162,12 +162,15 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime cron readiness: value-only state lives below, effect application stays
 above.
 
-This branch proves the runtime sidecar path first with WebView process exits:
-`bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
-`RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the
-Chrome/Host effects. The Chrome/Host owners stay in `bun_runtime`; `bun_spawn`
-does not store their owner pointers and does not call their methods through the
-erased `ProcessExit` table.
+This branch proves two production shapes. WebView process exits use the runtime
+sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
+`RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
+effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
+an `InstallProcessExitTarget::SecurityScan(NonNull<SecurityScanExit>)` and only
+marks typed install state; `bun_install` consumes any local IO action before it
+reports the scanner done. In both cases the heap owners stay in their owning
+crates, and `bun_spawn` does not call them through the erased `ProcessExit`
+table.
 
 The Windows sync-spawn path is the other intentionally local case:
 `SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
@@ -233,8 +236,13 @@ pub struct SecurityScanExit {
     pub process: ProcessIdentity,
     pub has_process_exited: bool,
     pub has_received_ipc: bool,
+    pub pending_ipc_reader_close: bool,
     pub remaining_fds: i8,
     pub exit_status: Option<Status>,
+}
+
+pub enum InstallProcessExitTarget {
+    SecurityScan(NonNull<SecurityScanExit>),
 }
 
 pub enum SecurityScanExitAction {
@@ -254,10 +262,11 @@ Process-exit production wiring
   │     └─> MaybeFinished applies handle_exit() in bun_install
   ├─> install/PackageManager/security_scanner.rs
   │     ├─> initializes SecurityScanExit with ipc_reader + json_writer count
+  │     ├─> installs ProcessExitTarget::Install(SecurityScan(exit_state))
   │     ├─> JSON writer close calls record_json_writer_closed()
   │     ├─> IPC reader done/error calls record_ipc_done()
-  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
-  │     └─> close_ipc_reader action drains/deinits the reader in bun_install
+  │     ├─> bun_spawn process exit calls SecurityScanExit::on_process_exit()
+  │     └─> is_done() drains/deinits a pending IPC reader close in bun_install before completion
   └─> runtime/api/cron.rs
         ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
         ├─> initializes ProcessExitReadiness once spawned Process exists

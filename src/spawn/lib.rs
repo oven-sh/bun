@@ -79,6 +79,7 @@ pub use process::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProcessExitTarget {
+    Install(bun_install_types::process_exit::InstallProcessExitTarget),
     Runtime(bun_runtime_types::process_exit::RuntimeProcessExitTarget),
     #[cfg(windows)]
     SyncWindows(*mut process::sync::SyncWindowsProcess),
@@ -98,6 +99,19 @@ impl ProcessExitTarget {
         rusage: &Rusage,
     ) -> Option<ProcessExitDelivery> {
         match self {
+            Self::Install(target) => {
+                let process_identity = bun_spawn_types::ProcessIdentity::from_ptr(process)
+                    .expect("Process::on_exit passes a live Process pointer");
+                let ctx = bun_spawn_types::ProcessExitContext::new(
+                    process_identity,
+                    status,
+                    rusage,
+                );
+                // SAFETY: the target was installed from the owning process state
+                // and is valid until that owner drops its Process ref.
+                unsafe { target.on_process_exit(&ctx) };
+                None
+            }
             Self::Runtime(target) => {
                 let process_identity = bun_spawn_types::ProcessIdentity::from_ptr(process)
                     .expect("Process::on_exit passes a live Process pointer");
@@ -124,7 +138,6 @@ bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
         LifecycleScript,
-        SecurityScan,
         Shell,
         FilterRunHandle,
         MultiRunHandle,

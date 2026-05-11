@@ -5910,25 +5910,25 @@ impl H2FrameParser {
         // defer: pool.put(this) / bun.destroy(this)
         // Zig has no destructors, so `pool.put` just reclaims storage. Rust still
         // owes Drop on the remaining fields (`handlers`, `auto_flusher`, the now-
-        // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …); run them
-        // in-place so the slot returned to the pool is truly uninitialised.
+        // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …);
+        // `HiveArrayFallback::put` runs `drop_in_place` before recycling the slot,
+        // and `heap::destroy` drops via `Box<T>`, so both branches drop exactly once.
         let this = std::ptr::from_mut::<Self>(self);
-        // SAFETY: `this` is a live, fully-initialised allocation we exclusively own
-        // (refcount hit zero / errdefer path). After `drop_in_place` the storage is
-        // uninitialised and must not be accessed again — the branches below only
-        // reclaim the raw bytes.
-        unsafe { core::ptr::drop_in_place(this) };
         if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
-                pool.as_mut()
-                    .expect("H2FrameParser deinit before constructor initialised pool")
-                    .put(this)
+                // SAFETY: `this` is a live, fully-initialised allocation we exclusively
+                // own (refcount hit zero / errdefer path); `put` drops it in place and
+                // recycles the storage.
+                unsafe {
+                    pool.as_mut()
+                        .expect("H2FrameParser deinit before constructor initialised pool")
+                        .put(this)
+                }
             });
         } else {
-            // SAFETY: `this` was `heap::alloc`'d in `constructor`; the value has
-            // already been dropped in place so reclaim the allocation as a
-            // `MaybeUninit` box (no double drop).
-            unsafe { bun_core::heap::destroy(this.cast::<core::mem::MaybeUninit<Self>>()) };
+            // SAFETY: `this` was `heap::alloc`'d in `constructor`; reconstruct the
+            // `Box<Self>` so Drop runs and the allocation is freed.
+            unsafe { bun_core::heap::destroy(this) };
         }
     }
 

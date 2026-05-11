@@ -69,9 +69,9 @@ impl FileJsc for File {
                 // guarantees liveness for the process lifetime.
                 let store = unsafe { &mut *store_ptr };
                 store.mime_type = mime;
-                b.content_type = std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref());
-                b.content_type_was_set = true;
-                b.content_type_allocated = false;
+                b.content_type.set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
+                b.content_type_was_set.set(true);
+                b.content_type_allocated.set(false);
             }
 
             // The real name goes here:
@@ -83,9 +83,9 @@ impl FileJsc for File {
             // The pretty name goes here:
             let prefix = StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
             if self.name.starts_with(prefix) {
-                b.name = bstring::String::clone_utf8(&self.name[prefix.len()..]);
+                b.name.set(bstring::String::clone_utf8(&self.name[prefix.len()..]));
             } else if !self.name.is_empty() {
-                b.name = bstring::String::clone_utf8(self.name);
+                b.name.set(bstring::String::clone_utf8(self.name));
             }
 
             // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.

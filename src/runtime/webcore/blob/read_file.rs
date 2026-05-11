@@ -51,7 +51,7 @@ pub trait ReadFileToJs {
     /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
     /// otherwise a borrow valid for the call.
     fn call(
-        b: &mut Blob,
+        b: &Blob,
         g: &JSGlobalObject,
         by: *mut [u8],
         lifetime: Lifetime,
@@ -98,8 +98,8 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;
-                if blob.size > 0 {
-                    blob.size = (bytes.len() as SizeType).min(blob.size);
+                if blob.size.get() > 0 {
+                    blob.size.set((bytes.len() as SizeType).min(blob.size.get()));
                 }
                 // Zig defined a local `WrappedFn` struct to adapt the comptime
                 // `Function` into the `toJSHostCall` shape; Rust closures + the

@@ -75,7 +75,7 @@ impl FileRoute {
     }
 
     pub fn memory_cost(&self) -> usize {
-        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
+        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size.get()
     }
 
     pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
@@ -139,7 +139,7 @@ impl FileRoute {
                     body_value,
                     BodyValue::Blob(b)
                         if matches!(
-                            b.store.as_ref().unwrap().data,
+                            b.store.get().as_ref().unwrap().data,
                             StoreData::File(ref f)
                                 if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
                         )
@@ -152,7 +152,7 @@ impl FileRoute {
 
                 let mut blob = body_value.use_();
 
-                blob.global_this = std::ptr::from_ref(global);
+                blob.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(response.get_init_headers(), &blob);
@@ -174,7 +174,7 @@ impl FileRoute {
         if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {
                 let mut b = blob.dupe();
-                b.global_this = std::ptr::from_ref(global);
+                b.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
                 let headers = headers_from(None, &b);
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
@@ -301,7 +301,7 @@ impl FileRoute {
         // doesn't span the scopeguard creation (the guard's closure may free
         // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
         // slice — profile in Phase B.
-        let path_buf: Vec<u8> = match this.blob.store.as_ref().unwrap().get_path() {
+        let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
                 req.set_yield(true);
@@ -381,7 +381,7 @@ impl FileRoute {
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
-            let _size: u64 = stat_size.min(this.blob.size);
+            let _size: u64 = stat_size.min(this.blob.size.get());
 
             let mode = u32::try_from(stat.st_mode).expect("int cast");
             if bun_sys::S::ISDIR(mode) {
@@ -488,7 +488,7 @@ impl FileRoute {
                 };
                 resp.write_header(b"content-range", &crbuf[..written]);
                 resp.write_header(b"accept-ranges", b"bytes");
-                (this.blob.offset + start, Some(end - start + 1))
+                (this.blob.offset.get() + start, Some(end - start + 1))
             }
             RangeRequest::Result::Unsatisfiable => {
                 let mut crbuf = [0u8; 64];
@@ -504,8 +504,8 @@ impl FileRoute {
                 return;
             }
             RangeRequest::Result::None => (
-                if file_type == FileType::File { this.blob.offset } else { 0 },
-                if file_type == FileType::File && this.blob.size > 0 {
+                if file_type == FileType::File { this.blob.offset.get() } else { 0 },
+                if file_type == FileType::File && this.blob.size.get() > 0 {
                     Some(size)
                 } else {
                     None

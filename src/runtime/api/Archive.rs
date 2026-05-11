@@ -248,7 +248,7 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob_ptr) = blob_from_js(data_arg) {
             // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
-            if let Some(store) = unsafe { (*blob_ptr).store.as_ref() } {
+            if let Some(store) = unsafe { (*blob_ptr).store.get().as_ref() } {
                 // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive { store: store.clone(), compress }));
             }
@@ -471,7 +471,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     // For Blobs, use store reference with options compression
     if let Some(blob_ptr) = blob_from_js(data_arg) {
         // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
-        if let Some(store) = unsafe { (*blob_ptr).store.as_ref() } {
+        if let Some(store) = unsafe { (*blob_ptr).store.get().as_ref() } {
             return start_write_task(global, WriteData::Store(store.clone()), path_slice.slice(), options_compress);
         }
     }
@@ -1217,11 +1217,11 @@ impl TaskContext for FilesContext {
                     let blob_ptr = Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
-                    blob.is_jsdom_file = true;
-                    blob.name = bun_str::String::clone_utf8(&entry.path);
-                    blob.last_modified = (entry.mtime * 1000) as f64;
+                    blob.is_jsdom_file.set(true);
+                    blob.name.set(bun_str::String::clone_utf8(&entry.path));
+                    blob.last_modified.set((entry.mtime * 1000) as f64);
 
-                    let name_js = blob.name.to_js(global)?;
+                    let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.to_js(global);
                     // SAFETY: map_ptr came from JSMap::from_js on a live value.
                     unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;

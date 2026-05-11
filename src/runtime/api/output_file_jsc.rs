@@ -35,18 +35,18 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
 /// stays valid without a separate allocation.
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
-    if let Some(store) = blob.store.as_ref() {
+    if let Some(store) = blob.store.get().as_ref() {
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
         let store_ptr = store.as_ptr();
         unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type = std::ptr::from_ref::<[u8]>(unsafe { (*store_ptr).mime_type.value.as_ref() });
+        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe { (*store_ptr).mime_type.value.as_ref() }));
     } else {
         // No store (empty bytes). Zig still assigns `blob.content_type` from the
         // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
         let owned: Box<[u8]> = Box::from(mime.value.as_ref());
-        blob.content_type = bun_core::heap::into_raw(owned);
-        blob.content_type_allocated = true;
+        blob.content_type.set(bun_core::heap::into_raw(owned));
+        blob.content_type_allocated.set(true);
     }
 }
 
@@ -69,7 +69,7 @@ impl SavedFile {
         // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
         // `init_with_store` already populated it from the store's `File`
         // mime (which is the same value), so the overwrite is a no-op.
-        blob.size = byte_size as BlobSizeType;
+        blob.size.set(byte_size as BlobSizeType);
         let ptr = Blob::new(blob);
         // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
         // `Blob::new`; ownership transfers to the JS wrapper.
@@ -180,7 +180,7 @@ impl OutputFileJsc for OutputFile {
                 let bytes_len = bytes.len();
                 let mut blob = Blob::init(bytes.into_vec(), global_object);
                 set_blob_mime(&mut blob, mime);
-                blob.size = bytes_len as BlobSizeType;
+                blob.size.set(bytes_len as BlobSizeType);
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
@@ -247,7 +247,7 @@ impl OutputFileJsc for OutputFile {
                 let bytes_len = bytes.len();
                 let mut blob = Blob::init(bytes.into_vec(), global_this);
                 set_blob_mime(&mut blob, mime);
-                blob.size = bytes_len as BlobSizeType;
+                blob.size.set(bytes_len as BlobSizeType);
                 Ok(blob)
             }
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {

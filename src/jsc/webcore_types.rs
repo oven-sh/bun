@@ -18,12 +18,15 @@
 //! `Self`), and those accessors call `BlobExt` methods. With no lower-tier
 //! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_http_types::MimeType::MimeType;
 use bun_string::{strings::AsciiStatus, PathString};
+
+use crate::JsCell;
 
 use crate::node_path::{PathLike, PathOrFileDescriptor};
 use crate::{JSGlobalObject, JSValue, JsClass};
@@ -47,24 +50,30 @@ pub enum ClosingState {
 
 /// `webcore.Blob` (src/runtime/webcore/Blob.zig:7-52). The `m_ctx` payload of
 /// the codegen'd `JSBlob` wrapper.
+///
+/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
+/// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
+/// mutated by host-fns are therefore wrapped in `Cell` (Copy scalars) or
+/// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both
+/// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 pub struct Blob {
-    pub reported_estimated_size: usize,
-    pub size: SizeType,
-    pub offset: SizeType,
+    pub reported_estimated_size: Cell<usize>,
+    pub size: Cell<SizeType>,
+    pub offset: Cell<SizeType>,
     /// Intrusively-refcounted backing store. `StoreRef::clone`/`drop` map
     /// directly to Zig's `store.ref()`/`store.deref()`.
-    pub store: Option<StoreRef>,
+    pub store: JsCell<Option<StoreRef>>,
     /// Either a `&'static [u8]` (mime constant / literal) or a heap allocation
     /// owned by this Blob, discriminated by `content_type_allocated`.
     // TODO(port): model as Cow<'static, [u8]> once callers are audited.
-    pub content_type: *const [u8],
-    pub content_type_allocated: bool,
-    pub content_type_was_set: bool,
+    pub content_type: Cell<*const [u8]>,
+    pub content_type_allocated: Cell<bool>,
+    pub content_type_was_set: Cell<bool>,
     /// Cached encoding probe of `shared_view()`.
-    pub charset: AsciiStatus,
+    pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
-    pub is_jsdom_file: bool,
+    pub is_jsdom_file: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while
     /// the JS cell is the sole owner (Blob.zig:44).
@@ -72,10 +81,10 @@ pub struct Blob {
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals (the Zig spec spells out per-field init at every call site).
     pub ref_count: bun_ptr::RawRefCount,
-    pub global_this: *const JSGlobalObject,
-    pub last_modified: f64,
+    pub global_this: Cell<*const JSGlobalObject>,
+    pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_string::String,
+    pub name: Cell<bun_string::String>,
 }
 
 // SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
@@ -89,19 +98,19 @@ unsafe impl Sync for Blob {}
 impl Default for Blob {
     fn default() -> Self {
         Self {
-            reported_estimated_size: 0,
-            size: 0,
-            offset: 0,
-            store: None,
-            content_type: std::ptr::from_ref::<[u8]>(b"" as &'static [u8]),
-            content_type_allocated: false,
-            content_type_was_set: false,
-            charset: AsciiStatus::Unknown,
-            is_jsdom_file: false,
+            reported_estimated_size: Cell::new(0),
+            size: Cell::new(0),
+            offset: Cell::new(0),
+            store: JsCell::new(None),
+            content_type: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &'static [u8])),
+            content_type_allocated: Cell::new(false),
+            content_type_was_set: Cell::new(false),
+            charset: Cell::new(AsciiStatus::Unknown),
+            is_jsdom_file: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0),
-            global_this: core::ptr::null(),
-            last_modified: 0.0,
-            name: bun_string::String::dead(),
+            global_this: Cell::new(core::ptr::null()),
+            last_modified: Cell::new(0.0),
+            name: Cell::new(bun_string::String::dead()),
         }
     }
 }
@@ -169,7 +178,22 @@ impl Blob {
         // SAFETY: `content_type` is always a valid (possibly empty) slice
         // pointer owned either by `'static` data or by this `Blob` (when
         // `content_type_allocated`).
-        unsafe { &*self.content_type }
+        unsafe { &*self.content_type.get() }
+    }
+
+    /// Borrowed accessor for the `JsCell`-wrapped store. R-2: the field is
+    /// interior-mutable so host-fns can take `&self`; this projects back to the
+    /// `Option<&StoreRef>` shape every caller used pre-migration.
+    #[inline]
+    pub fn store(&self) -> Option<&StoreRef> {
+        self.store.get().as_ref()
+    }
+
+    /// Move the store ref out (Zig: `this.store = null` without `.deref()`;
+    /// the caller adopts the existing +1). `None` if already detached.
+    #[inline]
+    pub fn take_store(&self) -> Option<StoreRef> {
+        self.store.replace(None)
     }
 
     /// Safe accessor for `global_this`. `None` only for default-constructed
@@ -180,21 +204,21 @@ impl Blob {
         // SAFETY: when non-null, `global_this` was stored from a live
         // `&JSGlobalObject` whose VM outlives this `Blob` (the JS heap that
         // owns the `Blob` is itself owned by that global).
-        unsafe { self.global_this.as_ref() }
+        unsafe { self.global_this.get().as_ref() }
     }
 
     /// Free a heap-owned `content_type` (if any) and reset to the empty
     /// static slice. Centralizes the `heap::take` so callers replacing
     /// `content_type` don't each carry their own `unsafe` block.
     #[inline]
-    pub fn free_content_type(&mut self) {
-        if self.content_type_allocated {
+    pub fn free_content_type(&self) {
+        if self.content_type_allocated.get() {
             // SAFETY: `content_type_allocated` implies `content_type` was set
             // via `heap::alloc(_.into_boxed_slice())` and is solely owned
             // by this `Blob`.
-            unsafe { drop(bun_core::heap::take(self.content_type.cast_mut())) };
-            self.content_type = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
-            self.content_type_allocated = false;
+            unsafe { drop(bun_core::heap::take(self.content_type.get().cast_mut())) };
+            self.content_type.set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+            self.content_type_allocated.set(false);
         }
     }
 
@@ -213,10 +237,10 @@ impl Blob {
             std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
         };
         Blob {
-            size,
-            store: Some(store),
-            content_type,
-            global_this,
+            size: Cell::new(size),
+            store: JsCell::new(Some(store)),
+            content_type: Cell::new(content_type),
+            global_this: Cell::new(global_this),
             ..Default::default()
         }
     }
@@ -226,39 +250,45 @@ impl Blob {
     pub fn init(bytes: Vec<u8>, global_this: &JSGlobalObject) -> Blob {
         let size = bytes.len() as SizeType;
         let store = if !bytes.is_empty() { Some(Store::init(bytes)) } else { None };
-        Blob { size, store, global_this, ..Default::default() }
+        Blob {
+            size: Cell::new(size),
+            store: JsCell::new(store),
+            global_this: Cell::new(global_this),
+            ..Default::default()
+        }
     }
 
     /// `Blob.initEmpty(globalThis)` (Blob.zig:3660).
     #[inline]
     pub fn init_empty(global_this: &JSGlobalObject) -> Blob {
-        Blob { global_this, ..Default::default() }
+        Blob { global_this: Cell::new(global_this), ..Default::default() }
     }
 
     /// `Blob.sharedView()` (Blob.zig:3737) — borrowed view of the in-memory
     /// bytes (`offset..offset+size` of the backing store). Empty for
     /// file-/S3-backed or zero-length blobs.
     pub fn shared_view(&self) -> &[u8] {
-        if self.size == 0 || self.store.is_none() {
+        let Some(store) = self.store() else { return b"" };
+        if self.size.get() == 0 {
             return b"";
         }
-        let mut slice = self.store.as_ref().unwrap().shared_view();
+        let mut slice = store.shared_view();
         if slice.is_empty() {
             return b"";
         }
         // Defensive: `offset`/`size` may originate from untrusted
         // structured-clone data; never index past the store's length.
-        let off = (self.offset as usize).min(slice.len());
+        let off = (self.offset.get() as usize).min(slice.len());
         slice = &slice[off..];
-        &slice[..slice.len().min(self.size as usize)]
+        &slice[..slice.len().min(self.size.get() as usize)]
     }
 
     /// `Blob.detach()` (Blob.zig:3675) — release the store ref without
     /// dropping `self`.
     #[inline]
-    pub fn detach(&mut self) {
+    pub fn detach(&self) {
         // `StoreRef::drop` calls `Store::deref()`.
-        self.store = None;
+        self.store.set(None);
     }
 
     /// `Blob.dupe()` (Blob.zig:3684) — new view onto the same store, +1 ref.
@@ -283,19 +313,19 @@ impl Blob {
     #[inline]
     pub fn borrowed_view(&self) -> Blob {
         Blob {
-            reported_estimated_size: self.reported_estimated_size,
-            size: self.size,
-            offset: self.offset,
-            store: self.store.clone(), // +1 ↔ StoreRef::drop on scope exit
-            content_type: self.content_type, // borrowed; `self` owns it
-            content_type_allocated: self.content_type_allocated,
-            content_type_was_set: self.content_type_was_set,
-            charset: self.charset,
-            is_jsdom_file: self.is_jsdom_file,
+            reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
+            size: Cell::new(self.size.get()),
+            offset: Cell::new(self.offset.get()),
+            store: JsCell::new(self.store.get().clone()), // +1 ↔ StoreRef::drop on scope exit
+            content_type: Cell::new(self.content_type.get()), // borrowed; `self` owns it
+            content_type_allocated: Cell::new(self.content_type_allocated.get()),
+            content_type_was_set: Cell::new(self.content_type_was_set.get()),
+            charset: Cell::new(self.charset.get()),
+            is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-            global_this: self.global_this,
-            last_modified: self.last_modified,
-            name: self.name, // borrowed; no `dupe_ref()`
+            global_this: Cell::new(self.global_this.get()),
+            last_modified: Cell::new(self.last_modified.get()),
+            name: Cell::new(self.name.get()), // borrowed; no `dupe_ref()`
         }
     }
 
@@ -307,27 +337,27 @@ impl Blob {
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
         // Zig: `if (this.store != null) this.store.?.ref()` then bitwise-copy.
         // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
-        let mut duped = Blob {
-            reported_estimated_size: self.reported_estimated_size,
-            size: self.size,
-            offset: self.offset,
-            store: self.store.clone(),
-            content_type: self.content_type,
-            content_type_allocated: self.content_type_allocated,
-            content_type_was_set: self.content_type_was_set,
-            charset: self.charset,
-            is_jsdom_file: self.is_jsdom_file,
+        let duped = Blob {
+            reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
+            size: Cell::new(self.size.get()),
+            offset: Cell::new(self.offset.get()),
+            store: JsCell::new(self.store.get().clone()),
+            content_type: Cell::new(self.content_type.get()),
+            content_type_allocated: Cell::new(self.content_type_allocated.get()),
+            content_type_was_set: Cell::new(self.content_type_was_set.get()),
+            charset: Cell::new(self.charset.get()),
+            is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-            global_this: self.global_this,
-            last_modified: self.last_modified,
-            name: self.name.dupe_ref(),
+            global_this: Cell::new(self.global_this.get()),
+            last_modified: Cell::new(self.last_modified.get()),
+            name: Cell::new(self.name.get().dupe_ref()),
         };
         // If the source's content_type is heap-allocated, the bitwise copy
         // above aliases the same allocation. Take our own copy so freeing one
         // side doesn't dangle the other (Blob.zig:3700).
-        if duped.content_type_allocated {
+        if duped.content_type_allocated.get() {
             let copy = self.content_type_slice().to_vec().into_boxed_slice();
-            duped.content_type = bun_core::heap::into_raw(copy);
+            duped.content_type.set(bun_core::heap::into_raw(copy));
         }
         duped
     }
@@ -345,10 +375,9 @@ impl Blob {
     /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set
+        self.content_type_was_set.get()
             || self
-                .store
-                .as_ref()
+                .store()
                 .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
                 .unwrap_or(false)
     }
@@ -360,7 +389,7 @@ impl Blob {
         if !ct.is_empty() {
             return Some(ct);
         }
-        match &self.store.as_ref()?.data {
+        match &self.store()?.data {
             store::Data::File(file) => Some(&file.mime_type.value),
             store::Data::S3(s3) => Some(&s3.mime_type.value),
             store::Data::Bytes(_) => None,
@@ -370,26 +399,26 @@ impl Blob {
     /// `Blob.isBunFile()` — backed by a filesystem `Store::File`.
     #[inline]
     pub fn is_bun_file(&self) -> bool {
-        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
     #[inline]
     pub fn is_s3(&self) -> bool {
-        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
     }
 
     /// `Blob.needsToReadFile()` — true when bytes must be fetched off-disk
     /// before any in-memory consumer can see them (i.e. `Store::File`).
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
-        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {
-        match &self.store.as_deref()?.data {
+        match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = bytes.stored_name.slice();
                 if n.is_empty() { None } else { Some(n) }
@@ -410,8 +439,8 @@ impl Blob {
     /// and many call sites tear down stack copies explicitly.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.deref();
-        self.name = bun_string::String::dead();
+        self.name.get().deref();
+        self.name.set(bun_string::String::dead());
 
         self.free_content_type();
 

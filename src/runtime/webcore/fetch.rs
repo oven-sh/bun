@@ -224,14 +224,14 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
     // via `heap::take` when set). Use `heap::alloc` (paired alloc/free), not
     // leaking.
-    blob.content_type = match mime_type.value {
+    blob.content_type.set(match mime_type.value {
         std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
         std::borrow::Cow::Owned(v) => {
-            blob.content_type_allocated = true;
+            blob.content_type_allocated.set(true);
             bun_core::heap::into_raw(v.into_boxed_slice()).cast_const()
         }
-    };
-    debug_assert_eq!(allocated, blob.content_type_allocated);
+    });
+    debug_assert_eq!(allocated, blob.content_type_allocated.get());
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
@@ -1658,14 +1658,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'use_sendfile;
                     }
 
-                    let original_size = body.any_blob().blob().size;
+                    let original_size = body.any_blob().blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
                     let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
                         stat_size
                     } else {
                         original_size.min(stat_size)
                     };
-                    let blob_offset = body.any_blob().blob().offset;
+                    let blob_offset = body.any_blob().blob().offset.get();
 
                     // PORT NOTE: `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64). Zig's `@intCast` ↔ `as usize` here.
@@ -1693,8 +1693,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             // TODO: make this async + lazy
-            let blob_offset = body.any_blob().blob().offset;
-            let blob_size = body.any_blob().blob().size;
+            let blob_offset = body.any_blob().blob().offset.get();
+            let blob_size = body.any_blob().blob().size.get();
             // PORT NOTE: Zig used `globalThis.bunVM().nodeFS()`; that accessor is
             // a jsc↔runtime cycle. `read_file` with an `Fd` path only touches
             // `self.sync_error_buf` for path-variant inputs, so a fresh `NodeFS`

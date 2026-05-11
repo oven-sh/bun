@@ -704,7 +704,7 @@ impl Value {
             Value::Null => true,
             Value::Used | Value::Empty => true,
             Value::InternalBlob(b) => b.slice_const().is_empty(),
-            Value::Blob(b) => b.size == 0,
+            Value::Blob(b) => b.size.get() == 0,
             Value::WTFStringImpl(s) => (unsafe { (**s).length() }) == 0,
             Value::Error(_) | Value::Locked(_) => false,
         }
@@ -831,7 +831,7 @@ impl Value {
                 // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
                 let mut blob = scopeguard::guard(self.use_(), |mut b| b.detach());
                 blob.resolve_size();
-                let blob_size = blob.size;
+                let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;
 
                 let stream = ReadableStream::from_js(value, global_this)?.unwrap();
@@ -1002,8 +1002,8 @@ impl Value {
                 let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
                 drop(encoded);
                 let mut blob = Blob::init(owned.into_vec(), global_this);
-                blob.content_type = std::ptr::from_ref::<[u8]>(mime.as_bytes());
-                blob.content_type_was_set = true;
+                blob.content_type.set(std::ptr::from_ref::<[u8]>(mime.as_bytes()));
+                blob.content_type_was_set.set(true);
                 return Ok(Value::Blob(blob));
             }
         }
@@ -1154,37 +1154,38 @@ impl Value {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
                                 let mime_type = MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                                blob.content_type_was_set = true;
+                                blob.content_type_was_set.set(true);
                                 // PORT NOTE: ownership reshape vs Zig. Zig's MimeType has no destructor so
                                 // `blob.content_type` (freed via `content_type_allocated`) is the sole owner
                                 // and `store.mime_type` aliases it. Rust `MimeType.value` is `Cow` (RAII), so
                                 // we give the Store the owning Cow and let `blob.content_type` alias it
                                 // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
                                 // no store, transfer the buffer into `blob.content_type` directly.
-                                if let Some(store_ptr) = blob.store.as_ref().map(|s| s.as_ptr()) {
+                                if let Some(store_ptr) = blob.store.get().as_ref().map(|s| s.as_ptr()) {
                                     // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
                                     unsafe {
                                         (*store_ptr).mime_type = mime_type;
-                                        blob.content_type =
-                                            std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref());
+                                        blob.content_type.set(
+                                            std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()),
+                                        );
                                     }
-                                    blob.content_type_allocated = false;
+                                    blob.content_type_allocated.set(false);
                                 } else {
-                                    blob.content_type = match mime_type.value {
+                                    blob.content_type.set(match mime_type.value {
                                         Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
                                         Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                                    };
-                                    blob.content_type_allocated = allocated;
+                                    });
+                                    blob.content_type_allocated.set(allocated);
                                 }
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
-                        if !blob.content_type_was_set && blob.store.is_some() {
-                            blob.content_type = std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref());
-                            blob.content_type_allocated = false;
-                            blob.content_type_was_set = true;
+                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+                            blob.content_type.set(std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref()));
+                            blob.content_type_allocated.set(false);
+                            blob.content_type_was_set.set(true);
                             // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
-                            unsafe { (*blob.store.as_ref().unwrap().as_ptr()).mime_type = bun_http_types::MimeType::TEXT };
+                            unsafe { (*blob.store.get().as_ref().unwrap().as_ptr()).mime_type = bun_http_types::MimeType::TEXT };
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -2029,35 +2030,36 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    blob.content_type_was_set = true;
+                    blob.content_type_was_set.set(true);
                     // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
                     // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
                     // takes the buffer directly via `content_type_allocated`.
-                    if let Some(store_ptr) = blob.store.as_ref().map(|s| s.as_ptr()) {
+                    if let Some(store_ptr) = blob.store.get().as_ref().map(|s| s.as_ptr()) {
                         // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
                         unsafe {
                             (*store_ptr).mime_type = mime_type;
-                            blob.content_type =
-                                std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref());
+                            blob.content_type.set(
+                                std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()),
+                            );
                         }
-                        blob.content_type_allocated = false;
+                        blob.content_type_allocated.set(false);
                     } else {
-                        blob.content_type = match mime_type.value {
+                        blob.content_type.set(match mime_type.value {
                             Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
                             Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                        };
-                        blob.content_type_allocated = allocated;
+                        });
+                        blob.content_type_allocated.set(allocated);
                     }
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
-            if !blob.content_type_was_set && blob.store.is_some() {
-                blob.content_type = std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref());
-                blob.content_type_allocated = false;
-                blob.content_type_was_set = true;
+            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+                blob.content_type.set(std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref()));
+                blob.content_type_allocated.set(false);
+                blob.content_type_was_set.set(true);
                 // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
                 unsafe {
-                    (*blob.store.as_ref().unwrap().as_ptr()).mime_type =
+                    (*blob.store.get().as_ref().unwrap().as_ptr()).mime_type =
                         bun_http_types::MimeType::TEXT
                 };
             }

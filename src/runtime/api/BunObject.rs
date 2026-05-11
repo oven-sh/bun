@@ -1969,7 +1969,7 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
         // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
         let blob = Blob::new(unsafe { (*input_blob).dupe_with_content_type(true) });
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name = (*input_blob).name.dupe_ref() };
+        unsafe { (*blob).name.set((*input_blob).name.get().dupe_ref()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
@@ -1999,12 +1999,12 @@ fn standalone_file_blob(
     );
     // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
     // stable for the life of `mime` (`'static` for the table-backed loaders).
-    blob_body.content_type = std::ptr::from_ref::<[u8]>(mime.value.as_ref());
+    blob_body.content_type.set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
     // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
     // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
     // is a no-op for the static case and correct for the owned `OTHER` case.
     core::mem::forget(mime);
-    blob_body.name = BunString::clone_utf8(bun_paths::basename(file.name));
+    blob_body.name.set(BunString::clone_utf8(bun_paths::basename(file.name)));
     let blob = Blob::new(blob_body);
     // SAFETY: `Blob::new` heap-allocates; never null.
     file.cached_blob = core::ptr::NonNull::new(blob.cast());

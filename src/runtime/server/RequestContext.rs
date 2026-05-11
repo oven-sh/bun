@@ -347,10 +347,10 @@ mod shim {
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
     #[inline] pub fn blob_is_s3(b: &Blob) -> bool {
-        b.store.as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
+        b.store.get().as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
     }
     #[inline] pub fn blob_needs_to_read_file(b: &Blob) -> bool {
-        b.store.as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
+        b.store.get().as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline] pub fn byte_stream_unpipe(mut s: NonNull<ByteStream>) {
         // SAFETY: the lone caller has just `take()`n the pointer out of
@@ -1565,18 +1565,18 @@ where
         };
 
         let original_size = match &self.blob {
-            AnyBlob::Blob(b) => b.size,
+            AnyBlob::Blob(b) => b.size.get(),
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType =
             BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
         if let AnyBlob::Blob(b) = &mut self.blob {
-            b.size = if is_regular { stat_size } else { original_size.min(stat_size) };
+            b.size.set(if is_regular { stat_size } else { original_size.min(stat_size) });
         }
 
         self.flags.set_needs_content_length(true);
         let blob_offset = match &self.blob {
-            AnyBlob::Blob(b) => b.offset,
+            AnyBlob::Blob(b) => b.offset.get(),
             _ => unreachable!(),
         };
         self.sendfile = SendfileContext {
@@ -2271,7 +2271,7 @@ where
                     this.ref_();
 
                     let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.as_ref().unwrap().data
+                        &blob.store.get().as_ref().unwrap().data
                     else {
                         unreachable!()
                     };
@@ -2298,10 +2298,10 @@ where
                 blob.resolve_size();
                 // SAFETY: FFI handle
                 unsafe {
-                    if blob.size == crate::webcore::blob::MAX_SIZE {
+                    if blob.size.get() == crate::webcore::blob::MAX_SIZE {
                         resp.write_header_int(b"content-length", 0);
                     } else {
-                        resp.write_header_int(b"content-length", blob.size as u64);
+                        resp.write_header_int(b"content-length", blob.size.get() as u64);
                     }
                 }
                 this.end_without_body(this.should_close_connection());

@@ -316,7 +316,7 @@ impl Request {
             // pointer first; `Blob.content_type` is a raw `*const [u8]` that
             // stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => Some(blob.content_type),
+                BodyValue::Blob(blob) => Some(blob.content_type.get()),
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
@@ -411,7 +411,7 @@ impl Request {
 
         if let BodyValue::Blob(blob) = self.body_value() {
             // SAFETY: see ensure_fetch_headers note.
-            let ct = unsafe { &*blob.content_type };
+            let ct = unsafe { &*blob.content_type.get() };
             if !ct.is_empty() {
                 return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(ct)));
             }
@@ -795,7 +795,7 @@ impl Request {
         match self.body_value() {
             BodyValue::Blob(blob) => {
                 // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
-                let ct = unsafe { &*blob.content_type };
+                let ct = unsafe { &*blob.content_type.get() };
                 if !ct.is_empty() {
                     return ct;
                 }
@@ -1554,7 +1554,7 @@ impl Request {
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
                 // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
-                let ct: &[u8] = unsafe { &*blob.content_type };
+                let ct: &[u8] = unsafe { &*blob.content_type.get() };
                 if !ct.is_empty()
                     && !req
                         .headers

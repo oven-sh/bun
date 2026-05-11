@@ -320,7 +320,7 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let Some(store) = &blob.store else {
+        let Some(store) = blob.store.get() else {
             return ReadableStream::empty(global_this);
         };
         match &store.data {
@@ -348,9 +348,9 @@ impl ReadableStream {
                         event_loop: jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         ),
-                        start_offset: Some(blob.offset as usize),
-                        max_size: if blob.size != webcore::blob::MAX_SIZE {
-                            Some(blob.size as usize)
+                        start_offset: Some(blob.offset.get() as usize),
+                        max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
+                            Some(blob.size.get() as usize)
                         } else {
                             None
                         },
@@ -378,9 +378,9 @@ impl ReadableStream {
                 crate::webcore::s3::client::readable_stream(
                     credentials,
                     path,
-                    blob.offset as usize,
-                    if blob.size != webcore::blob::MAX_SIZE {
-                        Some(blob.size as usize)
+                    blob.offset.get() as usize,
+                    if blob.size.get() != webcore::blob::MAX_SIZE {
+                        Some(blob.size.get() as usize)
                     } else {
                         None
                     },
@@ -397,7 +397,7 @@ impl ReadableStream {
         blob: &Blob,
         offset: usize,
     ) -> JsResult<JSValue> {
-        let Some(store) = &blob.store else {
+        let Some(store) = blob.store.get() else {
             return ReadableStream::empty(global_this);
         };
         match &store.data {

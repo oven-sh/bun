@@ -178,7 +178,7 @@ impl StaticRoute {
                             }
                         }
                         let mut blob = body_value.use_();
-                        blob.global_this = std::ptr::from_ref::<JSGlobalObject>(global_this);
+                        blob.global_this.set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(
                             !blob.is_heap_allocated(),
                             "expected blob not to be heap-allocated",

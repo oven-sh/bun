@@ -85,7 +85,7 @@ fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
 ) -> Result<*const c_char, ReadFromBlobError> {
-    let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
+    let store = blob.store.get().as_ref().ok_or(ReadFromBlobError::NullStore)?;
     let file = match &store.data {
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),

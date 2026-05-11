@@ -83,17 +83,17 @@ impl ByteBlobLoader {
 
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
-        let store = blob.store.as_ref().unwrap().clone();
+        let store = blob.store.get().as_ref().unwrap().clone();
         // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
         // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
         let (offset, size) = blob.resolved_size();
         let (content_type, content_type_allocated) = 'brk: {
-            if blob.content_type_was_set {
+            if blob.content_type_was_set.get() {
                 // SAFETY: `Blob.content_type` is a `*const [u8]` pointing at either a
                 // `'static` literal or a heap allocation owned by `blob`; `blob` outlives
                 // this borrow and we immediately copy into an owned `Box<[u8]>`.
-                let ct = unsafe { &*blob.content_type };
-                if blob.content_type_allocated {
+                let ct = unsafe { &*blob.content_type.get() };
+                if blob.content_type_allocated.get() {
                     break 'brk (Box::<[u8]>::from(ct), true);
                 }
                 // TODO(port): Zig borrowed `blob.content_type` here without copying; we dupe.
@@ -180,16 +180,16 @@ impl ByteBlobLoader {
         }
 
         let mut blob = Blob::init_with_store(store, global);
-        blob.offset = self.offset;
-        blob.size = self.remain;
+        blob.offset.set(self.offset);
+        blob.size.set(self.remain);
 
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
-            blob.content_type_was_set = !ct.is_empty();
-            blob.content_type = bun_core::heap::into_raw(ct).cast_const();
-            blob.content_type_allocated = self.content_type_allocated;
+            blob.content_type_was_set.set(!ct.is_empty());
+            blob.content_type.set(bun_core::heap::into_raw(ct).cast_const());
+            blob.content_type_allocated.set(self.content_type_allocated);
             self.content_type_allocated = false;
         }
 

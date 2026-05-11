@@ -686,7 +686,7 @@ impl Response {
             if let BodyValue::Blob(blob) = &self.body.value {
                 // SAFETY: Blob.content_type is always a valid (possibly empty) slice
                 // pointer (see Blob::default()/set_content_type contract).
-                let content_type = unsafe { &*blob.content_type };
+                let content_type = unsafe { &*blob.content_type.get() };
                 if !content_type.is_empty() {
                     self.init
                         .headers
@@ -714,7 +714,7 @@ impl Response {
 
         if let BodyValue::Blob(blob) = &self.body.value {
             // SAFETY: see note in get_or_create_headers.
-            let content_type = unsafe { &*blob.content_type };
+            let content_type = unsafe { &*blob.content_type.get() };
             if !content_type.is_empty() {
                 return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
             }
@@ -1156,7 +1156,7 @@ impl Response {
                         ..Default::default()
                     };
 
-                    let s3 = blob.store.as_ref().unwrap().data.as_s3();
+                    let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
                     let credentials = s3.get_credentials();
 
                     let result = match credentials.sign_request::<false>(
@@ -1239,7 +1239,7 @@ impl Response {
             if let Some(headers) = init.headers.as_deref_mut() {
                 // SAFETY: see note in get_or_create_headers — `content_type`
                 // is a valid (possibly empty) slice pointer.
-                let content_type = unsafe { &*blob.content_type };
+                let content_type = unsafe { &*blob.content_type.get() };
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(HTTPHeaderName::ContentType, content_type, global_this)?;
                 }

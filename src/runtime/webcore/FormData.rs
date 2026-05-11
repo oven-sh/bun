@@ -233,10 +233,10 @@ pub fn to_js_from_multipart_data(
                 // single `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
-                    blob.content_type_allocated = true;
-                    blob.content_type =
-                        bun_core::heap::into_raw(Box::<[u8]>::from(ct)).cast_const();
-                    blob.content_type_was_set = true;
+                    blob.content_type_allocated.set(true);
+                    blob.content_type
+                        .set(bun_core::heap::into_raw(Box::<[u8]>::from(ct)).cast_const());
+                    blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
                         if !filename_str.is_empty() {
@@ -254,17 +254,17 @@ pub fn to_js_from_multipart_data(
                     if let Some(mime) = mime {
                         match mime.value {
                             std::borrow::Cow::Borrowed(s) => {
-                                blob.content_type = std::ptr::from_ref::<[u8]>(s);
-                                blob.content_type_was_set = false;
-                                blob.content_type_allocated = false;
+                                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
+                                blob.content_type_was_set.set(false);
+                                blob.content_type_allocated.set(false);
                             }
                             std::borrow::Cow::Owned(v) => {
                                 // by_extension/sniff currently always yield Borrowed,
                                 // but handle Owned defensively to avoid a dangling ptr.
-                                blob.content_type =
-                                    bun_core::heap::into_raw(v.into_boxed_slice()).cast_const();
-                                blob.content_type_was_set = false;
-                                blob.content_type_allocated = true;
+                                blob.content_type
+                                    .set(bun_core::heap::into_raw(v.into_boxed_slice()).cast_const());
+                                blob.content_type_was_set.set(false);
+                                blob.content_type_allocated.set(true);
                             }
                         }
                     }

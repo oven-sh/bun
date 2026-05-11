@@ -80,7 +80,7 @@ impl FileOpener for WriteFile {
     fn set_errno(&mut self, e: Error) { self.errno = Some(e); }
     fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
     fn pathlike(&self) -> &PathOrFileDescriptor {
-        &self.file_blob.store.as_ref().unwrap().data.as_file().pathlike
+        &self.file_blob.store.get().as_ref().unwrap().data.as_file().pathlike
     }
     fn try_mkdirp(
         &mut self,
@@ -356,6 +356,7 @@ impl WriteFile {
     pub fn is_allowed_to_close(&self) -> bool {
         self.file_blob
             .store
+            .get()
             .as_ref()
             .unwrap()
             .data
@@ -388,7 +389,7 @@ impl WriteFile {
         let fd = self.opened_fd;
 
         self.could_block = 'brk: {
-            if let Some(store) = self.file_blob.store.as_ref() {
+            if let Some(store) = self.file_blob.store.get().as_ref() {
                 if let blob::store::Data::File(file) = &store.data {
                     if file.pathlike.is_fd() {
                         // If seekable was set, then so was mode
@@ -587,7 +588,7 @@ mod windows_impl {
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
-                && file_blob.store.as_ref().unwrap().data.as_file().pathlike.is_path();
+                && file_blob.store.get().as_ref().unwrap().data.as_file().pathlike.is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -613,7 +614,7 @@ mod windows_impl {
                 wf.io_request.loop_ = (*event_loop).uv_loop();
                 wf.io_request.data = write_file.cast::<c_void>();
 
-                match &wf.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
+                match &wf.file_blob.store.get().as_ref().unwrap().data.as_file().pathlike {
                     PathOrFileDescriptor::Path(_) => {
                         wf.open()?;
                     }
@@ -627,6 +628,7 @@ mod windows_impl {
                                     let store_ptr = wf
                                         .file_blob
                                         .store
+                                        .get()
                                         .as_ref()
                                         .unwrap()
                                         .as_ptr()
@@ -669,6 +671,7 @@ mod windows_impl {
             let path = self
                 .file_blob
                 .store
+                .get()
                 .as_ref()
                 .unwrap()
                 .data
@@ -738,6 +741,7 @@ mod windows_impl {
                 bstr::BStr::new(
                     this.file_blob
                         .store
+                        .get()
                         .as_ref()
                         .unwrap()
                         .data
@@ -766,6 +770,7 @@ mod windows_impl {
                     path: this
                         .file_blob
                         .store
+                        .get()
                         .as_ref()
                         .unwrap()
                         .data
@@ -805,6 +810,7 @@ mod windows_impl {
             let path = self
                 .file_blob
                 .store
+                .get()
                 .as_ref()
                 .unwrap()
                 .data
@@ -954,7 +960,7 @@ mod windows_impl {
         pub fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
+                sys_err = match &self.file_blob.store.get().as_ref().unwrap().data.as_file().pathlike {
                     PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };

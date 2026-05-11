@@ -399,7 +399,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
-        if blob.store.is_some() {
+        if blob.store.get().is_some() {
             return Ok(Source::Blob(Strong::create(value, global)));
         }
     }
@@ -1086,7 +1086,7 @@ impl Image {
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
-            if let Some(store) = &blob.store {
+            if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         let p = ZBox::from_bytes(path.slice());
@@ -1667,8 +1667,8 @@ impl<'a> PipelineTask<'a> {
                     // SAFETY: explicit free in lieu of suppressed `Drop`.
                     unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                     let mut blob = Blob::init(owned, global);
-                    blob.content_type = std::ptr::from_ref::<[u8]>(format.mime().as_bytes());
-                    blob.content_type_was_set = true;
+                    blob.content_type.set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
+                    blob.content_type_was_set.set(true);
                     // UFCS to pick the consuming `JsClass::to_js(self, _)`
                     // (heap-promotes via `Blob::new`) over the inherent
                     // `Blob::to_js(&mut self, _)` that expects an

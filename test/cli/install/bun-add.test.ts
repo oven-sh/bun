@@ -2323,6 +2323,73 @@ it("should add local tarball dependency", async () => {
     await access(join(package_dir, "bun.lockb")));
 });
 
+it("should not add duplicate package.json entries when installing the same tarball URL twice (#30499)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
+  setHandler(dummyRegistry([]));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // First install — key should be the package name from the tarball ("baz").
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
+
+  // Second install with the same URL — must not duplicate the "baz" key.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    // No error on exit.
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  // Parsing with JSON.parse normalises duplicate keys by keeping only one, so
+  // we have to assert on the raw text to see that duplication did not happen.
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"baz"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

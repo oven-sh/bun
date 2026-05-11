@@ -4,6 +4,8 @@
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
+use bun_alloc::AstAlloc;
+use bun_collections::array_hash_map::{AutoContext, StringContext};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap, VecExt};
 
 use crate::import_record::ImportRecord;
@@ -159,12 +161,19 @@ impl Default for CommonJSNamedExport {
     }
 }
 
-pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport>;
+// `Ast` is held in arena-allocated structures whose `Drop` never runs (the
+// `BabyList` pattern — bulk-freed on `ASTMemoryAllocator` / `store_ast_alloc_heap`
+// reset). Any `Vec`/`Box` field that defaults to the global allocator therefore
+// leaks. The `AstAlloc` parameter routes the column vecs and per-key boxes
+// into the same thread-local AST `mi_heap` so they're reclaimed by
+// `mi_heap_destroy` alongside the AST nodes (same motivation as
+// `G::DeclList`/`PropertyList` and `Scope::members`).
+pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
-pub type NamedImports = ArrayHashMap<Ref, NamedImport>;
-pub type NamedExports = StringArrayHashMap<NamedExport>;
-pub type ConstValuesMap = ArrayHashMap<Ref, Expr>;
-pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>>;
+pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
+pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
+pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>, AutoContext, AstAlloc>;
 
 impl Ast {
     pub fn from_parts(parts: Box<[Part]>) -> Ast {

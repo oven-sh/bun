@@ -21,6 +21,7 @@
 
 use core::alloc::Allocator;
 use core::hash::{Hash, Hasher};
+use std::alloc::Global;
 // See workspace `Cargo.toml` hashbrown comment + `bun_alloc/hashbrown_bridge.rs`
 // for why `StringHashMap`'s `A` must implement *both* allocator traits and why
 // the default is `DefaultAlloc` rather than `std::alloc::Global`.
@@ -166,13 +167,13 @@ impl<C: Default> Default for BoxedSliceContext<C> {
     }
 }
 
-impl<C: ArrayHashContext<[u8]>> ArrayHashContext<Box<[u8]>> for BoxedSliceContext<C> {
+impl<C: ArrayHashContext<[u8]>, A: Allocator> ArrayHashContext<Box<[u8], A>> for BoxedSliceContext<C> {
     #[inline]
-    fn hash(&self, key: &Box<[u8]>) -> u32 {
+    fn hash(&self, key: &Box<[u8], A>) -> u32 {
         self.0.hash(&**key)
     }
     #[inline]
-    fn eql(&self, a: &Box<[u8]>, b: &Box<[u8]>, b_index: usize) -> bool {
+    fn eql(&self, a: &Box<[u8], A>, b: &Box<[u8], A>, b_index: usize) -> bool {
         self.0.eql(&**a, &**b, b_index)
     }
 }
@@ -286,16 +287,46 @@ const fn spread_hash(h: u32) -> u64 {
     h | (h.wrapping_mul(0x9E37_79B9).wrapping_shl(32))
 }
 
+/// Shorthand for the allocator bound every `ArrayHashMap`/`StringArrayHashMap`
+/// `impl` block needs: `core::alloc::Allocator` for the `Vec<K/V/u32, A>`
+/// columns and the per-key `Box<[u8], A>`; `Clone` so `Vec`/`Box` can clone
+/// their allocator on resize/clone; `Default` so constructors don't need an
+/// `*_in(alloc: A)` variant — all current `A` (`Global`, `AstAlloc`) are ZST.
+///
+/// Unlike `StringHashMap<V, A>`, this does **not** require
+/// `HashbrownAllocator`: the `hashbrown::HashTable<u32>` index accelerator is
+/// kept on hashbrown's default global allocator regardless of `A`. The index
+/// is ~4 bytes/entry and only materialises past [`INDEX_THRESHOLD`]; for
+/// `Ast.named_exports` (10 000 entries) it is ~40 KB vs ~1 MB of column +
+/// key-box bytes, so routing only the latter through `AstAlloc` captures
+/// >95% of the leak while keeping the default `A = std::alloc::Global` —
+/// which means `Box<[u8], A>` defaults to plain `Box<[u8]>` and existing call
+/// sites that name that type (e.g. `StringMap::keys() -> &[Box<[u8]>]`)
+/// compile unchanged. Bridging `Global` to `allocator_api2::Allocator` to
+/// route the index too is blocked by orphan rules.
+pub trait MapAllocator: Allocator + Clone + Default {}
+impl<A: Allocator + Clone + Default> MapAllocator for A {}
+
 /// Insertion-ordered hash map with contiguous key / value storage.
-pub struct ArrayHashMap<K, V, C = AutoContext> {
-    keys: Vec<K>,
-    values: Vec<V>,
-    hashes: Vec<u32>,
+///
+/// `A` routes the three column `Vec`s and (for `StringArrayHashMap`) the
+/// per-key `Box<[u8], A>` through the same allocator, so an
+/// `ArrayHashMap<_, _, _, AstAlloc>` is bulk-freed by the AST arena's
+/// `mi_heap_destroy` instead of leaking on the global heap when its owning AST
+/// node never has `Drop` run (the `BabyList` pattern — same motivation as
+/// `Vec<T, AstAlloc>` for `G::DeclList`/`PropertyList`, and
+/// `StringHashMap<V, AstAlloc>` for `Scope::members`). The `hashbrown` index
+/// accelerator stays on the global allocator; see [`MapAllocator`].
+pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
+    keys: Vec<K, A>,
+    values: Vec<V, A>,
+    hashes: Vec<u32, A>,
     /// `hash → entry index` accelerator. `None` below [`INDEX_THRESHOLD`]
     /// entries. Stores `u32` indices; the table is hashed by [`spread_hash`]
     /// of `self.hashes[i]` so lookups never re-hash `K`. Kept in sync with
     /// the column vecs by every mutation path (patched on point removal,
-    /// rebuilt on permutation).
+    /// rebuilt on permutation). Stays on hashbrown's default global allocator
+    /// regardless of `A` (see [`MapAllocator`] for why).
     index: Option<hashbrown::HashTable<u32>>,
     ctx: C,
     // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
@@ -304,13 +335,13 @@ pub struct ArrayHashMap<K, V, C = AutoContext> {
     pointer_stability: core::cell::Cell<bool>,
 }
 
-impl<K, V, C: Default> Default for ArrayHashMap<K, V, C> {
+impl<K, V, C: Default, A: MapAllocator> Default for ArrayHashMap<K, V, C, A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: Clone, V: Clone, C: Default> ArrayHashMap<K, V, C> {
+impl<K: Clone, V: Clone, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
     pub fn clone(&self) -> Result<Self, AllocError> {
         Ok(Self {
@@ -325,12 +356,12 @@ impl<K: Clone, V: Clone, C: Default> ArrayHashMap<K, V, C> {
     }
 }
 
-impl<K, V, C: Default> ArrayHashMap<K, V, C> {
+impl<K, V, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn new() -> Self {
         Self {
-            keys: Vec::new(),
-            values: Vec::new(),
-            hashes: Vec::new(),
+            keys: Vec::new_in(A::default()),
+            values: Vec::new_in(A::default()),
+            hashes: Vec::new_in(A::default()),
             index: None,
             ctx: C::default(),
             #[cfg(debug_assertions)]
@@ -345,7 +376,7 @@ impl<K, V, C: Default> ArrayHashMap<K, V, C> {
     }
 }
 
-impl<K, V, C> ArrayHashMap<K, V, C> {
+impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     // ── capacity / size ────────────────────────────────────────────────────
 
     #[inline]
@@ -385,9 +416,9 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     /// Zig: `clearAndFree(allocator)` — drop every entry and release the
     /// backing allocations (capacity goes to zero).
     pub fn clear_and_free(&mut self) {
-        self.keys = Vec::new();
-        self.values = Vec::new();
-        self.hashes = Vec::new();
+        self.keys = Vec::new_in(A::default());
+        self.values = Vec::new_in(A::default());
+        self.hashes = Vec::new_in(A::default());
         self.index = None;
     }
 
@@ -786,18 +817,18 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
 
     /// Look up by `key` using `adapter` for hash/eql, without constructing a `K`.
     #[inline]
-    pub fn get_index_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> Option<usize>
+    pub fn get_index_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> Option<usize>
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         let h = adapter.hash(key);
         self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
     }
 
     #[inline]
-    pub fn get_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> Option<&V>
+    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> Option<&V>
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         self.get_index_adapted(key, adapter).map(|i| &self.values[i])
     }
@@ -805,24 +836,24 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     /// Zig `getPtrContext` / `getPtrAdapted` — mutable value lookup using an
     /// externally-supplied hash/eql adapter.
     #[inline]
-    pub fn get_ptr_adapted<Q: ?Sized, A>(&mut self, key: &Q, adapter: A) -> Option<&mut V>
+    pub fn get_ptr_adapted<Q: ?Sized, Ad>(&mut self, key: &Q, adapter: Ad) -> Option<&mut V>
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         let i = self.get_index_adapted(key, adapter)?;
         Some(&mut self.values[i])
     }
 
     #[inline]
-    pub fn contains_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> bool
+    pub fn contains_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> bool
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         self.get_index_adapted(key, adapter).is_some()
     }
 }
 
-impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
+impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     #[inline]
     pub fn get_index(&self, key: &K) -> Option<usize> {
         let h = self.ctx.hash(key);
@@ -949,7 +980,7 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
     /// std-HashMap-compat `entry` API. Mirrors `std::collections::hash_map::Entry`
     /// closely enough that call sites written against the old std-alias compile
     /// unchanged. Backed by the same single-hash lookup as `get_or_put`.
-    pub fn entry(&mut self, key: K) -> MapEntry<'_, K, V, C> {
+    pub fn entry(&mut self, key: K) -> MapEntry<'_, K, V, C, A> {
         let h = self.ctx.hash(&key);
         if let Some(idx) = self.find_hash(h, |k, i| self.ctx.eql(&key, k, i)) {
             MapEntry::Occupied(OccupiedEntry { map: self, idx })
@@ -965,17 +996,17 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
 
 /// std-HashMap-compat entry. Named `MapEntry` (not `Entry`) to avoid clashing
 /// with the iterator `Entry` above; re-exported as `bun_collections::hash_map::Entry`.
-pub enum MapEntry<'a, K, V, C> {
-    Occupied(OccupiedEntry<'a, K, V, C>),
-    Vacant(VacantEntry<'a, K, V, C>),
+pub enum MapEntry<'a, K, V, C, A: MapAllocator = Global> {
+    Occupied(OccupiedEntry<'a, K, V, C, A>),
+    Vacant(VacantEntry<'a, K, V, C, A>),
 }
 
-pub struct OccupiedEntry<'a, K, V, C> {
-    map: &'a mut ArrayHashMap<K, V, C>,
+pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
+    map: &'a mut ArrayHashMap<K, V, C, A>,
     idx: usize,
 }
 
-impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
+impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1004,13 +1035,13 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
     }
 }
 
-pub struct VacantEntry<'a, K, V, C> {
-    map: &'a mut ArrayHashMap<K, V, C>,
+pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
+    map: &'a mut ArrayHashMap<K, V, C, A>,
     key: K,
     hash: u32,
 }
 
-impl<'a, K, V, C> VacantEntry<'a, K, V, C> {
+impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
     #[inline]
     pub fn key(&self) -> &K {
         &self.key
@@ -1021,7 +1052,7 @@ impl<'a, K, V, C> VacantEntry<'a, K, V, C> {
     }
 }
 
-impl<'a, K, V, C> MapEntry<'a, K, V, C> {
+impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
             MapEntry::Occupied(o) => o.into_mut(),
@@ -1036,7 +1067,7 @@ impl<'a, K, V, C> MapEntry<'a, K, V, C> {
     }
 }
 
-impl<K, V: Default, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
+impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Zig `getOrPut`: look up `key`; if absent, append it with a defaulted
     /// value slot and return `found_existing = false`.
     pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
@@ -1082,17 +1113,17 @@ impl<K, V: Default, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
     }
 }
 
-impl<K: Default, V: Default, C> ArrayHashMap<K, V, C> {
+impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Zig `getOrPutAdapted`: look up by `key` using `adapter` for hash/eql;
     /// on miss, append a *defaulted* `K`/`V` pair — caller fills both via
     /// `key_ptr` / `value_ptr`.
-    pub fn get_or_put_adapted<Q, A>(
+    pub fn get_or_put_adapted<Q, Ad>(
         &mut self,
         key: Q,
-        adapter: A,
+        adapter: Ad,
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         let h = adapter.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| adapter.eql(&key, k, idx)) {
@@ -1106,20 +1137,20 @@ impl<K: Default, V: Default, C> ArrayHashMap<K, V, C> {
     /// explicit `ctx` for the *stored* key type. This port does not need `ctx`
     /// for the index header (none yet), so it is accepted and ignored.
     #[inline]
-    pub fn get_or_put_context_adapted<Q, A>(
+    pub fn get_or_put_context_adapted<Q, Ad>(
         &mut self,
         key: Q,
-        adapter: A,
+        adapter: Ad,
         _ctx: C,
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
     where
-        A: ArrayHashAdapter<Q, K>,
+        Ad: ArrayHashAdapter<Q, K>,
     {
         self.get_or_put_adapted(key, adapter)
     }
 }
 
-impl<K, V, C> ArrayHashMapExt for ArrayHashMap<K, V, C> {
+impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
     type Key = K;
     type Value = V;
     type Iterator<'a> = Iter<'a, K, V> where Self: 'a;
@@ -1138,8 +1169,8 @@ impl<K, V, C> ArrayHashMapExt for ArrayHashMap<K, V, C> {
 /// borrows — the Zig API stores `[]const u8` keys and lets the caller decide
 /// whether to dupe them; here keys are `Box<[u8]>` and the borrowing methods
 /// box on insert.
-pub struct StringArrayHashMap<V, C = StringContext> {
-    inner: ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>,
+pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
+    inner: ArrayHashMap<Box<[u8], A>, V, BoxedSliceContext<C>, A>,
     // The string context is consulted for hash/eql on `[u8]` borrows. The inner
     // map's context is `BoxedSliceContext<C>` (NOT `AutoContext`) so methods
     // reached via `Deref` hash identically to the `&[u8]` paths above.
@@ -1150,33 +1181,33 @@ pub struct StringArrayHashMap<V, C = StringContext> {
 pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
     StringArrayHashMap<V, CaseInsensitiveAsciiStringContext>;
 
-impl<V, C: Default> Default for StringArrayHashMap<V, C> {
+impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
     fn default() -> Self {
         Self { inner: ArrayHashMap::new(), ctx: C::default() }
     }
 }
 
-impl<V: Clone, C: Default> StringArrayHashMap<V, C> {
+impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
     pub fn clone(&self) -> Result<Self, AllocError> {
         Ok(Self { inner: self.inner.clone()?, ctx: C::default() })
     }
 }
 
-impl<V, C> Deref for StringArrayHashMap<V, C> {
-    type Target = ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>;
+impl<V, C, A: MapAllocator> Deref for StringArrayHashMap<V, C, A> {
+    type Target = ArrayHashMap<Box<[u8], A>, V, BoxedSliceContext<C>, A>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<V, C> DerefMut for StringArrayHashMap<V, C> {
+impl<V, C, A: MapAllocator> DerefMut for StringArrayHashMap<V, C, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
+impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1228,7 +1259,7 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             Some(core::mem::replace(&mut self.inner.values[i], value))
         } else {
-            self.inner.push_entry(Box::from(key), value, h);
+            self.inner.push_entry(box_key::<A>(key), value, h);
             None
         }
     }
@@ -1238,7 +1269,7 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             self.inner.values[i] = value;
         } else {
-            self.inner.push_entry(Box::from(key), value, h);
+            self.inner.push_entry(box_key::<A>(key), value, h);
         }
         Ok(())
     }
@@ -1255,7 +1286,7 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
 
     /// Zig: `StringArrayHashMap.fetchSwapRemove` — removes the entry (swapping
     /// the last element into its slot) and returns the owned key/value pair.
-    pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8]>, V>> {
+    pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8], A>, V>> {
         let i = self.find(key)?;
         let (k, v) = self.inner.swap_remove_at(i);
         Some(KV { key: k, value: v })
@@ -1273,19 +1304,19 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
     }
 }
 
-impl<V: Default, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
+impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     /// See `ArrayHashMap::get_or_put`. The key is boxed on insert; callers that
     /// then write `*gop.key_ptr = Box::from(key)` are doing a redundant alloc —
     /// harmless, and lets the Zig-shaped call sites compile unchanged.
     pub fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> Result<GetOrPutResult<'_, Box<[u8]>, V>, AllocError> {
+    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             return Ok(self.inner.gop_at(i, true));
         }
-        let i = self.inner.push_entry(Box::from(key), V::default(), h);
+        let i = self.inner.push_entry(box_key::<A>(key), V::default(), h);
         Ok(self.inner.gop_at(i, false))
     }
 
@@ -1293,21 +1324,21 @@ impl<V: Default, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
         &mut self,
         key: &[u8],
         value: V,
-    ) -> Result<GetOrPutResult<'_, Box<[u8]>, V>, AllocError> {
+    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             return Ok(self.inner.gop_at(i, true));
         }
-        let i = self.inner.push_entry(Box::from(key), value, h);
+        let i = self.inner.push_entry(box_key::<A>(key), value, h);
         Ok(self.inner.gop_at(i, false))
     }
 }
 
-impl<V, C> ArrayHashMapExt for StringArrayHashMap<V, C> {
-    type Key = Box<[u8]>;
+impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
+    type Key = Box<[u8], A>;
     type Value = V;
-    type Iterator<'a> = Iter<'a, Box<[u8]>, V> where Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, Box<[u8]>, V> {
+    type Iterator<'a> = Iter<'a, Box<[u8], A>, V> where Self: 'a;
+    fn iterator(&mut self) -> Iter<'_, Box<[u8], A>, V> {
         self.inner.iterator()
     }
 }

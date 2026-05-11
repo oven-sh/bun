@@ -51,6 +51,10 @@ pub fn post_process_js_chunk(
 
     js_ast::expr::data::Store::create();
     js_ast::stmt::data::Store::create();
+    // Side arena for `AstAlloc` — linker thread builds wrapper/runtime AST
+    // nodes here outside any `ASTMemoryAllocator` scope; without this their
+    // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
+    let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
     // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
     // tears down the renamer at end of scope. In Rust this should be handled by Drop on

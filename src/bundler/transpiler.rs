@@ -390,6 +390,11 @@ impl<'a> Transpiler<'a> {
     pub fn reset_store(&self) {
         js_ast::Expr::data_store_reset();
         js_ast::Stmt::data_store_reset();
+        // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
+        // `E::Object`) — same lifetime as the block-store. Only the bundler
+        // resets it; install/`--define` (which also use the block-store) hold
+        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc.
+        js_ast::ast::store_ast_alloc_heap::reset();
     }
 
     /// Port of `transpiler.zig:108 _resolveEntryPoint`.
@@ -1140,6 +1145,13 @@ impl<'a> Transpiler<'a> {
         // TODO(port): narrow error set
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
+        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
+        // object-literal JSON is parsed below (during option setup) and the
+        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
+        // so its embedded `Vec<Property>` must stay on the global heap.
+        // `reset_store()`'s first call lazily `enter()`s (the side arena's
+        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
+        // *do* get the side arena from the first parsed file onward.
 
         // PORT NOTE: `FileSystem::init` wants `&'static [u8]`; Zig passed a
         // borrowed slice (transpiler.zig:179). Intern via `DirnameStore`
@@ -2578,6 +2590,7 @@ impl<'a> Transpiler<'a> {
         while let Some(item) = self.resolve_queue.pop_front() {
             js_ast::Expr::data_store_reset();
             js_ast::Stmt::data_store_reset();
+            js_ast::ast::store_ast_alloc_heap::reset();
 
             let output_file = match self.build_with_resolve_result_eager(
                 item,

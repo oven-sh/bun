@@ -124,10 +124,15 @@ impl<T> Drop for DebugOnlyDisablerScope<T> {
 /// bulk-freed alongside the AST nodes, with no per-element `Drop` — the same
 /// invariant `Expr::Data::clone_in`'s `ptr::read` relies on.
 ///
-/// Wiring lives only in `Stmt::data::Store` (not `Expr`'s): the two stores
-/// are always created/reset/deinit'd as a pair, and a single shared heap is
-/// what we want.
-pub(crate) mod store_ast_alloc_heap {
+/// **Not** wired into `Stmt::data::Store` itself: that is also called from
+/// `bun install` / `--define` JSON parsing, which (unlike the bundler) holds
+/// `StoreRef`s across `Store::reset()` — a pre-existing UAF that was masked
+/// by `Backing::reset` only resetting the bump pointer (block bytes survive
+/// until overwritten) and the embedded `Vec<Property>` buffers leaking on the
+/// global heap. With the side-arena, those buffers would be `mi_heap_destroy`d
+/// on the next reset → real UAF. Callers that want this scoping use
+/// [`StoreAstAllocHeap`] explicitly (transpiler / linker post-process).
+pub mod store_ast_alloc_heap {
     use core::cell::Cell;
     use core::ptr;
 
@@ -224,6 +229,34 @@ pub(crate) mod store_ast_alloc_heap {
             // thread and is now being reclaimed exactly once.
             drop(unsafe { Box::from_raw(arena) });
         }
+    }
+}
+
+/// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
+/// `reset()` via [`Self::reset`], `exit()` on drop. Hold one for the lifetime
+/// of a bundler/transpiler thread's block-store to route `AstAlloc` buffers
+/// into the side arena. **Do not** use from `bun install` / `--define` JSON
+/// parsing — see the [`store_ast_alloc_heap`] module doc for the UAF that
+/// surfaces there.
+#[must_use = "side-arena heap lives until this guard drops"]
+pub struct StoreAstAllocHeap(());
+impl StoreAstAllocHeap {
+    #[inline]
+    pub fn new() -> Self {
+        store_ast_alloc_heap::enter();
+        Self(())
+    }
+    /// Reset the side arena (bulk-free `AstVec` buffers) alongside a
+    /// `Stmt/Expr::data::Store::reset()` pair.
+    #[inline]
+    pub fn reset(&self) {
+        store_ast_alloc_heap::reset();
+    }
+}
+impl Drop for StoreAstAllocHeap {
+    #[inline]
+    fn drop(&mut self) {
+        store_ast_alloc_heap::exit();
     }
 }
 

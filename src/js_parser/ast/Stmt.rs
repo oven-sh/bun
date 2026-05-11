@@ -810,11 +810,6 @@ pub mod data {
                 return;
             }
             INSTANCE.with(|c| c.set(Backing::init()));
-            // Route `AstAlloc` (e.g. `G::PropertyList` inside `E::Object`)
-            // into a side `mi_heap` whose lifetime matches this block-store,
-            // so embedded `Vec` buffers bulk-free on `reset()` instead of
-            // leaking from the global heap. See `store_ast_alloc_heap` doc.
-            crate::ast::store_ast_alloc_heap::enter();
         }
 
         /// create || reset
@@ -829,13 +824,6 @@ pub mod data {
             if !DISABLE_RESET.with(|c| c.get()) {
                 // SAFETY: checked non-null above; thread-local, no concurrent mutation.
                 Backing::reset(unsafe { &mut *instance() });
-                crate::ast::store_ast_alloc_heap::reset();
-            } else {
-                // Reset suppressed (long-lived store), but `AST_HEAP` may have
-                // been cleared by a `Scope { current: None }` round-trip — see
-                // `ASTMemoryAllocator::Scope::enter` writing null before
-                // calling us. Re-publish without destroying.
-                crate::ast::store_ast_alloc_heap::enter();
             }
         }
 
@@ -845,7 +833,6 @@ pub mod data {
             }
             // SAFETY: caller contract — instance is set when reset() is called.
             Backing::reset(unsafe { &mut *instance() });
-            crate::ast::store_ast_alloc_heap::reset();
         }
 
         /// Zig: `Stmt.Data.Store.disable_reset = b;` — toggled by long-lived
@@ -866,7 +853,6 @@ pub mod data {
             // SAFETY: checked non-null above; destroy frees the PreAlloc.
             unsafe { Backing::destroy(instance()) };
             INSTANCE.with(|c| c.set(core::ptr::null_mut()));
-            crate::ast::store_ast_alloc_heap::exit();
         }
 
         #[inline]

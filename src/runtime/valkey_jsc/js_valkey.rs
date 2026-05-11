@@ -1720,21 +1720,30 @@ impl JSValkeyClient {
 
     // Called by RefCounted::destructor when ref_count hits 0.
     unsafe fn deinit(this: *mut JSValkeyClient) {
-        // SAFETY: last ref dropped; exclusive access.
-        let this = unsafe { &*this };
-        debug_assert!(this.client.get().socket.is_closed());
-        if let Some(s) = this._secure.get() {
-            // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+        // SAFETY: last ref dropped; exclusive access. The shared borrow is
+        // scoped so it ends before we reclaim the Box below — the final
+        // `heap::take` must consume the original `*mut` (which carries the
+        // allocation's Unique provenance from `Box::into_raw`), not a
+        // pointer re-derived from `&Self` (SharedReadOnly under Stacked
+        // Borrows, which would make the dealloc-write UB).
+        {
+            let this_ref = unsafe { &*this };
+            debug_assert!(this_ref.client.get().socket.is_closed());
+            if let Some(s) = this_ref._secure.get() {
+                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
+                unsafe { boringssl::c::SSL_CTX_free(s) };
+            }
+            this_ref.client_mut().shutdown(None);
+            this_ref.poll_ref.with_mut(|r| r.disable());
+            this_ref.stop_timers();
+            this_ref.ref_count.assert_no_refs();
         }
-        this.client_mut().shutdown(None);
-        this.poll_ref.with_mut(|r| r.disable());
-        this.stop_timers();
-        this.ref_count.assert_no_refs();
 
         // bun.destroy(this) → reclaim the Box allocated in `new()`.
-        // SAFETY: `this` was created via heap::alloc in `new()`.
-        drop(unsafe { bun_core::heap::take(std::ptr::from_ref::<JSValkeyClient>(this).cast_mut()) });
+        // SAFETY: `this` was created via `heap::alloc` in `new()`; the shared
+        // borrow above has ended, and `this` is the original raw pointer with
+        // its Box-derived write provenance intact.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Keep the event loop alive, or don't keep it alive

@@ -2143,4 +2143,15 @@ pub type BufferedReader = WindowsBufferedReader;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");
 
+#[inline]
+pub fn with_buffered_reader_handle<R>(
+    handle: BufferedReaderHandle,
+    f: impl FnOnce(&mut BufferedReader) -> R,
+) -> R {
+    // SAFETY: handles are recorded from live BufferedReader fields by the crate
+    // that owns the reader. Keep the raw-address recovery in bun_io rather than
+    // spreading typed pointer casts through higher-tier consumers.
+    unsafe { f(&mut *handle.as_ptr::<BufferedReader>()) }
+}
+
 // ported from: src/io/PipeReader.zig

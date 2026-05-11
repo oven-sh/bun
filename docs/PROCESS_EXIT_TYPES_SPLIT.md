@@ -276,13 +276,15 @@ before feeding `ProcessExitReadiness`. Once output and process status are
 ready, `CronRegisterJobState::on_ready_process_status` /
 `CronRemoveJobState::on_ready_process_status` decide whether the owner should
 finish or advance and record the same first error bytes/messages as the old
-runtime match. The cron owners no longer carry a second `Process*`; when
-cleanup runs, `bun_runtime` consumes the sidecar-owned `ProcessHandle` and
-performs the same detach/deref effect. `bun_runtime` still performs the other
-effects: inspect/drain the runtime readers, cast the inert global pointer back
-at the effect site, take the promise handle into a `JSPromiseStrong` effect
-wrapper for resolve/reject, spawn the next OS command, unlink temp paths, and
-free the job. Their exact job/effect owner still needs to move before
+runtime match. Runtime inspection of cron stdout/stderr final buffers now goes
+through the sidecar-owned `BufferedReaderHandle`s, with the handle-to-reader
+recovery centralized in `bun_io`. The cron owners no longer carry a second
+`Process*`; when cleanup runs, `bun_runtime` consumes the sidecar-owned
+`ProcessHandle` and performs the same detach/deref effect. `bun_runtime` still
+performs the other effects: cast the inert global pointer back at the effect
+site, take the promise handle into a `JSPromiseStrong` effect wrapper for
+resolve/reject, spawn the next OS command, unlink temp paths, and free the job.
+Their exact job/effect owner still needs to move before
 `ProcessExitKind::{CronRegister,CronRemove}` can disappear.
 
 `Bun.spawn` subprocesses now also carry their lower child-process identities in
@@ -590,6 +592,7 @@ Required deeper type movement
   │     ├─> CronExpression / CronError now live in bun_runtime_types::cron_parser; only JSC date arithmetic remains in bun_runtime
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path
   │     ├─> CronRegisterJob / CronRemoveJob no longer store a duplicate Process*; detach/deref consumes ProcessState::take_process_handle() in bun_runtime
+  │     ├─> cron stdout/stderr final-buffer access now goes through ProcessState's BufferedReaderHandle values and bun_io::with_buffered_reader_handle()
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert JSPromiseStrongHandle promise-root slot through bun_jsc_types
   │     ├─> bun_io_types now owns KeepAliveState, but the cron owner still owns the KeepAlive effect wrapper and event-loop ref/unref calls

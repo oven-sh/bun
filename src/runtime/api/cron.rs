@@ -58,6 +58,16 @@ fn vm_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
+#[inline]
+fn with_output_final_buffer<R>(
+    reader: BufferedReaderHandle,
+    f: impl FnOnce(&[u8]) -> R,
+) -> R {
+    bun_io::with_buffered_reader_handle(reader, |reader| {
+        f(reader.final_buffer().as_slice())
+    })
+}
+
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
 /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
 #[inline]
@@ -265,11 +275,16 @@ impl CronRegisterJob {
         // Windows status policy inspects trimmed stderr. Copy it out because
         // `final_buffer()` borrows the reader while the reducer mutates state.
         #[cfg(windows)]
-        let stderr_owned: Vec<u8> = bun_string::immutable::trim(
-            s.stderr_reader.final_buffer().as_slice(),
-            &ASCII_WHITESPACE,
-        )
-        .to_vec();
+        let stderr_owned: Vec<u8> = s
+            .state
+            .process
+            .stderr_reader
+            .map(|reader| {
+                with_output_final_buffer(reader, |stderr| {
+                    bun_string::immutable::trim(stderr, &ASCII_WHITESPACE).to_vec()
+                })
+            })
+            .unwrap_or_default();
         #[cfg(windows)]
         let stderr_output: &[u8] = stderr_owned.as_slice();
         #[cfg(not(windows))]
@@ -375,10 +390,18 @@ impl CronRegisterJob {
     unsafe fn process_crontab_and_install(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        let existing_content = s.stdout_reader.final_buffer().as_slice();
+        let stdout_reader = s
+            .state
+            .process
+            .stdout_reader
+            .expect("cron register stdout reader handle must be recorded before install");
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, s.state.title.as_bytes(), &mut result).is_err() {
+        if with_output_final_buffer(stdout_reader, |existing_content| {
+            filter_crontab(existing_content, s.state.title.as_bytes(), &mut result)
+        })
+        .is_err()
+        {
             s.set_err(format_args!("Out of memory building crontab"));
             return unsafe { Self::finish(this) };
         }
@@ -925,11 +948,16 @@ impl CronRemoveJob {
         // Windows status policy inspects trimmed stderr. Copy it out because
         // `final_buffer()` borrows the reader while the reducer mutates state.
         #[cfg(windows)]
-        let stderr_owned: Vec<u8> = bun_string::immutable::trim(
-            s.stderr_reader.final_buffer().as_slice(),
-            &ASCII_WHITESPACE,
-        )
-        .to_vec();
+        let stderr_owned: Vec<u8> = s
+            .state
+            .process
+            .stderr_reader
+            .map(|reader| {
+                with_output_final_buffer(reader, |stderr| {
+                    bun_string::immutable::trim(stderr, &ASCII_WHITESPACE).to_vec()
+                })
+            })
+            .unwrap_or_default();
         #[cfg(windows)]
         let stderr_output: &[u8] = stderr_owned.as_slice();
         #[cfg(not(windows))]
@@ -1047,10 +1075,18 @@ impl CronRemoveJob {
     unsafe fn remove_crontab_entry(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
-        let existing_content = s.stdout_reader.final_buffer().as_slice();
+        let stdout_reader = s
+            .state
+            .process
+            .stdout_reader
+            .expect("cron remove stdout reader handle must be recorded before install");
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, s.state.title.as_bytes(), &mut result).is_err() {
+        if with_output_final_buffer(stdout_reader, |existing_content| {
+            filter_crontab(existing_content, s.state.title.as_bytes(), &mut result)
+        })
+        .is_err()
+        {
             s.set_err(format_args!("Out of memory"));
             return unsafe { Self::finish(this) };
         }
@@ -1995,6 +2031,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             } else {
                 s.stdout_reader().set_parent(this_ptr);
                 s.stdout_reader().start_memfd(stdout);
+                let stdout_reader = BufferedReaderHandle::from_ptr(s.stdout_reader())
+                    .expect("stdout reader pointer is non-null");
+                s.process_state_mut().record_stdout_reader(stdout_reader);
             }
         }
     }

@@ -36,13 +36,25 @@ impl WeakImpl {
         .expect("Bun__WeakRef__new returned null")
     }
 
-    pub unsafe fn get(this: NonNull<WeakImpl>) -> JSValue {
-        // SAFETY: `this` is a live WeakImpl handle owned by the caller.
+    /// Read the weakly-held `JSValue` (or `JSValue::ZERO` if collected).
+    ///
+    /// Safe: every `NonNull<WeakImpl>` in this crate originates from
+    /// [`WeakImpl::init`] and is held by a [`Weak<T>`] that drops it via
+    /// [`WeakImpl::destroy`] before releasing the slot — so any
+    /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
+    /// Same contract as [`crate::strong::Impl::get`].
+    pub fn get(this: NonNull<WeakImpl>) -> JSValue {
+        // SAFETY: `this` is a live WeakImpl handle (see fn doc); FFI reads
+        // the boxed JSC::Weak's slot without mutating Rust-visible state.
         unsafe { Bun__WeakRef__get(this.as_ptr()) }
     }
 
-    pub unsafe fn clear(this: NonNull<WeakImpl>) {
-        // SAFETY: `this` is a live WeakImpl handle owned by the caller.
+    /// Clear the weakly-held value without freeing the handle.
+    ///
+    /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
+    /// construction; `clear` is idempotent and does not invalidate `this`.
+    pub fn clear(this: NonNull<WeakImpl>) {
+        // SAFETY: `this` is a live WeakImpl handle (see fn doc).
         unsafe { Bun__WeakRef__clear(this.as_ptr()) }
     }
 
@@ -125,8 +137,7 @@ impl<T> Weak<T> {
 
     pub fn get(&self) -> Option<JSValue> {
         let r#ref = self.r#ref?;
-        // SAFETY: `r#ref` is live while `self` holds it.
-        let result = unsafe { WeakImpl::get(r#ref) };
+        let result = WeakImpl::get(r#ref);
         if result.is_empty() {
             return None;
         }
@@ -138,14 +149,12 @@ impl<T> Weak<T> {
         let Some(r#ref) = self.r#ref else {
             return JSValue::ZERO;
         };
-        // SAFETY: `r#ref` is live while `self` holds it.
-        let result = unsafe { WeakImpl::get(r#ref) };
+        let result = WeakImpl::get(r#ref);
         if result.is_empty() {
             return JSValue::ZERO;
         }
 
-        // SAFETY: `r#ref` is live while `self` holds it.
-        unsafe { WeakImpl::clear(r#ref) };
+        WeakImpl::clear(r#ref);
         result
     }
 
@@ -153,8 +162,7 @@ impl<T> Weak<T> {
         let Some(r#ref) = self.r#ref else {
             return false;
         };
-        // SAFETY: `r#ref` is live while `self` holds it.
-        !unsafe { WeakImpl::get(r#ref) }.is_empty()
+        !WeakImpl::get(r#ref).is_empty()
     }
 
     pub fn try_swap(&mut self) -> Option<JSValue> {
@@ -170,8 +178,7 @@ impl<T> Weak<T> {
         let Some(r#ref) = self.r#ref else {
             return;
         };
-        // SAFETY: `r#ref` is live while `self` holds it.
-        unsafe { WeakImpl::clear(r#ref) };
+        WeakImpl::clear(r#ref);
     }
 }
 

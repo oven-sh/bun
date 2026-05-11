@@ -444,13 +444,11 @@ impl TranspilerJob {
         // `transpile()`; reconstruct the Box and drop it.
         let old_path = core::mem::take(&mut self.path);
         if !old_path.text.is_empty() {
-            // SAFETY: `text` is exactly the slice returned by `heap::alloc` in
-            // `transpile()`; len matches, and this is the unique owner.
+            // SAFETY: `text` is exactly the `&[u8]` view of the `Box<[u8]>`
+            // produced by `heap::into_raw` in `transpile()`; the fat-pointer
+            // cast preserves length, and this is the unique owner.
             drop(unsafe {
-                Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
-                    old_path.text.as_ptr().cast_mut(),
-                    old_path.text.len(),
-                ))
+                bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut())
             });
         }
 

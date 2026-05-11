@@ -95,8 +95,12 @@ impl RefString {
                 on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
             }
 
-            // `allocator.free(this.leak())` — reconstitute the owned byte slice and drop it.
-            drop(bun_core::heap::take(core::slice::from_raw_parts_mut(
+            // `allocator.free(this.leak())` — reconstitute the owned byte slice
+            // and drop it. Build the fat `*mut [u8]` as a raw pointer (no `&mut`
+            // materialized — the WTF::StringImpl finalizer may still hold a
+            // shared view at this instant, so forming `&mut [u8]` would assert
+            // exclusivity we cannot prove).
+            drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                 (*this).ptr.cast_mut(),
                 (*this).len,
             )));

@@ -68,14 +68,17 @@ pub const UserOptions = struct {
         }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (!js_options.isObject()) {
+                return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions' must be an object", .{});
+            }
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
-                bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
+                bundler_options.server = try BuildConfigSubset.fromJS(global, "server", server_options);
             }
             if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
-                bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
+                bundler_options.client = try BuildConfigSubset.fromJS(global, "client", client_options);
             }
             if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
-                bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
+                bundler_options.ssr = try BuildConfigSubset.fromJS(global, "ssr", ssr_options);
             }
         }
 
@@ -202,7 +205,11 @@ const BuildConfigSubset = struct {
     minify_identifiers: ?bool = null,
     minify_whitespace: ?bool = null,
 
-    pub fn fromJS(global: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
+    pub fn fromJS(global: *jsc.JSGlobalObject, comptime name: []const u8, js_options: JSValue) bun.JSError!BuildConfigSubset {
+        if (!js_options.isObject()) {
+            return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions." ++ name ++ "' must be an object", .{});
+        }
+
         var options = BuildConfigSubset{};
 
         if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {

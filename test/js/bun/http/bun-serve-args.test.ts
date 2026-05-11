@@ -670,3 +670,23 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  const primitives = [128n, 5, "str", true, Symbol()];
+
+  test.each(primitives)("throws when bundlerOptions is %p", value => {
+    expect(() => {
+      // @ts-expect-error - Testing invalid input
+      serve({ port: 0, app: { bundlerOptions: value } });
+    }).toThrow(TypeError);
+  });
+
+  describe.each(["server", "client", "ssr"])("bundlerOptions.%s", key => {
+    test.each(primitives)("throws when value is %p", value => {
+      expect(() => {
+        // @ts-expect-error - Testing invalid input
+        serve({ port: 0, app: { bundlerOptions: { [key]: value } } });
+      }).toThrow(TypeError);
+    });
+  });
+});

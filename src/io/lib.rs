@@ -91,45 +91,235 @@ pub use posix_event_loop::{AllocatorType, Owner, PollTag};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
-// At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
-// macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
-//
 // `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
 // `uv_loop_t` (Zig `windows_event_loop.zig:1`) whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) and the Zig spec
 // (`EventLoopHandle.loop() -> *uws.Loop`) hand back the wrapper.
-bun_dispatch::link_interface! {
-    pub EventLoopCtx[Js, Mini] {
-        fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
-        fn file_polls_ptr() -> *mut Store;
-        fn alloc_file_poll() -> *mut FilePoll;
-        fn increment_pending_unref_counter();
-        fn ref_concurrently();
-        fn unref_concurrently();
-        fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(cb: Option<OpaqueCallback>, ctx: *mut core::ffi::c_void);
-        fn pipe_read_buffer() -> *mut [u8];
-        fn current_context() -> *mut core::ffi::c_void;
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventLoopCtxKind {
+    Js,
+    Mini,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventLoopCtx {
+    Js(bun_jsc_types::event_loop::VirtualMachineHandle),
+    Mini(bun_event_loop_types::MiniEventLoopHandle),
+}
+
+unsafe extern "Rust" {
+    fn __bun_io_event_loop_ctx_js_platform_event_loop_ptr(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> *mut bun_uws_sys::Loop;
+    fn __bun_io_event_loop_ctx_js_file_polls_ptr(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> *mut Store;
+    fn __bun_io_event_loop_ctx_js_alloc_file_poll(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> *mut FilePoll;
+    fn __bun_io_event_loop_ctx_js_increment_pending_unref_counter(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    );
+    fn __bun_io_event_loop_ctx_js_ref_concurrently(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    );
+    fn __bun_io_event_loop_ctx_js_unref_concurrently(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    );
+    fn __bun_io_event_loop_ctx_js_after_event_loop_callback(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> Option<OpaqueCallback>;
+    fn __bun_io_event_loop_ctx_js_set_after_event_loop_callback(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+        cb: Option<OpaqueCallback>,
+        ctx: *mut core::ffi::c_void,
+    );
+    fn __bun_io_event_loop_ctx_js_pipe_read_buffer(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> *mut [u8];
+    fn __bun_io_event_loop_ctx_js_current_context(
+        owner: bun_jsc_types::event_loop::VirtualMachineHandle,
+    ) -> *mut core::ffi::c_void;
+
+    fn __bun_io_event_loop_ctx_mini_platform_event_loop_ptr(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> *mut bun_uws_sys::Loop;
+    fn __bun_io_event_loop_ctx_mini_file_polls_ptr(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> *mut Store;
+    fn __bun_io_event_loop_ctx_mini_alloc_file_poll(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> *mut FilePoll;
+    fn __bun_io_event_loop_ctx_mini_increment_pending_unref_counter(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    );
+    fn __bun_io_event_loop_ctx_mini_ref_concurrently(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    );
+    fn __bun_io_event_loop_ctx_mini_unref_concurrently(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    );
+    fn __bun_io_event_loop_ctx_mini_after_event_loop_callback(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> Option<OpaqueCallback>;
+    fn __bun_io_event_loop_ctx_mini_set_after_event_loop_callback(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+        cb: Option<OpaqueCallback>,
+        ctx: *mut core::ffi::c_void,
+    );
+    fn __bun_io_event_loop_ctx_mini_pipe_read_buffer(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> *mut [u8];
+    fn __bun_io_event_loop_ctx_mini_current_context(
+        owner: bun_event_loop_types::MiniEventLoopHandle,
+    ) -> *mut core::ffi::c_void;
 }
 
 pub type EventLoopKind = EventLoopCtxKind;
 
 impl EventLoopCtx {
+    #[inline]
+    pub fn js(owner: bun_jsc_types::event_loop::VirtualMachineHandle) -> Self {
+        Self::Js(owner)
+    }
+
+    #[inline]
+    pub fn mini(owner: bun_event_loop_types::MiniEventLoopHandle) -> Self {
+        Self::Mini(owner)
+    }
+
+    #[inline]
+    pub fn kind(&self) -> EventLoopCtxKind {
+        match self {
+            Self::Js(_) => EventLoopCtxKind::Js,
+            Self::Mini(_) => EventLoopCtxKind::Mini,
+        }
+    }
+
+    #[inline]
+    pub fn is(&self, kind: EventLoopCtxKind) -> bool {
+        self.kind() == kind
+    }
+
+    #[inline]
+    pub fn platform_event_loop_ptr(&self) -> *mut bun_uws_sys::Loop {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_platform_event_loop_ptr(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_platform_event_loop_ptr(owner),
+            }
+        }
+    }
+
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
     pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
         unsafe { &mut *self.platform_event_loop_ptr() }
     }
+
+    #[inline]
+    pub fn file_polls_ptr(&self) -> *mut Store {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_file_polls_ptr(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_file_polls_ptr(owner),
+            }
+        }
+    }
+
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].
     #[inline]
     pub unsafe fn file_polls(&self) -> &mut Store {
         unsafe { &mut *self.file_polls_ptr() }
     }
+
+    #[inline]
+    pub fn alloc_file_poll(&self) -> *mut FilePoll {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_alloc_file_poll(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_alloc_file_poll(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn increment_pending_unref_counter(&self) {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_increment_pending_unref_counter(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_increment_pending_unref_counter(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn ref_concurrently(&self) {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_ref_concurrently(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_ref_concurrently(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn unref_concurrently(&self) {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_unref_concurrently(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_unref_concurrently(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn after_event_loop_callback(&self) -> Option<OpaqueCallback> {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_after_event_loop_callback(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_after_event_loop_callback(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn set_after_event_loop_callback(
+        &self,
+        cb: Option<OpaqueCallback>,
+        ctx: *mut core::ffi::c_void,
+    ) {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_set_after_event_loop_callback(owner, cb, ctx),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_set_after_event_loop_callback(owner, cb, ctx),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn pipe_read_buffer(&self) -> *mut [u8] {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_pipe_read_buffer(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_pipe_read_buffer(owner),
+            }
+        }
+    }
+
+    #[inline]
+    pub fn current_context(&self) -> *mut core::ffi::c_void {
+        unsafe {
+            match *self {
+                Self::Js(owner) => __bun_io_event_loop_ctx_js_current_context(owner),
+                Self::Mini(owner) => __bun_io_event_loop_ctx_mini_current_context(owner),
+            }
+        }
+    }
+
     #[inline]
     pub fn is_js(&self) -> bool { self.is(EventLoopCtxKind::Js) }
     #[inline]

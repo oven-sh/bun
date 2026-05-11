@@ -27,6 +27,7 @@ use bun_io::file_poll::{FilePoll, Store as FilePollStore};
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
+use bun_event_loop_types::MiniEventLoopHandle;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -552,34 +553,95 @@ impl<'a> MiniEventLoop<'a> {
 }
 
 // ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────
-// `bun_io::file_poll::Store::put` and friends take an erased `EventLoopCtx`
+// `bun_io::file_poll::Store::put` and friends take a typed `EventLoopCtx`
 // instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
-// `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
-// in `bun_runtime` (it must name `jsc::VirtualMachine`).
+// MiniEventLoop, so Mini handle recovery remains here.
 
-bun_io::link_impl_EventLoopCtx! {
-    Mini for MiniEventLoop<'static> => |this| {
-        platform_event_loop_ptr() => (*this).loop_ptr(),
-        // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
-        // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
-        // reaches this body.
-        file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
-        alloc_file_poll() => (*MiniEventLoop::file_polls_raw(this)).get(),
-        // Mini has no pending_unref_counter; the upstream deliberately panics.
-        increment_pending_unref_counter() => panic!("FIXME TODO"),
-        // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
-        // on Mini upstream); preserve that invariant rather than racily
-        // mutating uws counters off-thread.
-        ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
-        unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
-        after_event_loop_callback() => (*this).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            (*this).after_event_loop_callback = cb;
-            (*this).after_event_loop_callback_ctx = NonNull::new(ctx);
-        },
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
-        current_context() => (*this).current_context(),
-    }
+#[inline(always)]
+fn mini_ptr(handle: MiniEventLoopHandle) -> *mut MiniEventLoop<'static> {
+    handle.as_ptr().cast::<MiniEventLoop<'static>>()
+}
+
+#[inline(always)]
+unsafe fn mini_from_handle<'a>(handle: MiniEventLoopHandle) -> &'a mut MiniEventLoop<'static> {
+    unsafe { &mut *mini_ptr(handle) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_platform_event_loop_ptr(
+    owner: MiniEventLoopHandle,
+) -> *mut bun_uws_sys::Loop {
+    unsafe { mini_from_handle(owner).loop_ptr() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_file_polls_ptr(
+    owner: MiniEventLoopHandle,
+) -> *mut FilePollStore {
+    // `file_polls_raw` avoids aliased `&mut MiniEventLoop` while `tick*` holds
+    // `&mut self` across the re-entrant `UwsLoop::tick()` that reaches here.
+    unsafe { MiniEventLoop::file_polls_raw(mini_ptr(owner)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_alloc_file_poll(
+    owner: MiniEventLoopHandle,
+) -> *mut FilePoll {
+    unsafe { (*MiniEventLoop::file_polls_raw(mini_ptr(owner))).get() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_increment_pending_unref_counter(
+    _owner: MiniEventLoopHandle,
+) {
+    // Mini has no pending_unref_counter; the upstream deliberately panics.
+    panic!("FIXME TODO")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_ref_concurrently(
+    _owner: MiniEventLoopHandle,
+) {
+    unreachable!("KeepAlive::refConcurrently is JS-VM-only")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_unref_concurrently(
+    _owner: MiniEventLoopHandle,
+) {
+    unreachable!("KeepAlive::unrefConcurrently is JS-VM-only")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_after_event_loop_callback(
+    owner: MiniEventLoopHandle,
+) -> Option<bun_io::OpaqueCallback> {
+    unsafe { mini_from_handle(owner).after_event_loop_callback }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_set_after_event_loop_callback(
+    owner: MiniEventLoopHandle,
+    cb: Option<bun_io::OpaqueCallback>,
+    ctx: *mut c_void,
+) {
+    let mini = unsafe { mini_from_handle(owner) };
+    mini.after_event_loop_callback = cb;
+    mini.after_event_loop_callback_ctx = NonNull::new(ctx);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_pipe_read_buffer(
+    owner: MiniEventLoopHandle,
+) -> *mut [u8] {
+    unsafe { core::ptr::from_mut::<[u8]>(mini_from_handle(owner).pipe_read_buffer()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_mini_current_context(
+    owner: MiniEventLoopHandle,
+) -> *mut c_void {
+    unsafe { mini_from_handle(owner).current_context() }
 }
 
 impl<'a> MiniEventLoop<'a> {
@@ -587,7 +649,7 @@ impl<'a> MiniEventLoop<'a> {
     pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is the live per-thread MiniEventLoop singleton; it
         // outlives every `EventLoopCtx` derived from it.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
+        bun_io::EventLoopCtx::mini(unsafe { MiniEventLoopHandle::from_raw(this.cast::<()>()) })
     }
 }
 

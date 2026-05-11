@@ -43,6 +43,7 @@ members = [
   "src/dns",
   "src/dotenv",
   "src/event_loop",
+  "src/event_loop_types",
   "src/exe_format",
   "src/highway",
   "src/http_jsc",
@@ -258,6 +259,7 @@ bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
+bun_event_loop_types = { path = "src/event_loop_types" }
 bun_exe_format = { path = "src/exe_format" }
 bun_highway = { path = "src/highway" }
 bun_http_jsc = { path = "src/http_jsc" }

@@ -18,6 +18,7 @@ use core::ptr::NonNull;
 
 use bun_io as Async;
 use bun_bundler::Transpiler;
+use bun_jsc_types::event_loop::VirtualMachineHandle;
 use bun_logger as logger;
 use bun_uws as uws;
 
@@ -1672,56 +1673,98 @@ pub struct RuntimeHooks {
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
 }
 
-/// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
-/// half of `bun_io`'s cycle-break manual vtable. Every slot is implementable
-/// from in-crate data (spec posix_event_loop.zig:100-104 / RareData.zig:441),
-/// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
-/// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
-/// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
-/// Recover `&mut VirtualMachine` from the erased vtable `owner`. Private to
-/// this module — every caller is an `unsafe fn` slot in
-/// [`VM_EVENT_LOOP_CTX_VTABLE`] whose contract guarantees `owner` was erased
-/// from a live `*mut VirtualMachine` in [`VirtualMachine::event_loop_ctx`].
+/// Recover `&mut VirtualMachine` from the typed EventLoopCtx handle. Private to
+/// this module: the handle was created from a live VM in
+/// [`VirtualMachine::event_loop_ctx`].
 #[inline(always)]
-fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
-    // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
-    unsafe { &mut *owner.cast::<VirtualMachine>() }
+unsafe fn vm_from_handle<'a>(owner: VirtualMachineHandle) -> &'a mut VirtualMachine {
+    unsafe { &mut *owner.as_ptr().cast::<VirtualMachine>() }
 }
 
-bun_io::link_impl_EventLoopCtx! {
-    Js for VirtualMachine => |this| {
-        platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
-        file_polls_ptr() => {
-            let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
-        },
-        alloc_file_poll() => {
-            let rare = vm_from_owner(this.cast()).rare_data();
-            rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init())).get()
-        },
-        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
-        // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
-        // would alias the JS thread's `&mut`. Raw place RMW only (the
-        // field-level non-atomic race is pre-existing; TODO: make
-        // `pending_unref_counter` an `AtomicI32` with `fetch_add`).
-        increment_pending_unref_counter() => (*this).pending_unref_counter += 1,
-        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
-        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
-        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
-        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
-        ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
-        unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
-        after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            let vm = vm_from_owner(this.cast());
-            vm.after_event_loop_callback = cb;
-            vm.after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
-        },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
-        current_context() => (*(*this).event_loop()).current_context(),
-    }
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_platform_event_loop_ptr(
+    owner: VirtualMachineHandle,
+) -> *mut bun_uws_sys::Loop {
+    unsafe { vm_from_handle(owner).uws_loop() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_file_polls_ptr(
+    owner: VirtualMachineHandle,
+) -> *mut bun_io::Store {
+    let rare = unsafe { vm_from_handle(owner).rare_data() };
+    &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_alloc_file_poll(
+    owner: VirtualMachineHandle,
+) -> *mut bun_io::FilePoll {
+    let rare = unsafe { vm_from_handle(owner).rare_data() };
+    rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init())).get()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_increment_pending_unref_counter(
+    owner: VirtualMachineHandle,
+) {
+    let vm = owner.as_ptr().cast::<VirtualMachine>();
+    // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
+    // Do NOT route through `vm_from_handle()` — that mints `&mut VM`, which
+    // would alias the JS thread's `&mut`. Raw place RMW only (the field-level
+    // non-atomic race is pre-existing; TODO: make this an AtomicI32).
+    unsafe { (*vm).pending_unref_counter += 1 };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_ref_concurrently(
+    owner: VirtualMachineHandle,
+) {
+    let vm = owner.as_ptr().cast::<VirtualMachine>();
+    // CROSS-THREAD: `event_loop()` takes `&self` and ref_concurrently is atomic.
+    unsafe { (*(*vm).event_loop()).ref_concurrently() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_unref_concurrently(
+    owner: VirtualMachineHandle,
+) {
+    let vm = owner.as_ptr().cast::<VirtualMachine>();
+    // CROSS-THREAD: `event_loop()` takes `&self` and unref_concurrently is atomic.
+    unsafe { (*(*vm).event_loop()).unref_concurrently() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_after_event_loop_callback(
+    owner: VirtualMachineHandle,
+) -> Option<bun_io::OpaqueCallback> {
+    unsafe { vm_from_handle(owner).after_event_loop_callback }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_set_after_event_loop_callback(
+    owner: VirtualMachineHandle,
+    cb: Option<bun_io::OpaqueCallback>,
+    ctx: *mut c_void,
+) {
+    let vm = unsafe { vm_from_handle(owner) };
+    vm.after_event_loop_callback = cb;
+    vm.after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_pipe_read_buffer(
+    owner: VirtualMachineHandle,
+) -> *mut [u8] {
+    unsafe { core::ptr::from_mut::<[u8]>(vm_from_handle(owner).rare_data().pipe_read_buffer()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn __bun_io_event_loop_ctx_js_current_context(
+    owner: VirtualMachineHandle,
+) -> *mut c_void {
+    let vm = owner.as_ptr().cast::<VirtualMachine>();
+    unsafe { (*(*vm).event_loop()).current_context() }
 }
 
 impl VirtualMachine {
@@ -1729,7 +1772,7 @@ impl VirtualMachine {
     pub fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is a live VM (per-thread or a worker's parent ref);
         // it outlives every ctx derived from it.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+        bun_io::EventLoopCtx::js(unsafe { VirtualMachineHandle::from_raw(this.cast::<()>()) })
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through

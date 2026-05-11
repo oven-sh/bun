@@ -1,0 +1,10 @@
+[package]
+name = "bun_event_loop_types"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_opaque.workspace = true

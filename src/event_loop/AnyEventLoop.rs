@@ -383,12 +383,13 @@ impl EventLoopHandle {
     #[inline]
     pub fn as_event_loop_ctx(self) -> bun_io::EventLoopCtx {
         match self {
-            // SAFETY: `owner.bun_vm()` returns the owning `*mut VirtualMachine`,
-            // which is what the `EventLoopCtxKind::Js` `link_impl_EventLoopCtx!`
-            // (in `bun_jsc`) is written for. Both are per-thread singletons
-            // that outlive the ctx.
-            EventLoopHandle::Js { owner } => unsafe {
-                bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
+            // SAFETY: `owner.bun_vm()` returns the owning `*mut VirtualMachine`.
+            // Both are per-thread singletons that outlive the ctx.
+            EventLoopHandle::Js { owner } => {
+                let vm = unsafe {
+                    bun_jsc_types::event_loop::VirtualMachineHandle::from_raw(owner.bun_vm())
+                };
+                bun_io::EventLoopCtx::js(vm)
             },
             EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini),
         }

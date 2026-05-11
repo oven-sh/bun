@@ -754,6 +754,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_dotenv",
+ "bun_event_loop_types",
  "bun_io",
  "bun_io_types",
  "bun_jsc_types",
@@ -762,6 +763,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_uws",
+ "bun_uws_sys",
  "const_format",
  "enum-map",
  "enumset",
@@ -770,6 +772,13 @@ dependencies = [
  "phf 0.11.3",
  "scopeguard",
  "strum",
+]
+
+[[package]]
+name = "bun_event_loop_types"
+version = "0.0.0"
+dependencies = [
+ "bun_opaque",
 ]
 
 [[package]]
@@ -1123,10 +1132,11 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
+ "bun_event_loop_types",
  "bun_install_types",
  "bun_io_types",
+ "bun_jsc_types",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
@@ -1314,6 +1324,7 @@ dependencies = [
  "bun_transpiler",
  "bun_url",
  "bun_uws",
+ "bun_uws_sys",
  "bun_watcher",
  "bun_wyhash",
  "bytemuck",

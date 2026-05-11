@@ -59,5 +59,6 @@ bun_threading.workspace = true
 bun_transpiler.workspace = true
 bun_url.workspace = true
 bun_uws.workspace = true
+bun_uws_sys.workspace = true
 bun_watcher.workspace = true
 bun_wyhash.workspace = true

@@ -443,4 +443,16 @@ mod tests {
         let handle = unsafe { event_loop::JsEventLoopHandle::from_raw(ptr) };
         assert_eq!(handle.as_void_ptr(), ptr.cast::<core::ffi::c_void>());
     }
+
+    #[test]
+    fn virtual_machine_handle_preserves_pointer_shape() {
+        assert_eq!(
+            core::mem::size_of::<event_loop::VirtualMachineHandle>(),
+            core::mem::size_of::<usize>()
+        );
+
+        let ptr = NonNull::<event_loop::VirtualMachine>::dangling().as_ptr().cast::<()>();
+        let handle = unsafe { event_loop::VirtualMachineHandle::from_raw(ptr) };
+        assert_eq!(handle.as_void_ptr(), ptr.cast::<core::ffi::c_void>());
+    }
 }

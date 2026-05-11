@@ -1548,25 +1548,33 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
+        // PORT_NOTES_PLAN R-2: launder `*this` for the same reason as the
+        // Streaming sibling above — `close()` → `Parent::on_close` → JS may
+        // re-enter via `with_mut(|w| ..)`; the post-call `(*this).parent()`
+        // must reload. NOALIAS_HUNT cluster E.
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
-        // borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(parent_ptr) };
+        // borrow of `*this` live, so this is the sole access path.
+        let this: *mut Self = core::hint::black_box(parent_ptr.cast::<Self>());
 
         if was_canceled {
             // Canceled write - clear pending state
-            this.pending_payload_size = 0;
+            // SAFETY: `this` sole access path on the JS thread.
+            unsafe { (*this).pending_payload_size = 0 };
             return;
         }
 
         if let Some(err) = result.to_error(sys::Tag::write) {
-            this.close();
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(this.parent(), err) };
+            // SAFETY: `this` sole access path; close() may re-enter JS.
+            unsafe { (*this).close() };
+            core::hint::black_box(this);
+            // SAFETY: parent BACKREF valid; re-read after close() re-entry.
+            unsafe { Parent::on_error((*this).parent(), err) };
             return;
         }
 
-        this.on_write_complete(uv::ReturnCode::zero());
+        // SAFETY: `this` sole access path; on_write_complete is itself laundered.
+        unsafe { (*this).on_write_complete(uv::ReturnCode::zero()) };
     }
 
     pub fn write(&mut self) {
@@ -2046,16 +2054,29 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return;
         }
 
+        // PORT_NOTES_PLAN R-2: launder `*this`. `this.on_write_complete()` /
+        // `this.close()` below both reach `Parent::on_write`/`on_close` →
+        // FileSink → JS, which can `self.writer.with_mut(|w| w.end()/close())`
+        // forming a fresh aliased `&mut WindowsStreamingWriter`. The
+        // `callback_ctx` `&mut` itself isn't a fn parameter (no `noalias`
+        // attribute), but `this.on_write_complete(..)` *passes* `&mut self`
+        // and that callee parameter IS `noalias` — `on_write_complete` is
+        // already laundered (6f715148), so the success path is covered. The
+        // error path (`close()` → `on_error(this.parent())` → guard deref)
+        // reads `this.parent` after re-entry; route those through a
+        // black-boxed raw ptr so any inlined call chain cannot
+        // store-forward across the JS re-entry. NOALIAS_HUNT cluster E.
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
-        // Rust borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(parent_ptr) };
+        // Rust borrow of `*this` live, so this is the sole access path.
+        let this: *mut Self = core::hint::black_box(parent_ptr.cast::<Self>());
 
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
-            this.current_payload.reset();
+            // SAFETY: `this` is the live writer ctx; sole access path on the JS thread.
+            unsafe { (*this).current_payload.reset() };
             // SAFETY: parent is BACKREF; ref taken in process_send keeps it alive until this deref.
-            unsafe { Parent::deref(this.parent) };
+            unsafe { Parent::deref((*this).parent) };
             return;
         }
 
@@ -2064,17 +2085,19 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // guard execution (Zig defer semantics), not eagerly, in case
             // close()/on_error re-enter and swap the parent pointer.
             // SAFETY: ref taken in process_send keeps parent (and self) alive until this deref.
-            let _g = scopeguard::guard(core::ptr::from_mut(this), |s| unsafe {
-                Parent::deref((*s).parent)
-            });
-            this.close();
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(this.parent(), err) };
+            let _g = scopeguard::guard(this, |s| unsafe { Parent::deref((*s).parent) });
+            // SAFETY: `this` sole access path; close() may re-enter JS — every
+            // post-call `(*this)` deref reloads (raw ptr, no noalias).
+            unsafe { (*this).close() };
+            core::hint::black_box(this);
+            // SAFETY: parent BACKREF valid; re-read after close() re-entry.
+            unsafe { Parent::on_error((*this).parent(), err) };
             return;
         }
 
-        // on_write_complete handles the deref
-        this.on_write_complete(uv::ReturnCode::zero());
+        // on_write_complete handles the deref (and is itself laundered).
+        // SAFETY: `this` sole access path on the JS thread.
+        unsafe { (*this).on_write_complete(uv::ReturnCode::zero()) };
     }
 
     /// this tries to send more data returning if we are writable or not after this

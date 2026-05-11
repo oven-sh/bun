@@ -15,7 +15,7 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
-use bun_install_types::lifecycle::LifecycleScriptState;
+use bun_install_types::lifecycle::{InstallCtx, LifecycleScriptState};
 use bun_install_types::process_exit::LifecycleScriptExitAction;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
@@ -220,21 +220,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub envp: bun_dotenv::NullDelimitedEnvMap,
     pub shell_bin: Option<&'a ZStr>,
 
-    pub timer: Option<Timer>,
-
-    pub has_incremented_alive_count: bool,
-
-    pub ctx: Option<InstallCtx<'a>>,
-
     pub heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
-}
-
-pub struct InstallCtx<'a> {
-    pub entry_id: entry::Id,
-    /// Zig: `installer: *Installer`. Raw `*mut` for the same reason as
-    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-    /// mutate Installer state from inside an exit-handler callback.
-    pub installer: *mut Installer<'a>,
 }
 
 // PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
@@ -282,9 +268,6 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper in Phase B.
-pub type Timer = bun_core::time::Timer;
-
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// `bun.TrivialNew(@This())` — heap-allocate and return a raw pointer; this type is
     /// intrusive (heap field, OutputReader parent backrefs), so it lives behind `*mut Self`.
@@ -307,6 +290,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     fn manager_mut(&self) -> &mut PackageManager {
         // SAFETY: see fn doc.
         unsafe { &mut *self.manager }
+    }
+
+    #[inline]
+    fn install_ctx_parts(ctx: &InstallCtx) -> (entry::Id, *mut Installer<'a>) {
+        (
+            entry::Id::from(ctx.entry_id),
+            ctx.installer.as_ptr::<Installer<'a>>(),
+        )
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
@@ -435,8 +426,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
         unsafe {
-            if !(*this).has_incremented_alive_count {
-                (*this).has_incremented_alive_count = true;
+            if !(*this).state.has_incremented_alive_count {
+                (*this).state.has_incremented_alive_count = true;
                 // .monotonic is okay because because this value is only used by hoisted installs, which
                 // only use this type on the main thread.
                 let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -457,8 +448,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if result.is_err() {
             // SAFETY: as above.
             unsafe {
-                if (*this).has_incremented_alive_count {
-                    (*this).has_incremented_alive_count = false;
+                if (*this).state.has_incremented_alive_count {
+                    (*this).state.has_incremented_alive_count = false;
                     // .monotonic is okay because because this value is only used by hoisted installs.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
@@ -804,8 +795,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             status
         );
 
-        if self.has_incremented_alive_count {
-            self.has_incremented_alive_count = false;
+        if self.state.has_incremented_alive_count {
+            self.state.has_incremented_alive_count = false;
             // .monotonic is okay because because this value is only used by hoisted installs, which
             // only use this type on the main thread.
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
@@ -817,19 +808,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         match status {
             Status::Exited(exit) => {
-                let maybe_duration = self.timer.as_mut().map(|t| t.read());
+                let maybe_duration = self.state.timer.as_mut().map(|t| t.read());
 
                 if exit.code > 0 {
                     if self.state.optional {
-                        if let Some(ctx) = &self.ctx {
+                        if let Some(ctx) = &self.state.ctx {
+                            let (entry_id, installer) = Self::install_ctx_parts(ctx);
                             // SAFETY: `installer` outlives every subprocess and is
                             // single-threaded across the lifecycle-script callbacks.
                             unsafe {
-                                (*ctx.installer).store.entries.items_step()
-                                    [ctx.entry_id.get() as usize]
+                                (*installer).store.entries.items_step()
+                                    [entry_id.get() as usize]
                                     .store(Step::Done as u32, Ordering::Release);
-                                (*ctx.installer)
-                                    .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                                (*installer)
+                                    .on_task_complete(entry_id, CompleteState::Skipped);
                             }
                         }
                         self.decrement_pending_script_tasks();
@@ -883,17 +875,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     }
                 }
 
-                if let Some(ctx) = &self.ctx {
+                if let Some(ctx) = &self.state.ctx {
+                    let (entry_id, installer) = Self::install_ctx_parts(ctx);
                     match self.state.current_script_index {
                         // preinstall
                         0 => {
                             // SAFETY: see above (`installer` outlives every subprocess).
                             unsafe {
-                                let previous_step = (*ctx.installer).store.entries.items_step()
-                                    [ctx.entry_id.get() as usize]
+                                let previous_step = (*installer).store.entries.items_step()
+                                    [entry_id.get() as usize]
                                     .swap(Step::Binaries as u32, Ordering::Release);
                                 debug_assert!(previous_step == Step::RunPreinstall as u32);
-                                (*ctx.installer).start_task(ctx.entry_id);
+                                (*installer).start_task(entry_id);
                             }
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -939,11 +932,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     ));
                 }
 
-                if let Some(ctx) = &self.ctx {
+                if let Some(ctx) = &self.state.ctx {
+                    let (entry_id, installer) = Self::install_ctx_parts(ctx);
                     // SAFETY: see above (`installer` outlives every subprocess).
                     unsafe {
-                        let previous_step = (*ctx.installer).store.entries.items_step()
-                            [ctx.entry_id.get() as usize]
+                        let previous_step = (*installer).store.entries.items_step()
+                            [entry_id.get() as usize]
                             .swap(Step::Done as u32, Ordering::Release);
                         if bun_core::Environment::CI_ASSERT {
                             debug_assert!(self.state.current_script_index != 0);
@@ -952,8 +946,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             );
                         }
                         let _ = previous_step;
-                        (*ctx.installer)
-                            .on_task_complete(ctx.entry_id, CompleteState::Success);
+                        (*installer)
+                            .on_task_complete(entry_id, CompleteState::Success);
                     }
                 }
 
@@ -985,14 +979,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Err(err) => {
                 if self.state.optional {
-                    if let Some(ctx) = &self.ctx {
+                    if let Some(ctx) = &self.state.ctx {
+                        let (entry_id, installer) = Self::install_ctx_parts(ctx);
                         // SAFETY: see above (`installer` outlives every subprocess).
                         unsafe {
-                            (*ctx.installer).store.entries.items_step()
-                                [ctx.entry_id.get() as usize]
+                            (*installer).store.entries.items_step()
+                                [entry_id.get() as usize]
                                 .store(Step::Done as u32, Ordering::Release);
-                            (*ctx.installer)
-                                .on_task_complete(ctx.entry_id, CompleteState::Skipped);
+                            (*installer)
+                                .on_task_complete(entry_id, CompleteState::Skipped);
                         }
                     }
                     self.decrement_pending_script_tasks();
@@ -1117,19 +1112,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         optional: bool,
         log_level: crate::LogLevel,
         foreground: bool,
-        ctx: Option<InstallCtx<'a>>,
+        ctx: Option<InstallCtx>,
     ) -> Result<(), bun_core::Error> {
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
-            state: LifecycleScriptState::new(list, foreground, optional),
+            state: LifecycleScriptState::new(list, foreground, optional, ctx),
             manager,
             envp,
             shell_bin,
-            ctx,
             process: core::ptr::null_mut(),
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
-            timer: None,
-            has_incremented_alive_count: false,
             heap: io_heap::IntrusiveField::default(),
         });
 

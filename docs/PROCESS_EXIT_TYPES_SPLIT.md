@@ -90,9 +90,11 @@ Natural sibling crates
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     ├─> LifecycleScriptState
-  │     │     └─> lifecycle command list, copied package name, current index, output readiness, and exit reducer
+  │     │     └─> lifecycle command list, copied package name, current index, output readiness, timer, install context, and exit reducer
   │     ├─> ScriptsList
   │     │     └─> lifecycle command list data formerly owned in bun_install::lockfile::package::scripts
+  │     ├─> InstallerHandle / InstallCtx
+  │     │     └─> typed install-task identity needed by lifecycle completion effects
   │     └─> SecurityScanExit
   └─> owning crates
         ├─> bun_io stores IO owner/token values and owns kernel registration
@@ -213,11 +215,14 @@ subprocess.
 
 Lifecycle scripts now also keep their pure command/readiness state in
 `bun_install_types::lifecycle::LifecycleScriptState`: script list, copied
-package name, current script index, output-fd readiness, and the
-`LifecycleScriptExit` reducer. Their `ProcessExit` owner re-entry remains a
-separate type-movement problem: when process exit is the last event, the current
-callback synchronously resumes the owning lifecycle state and may free or
-restart that owner. Cron register/remove now keep their child-process
+package name, current script index, output-fd readiness, timer, alive-count
+state, install-task context, and the `LifecycleScriptExit` reducer. The install
+context stores the entry id plus a typed installer handle; the concrete
+`Installer<'_>` pointer is recovered only at the `bun_install` effect sites.
+Their `ProcessExit` owner re-entry remains a separate type-movement problem:
+when process exit is the last event, the current callback synchronously resumes
+the owning lifecycle state and may free or restart that owner. Cron
+register/remove now keep their child-process
 readiness/error state in `bun_runtime_types::cron::ProcessState`: pending
 output-fd count, initialized `ProcessExitReadiness`, and the first process-output
 error. Their exact job/effect owner still needs to move before
@@ -239,7 +244,9 @@ Process-exit production shape
   │     ├─> LifecycleScriptExit
   │     │     └─> returns LifecycleScriptExitAction
   │     ├─> LifecycleScriptState
-  │     │     └─> owns pure lifecycle command/readiness state while bun_install keeps effects
+  │     │     └─> owns pure lifecycle command/readiness/timer/install-task state while bun_install keeps effects
+  │     ├─> InstallerHandle / InstallCtx
+  │     │     └─> carries typed installer identity without making bun_spawn depend on bun_install
   │     └─> SecurityScanExit
   │           └─> returns SecurityScanExitAction
   ├─> bun_runtime_types
@@ -388,7 +395,8 @@ Reducer prework that still needs owner type movement
 Remaining owner movement
   ├─> LifecycleScriptSubprocess
   │     ├─> current owner: install/lifecycle_script_runner.rs::LifecycleScriptSubprocess
-  │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, timer, intrusive heap node
+  │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, shell path, intrusive heap node
+  │     │     - embeds LifecycleScriptState for command/readiness/timer/install-task state
   │     │     - spawn_next_script_inner still installs ProcessExit::LifecycleScript after ProcessIdentity exists
   │     ├─> current event-loop context
   │     │     - PackageManager::tick_lifecycle_scripts passes PackageManager* directly
@@ -468,18 +476,19 @@ What a real next split must change
 Required deeper type movement
   ├─> lifecycle cannot finish with the current split alone
   │     ├─> the reducer knows "ready", but handle_exit also needs:
-  │     │     - script/package/env/timer/install state
+  │     │     - process/env/shell/reader storage and teardown authority
   │     │     - process close/deref authority
   │     │     - stdout/stderr buffers and reader teardown/reuse
   │     │     - PackageManager/Installer effects
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
   │     ├─> ScriptsList has moved into bun_install_types as the first command-data piece; the old lockfile path re-exports that sidecar type so install callers keep the same surface
   │     ├─> LifecycleScriptState has moved the current index, copied package name, output readiness count, and LifecycleScriptExit reducer into bun_install_types without changing the old package-name allocation shape
+  │     ├─> LifecycleScriptState now also owns timer, alive-count state, and InstallCtx; bun_install reconstructs `entry::Id`/`Installer<'_>*` only while applying completion effects
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
   │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
   │     ├─> the generic intrusive heap metadata moved to bun_io_types, and lifecycle/timer production code imports that sidecar path directly
   │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
-  │     ├─> lifecycle still needs the process/reader/effect storage split that owns those handles without recovering LifecycleScriptSubprocess
+  │     ├─> lifecycle still needs the process/reader/env/effect storage split that owns those handles without recovering LifecycleScriptSubprocess
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free

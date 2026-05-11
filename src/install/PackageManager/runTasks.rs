@@ -26,7 +26,7 @@ use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 use crate::dependency::Behavior;
-use crate::lifecycle_script_runner::InstallCtx;
+use bun_install_types::lifecycle::{InstallCtx, InstallerHandle};
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use super::{Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
@@ -302,8 +302,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         optional,
                         false,
                         Some(InstallCtx {
-                            entry_id,
-                            installer: installer_ptr,
+                            entry_id: entry_id.get(),
+                            installer: InstallerHandle::from_ptr(installer_ptr)
+                                .expect("installer pointer must not be null"),
                         }),
                     );
                     if let Err(err) = spawn_res {

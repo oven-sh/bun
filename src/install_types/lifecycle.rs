@@ -1,4 +1,6 @@
-use bun_core::ZBox;
+use core::ptr::NonNull;
+
+use bun_core::{time::Timer, ZBox};
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
 use crate::{LifecycleScriptExit, LifecycleScriptExitAction};
@@ -45,6 +47,28 @@ impl ScriptsList {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct InstallerHandle {
+    ptr: NonNull<()>,
+}
+
+impl InstallerHandle {
+    #[inline]
+    pub fn from_ptr<T>(ptr: *mut T) -> Option<Self> {
+        NonNull::new(ptr.cast()).map(|ptr| Self { ptr })
+    }
+
+    #[inline]
+    pub fn as_ptr<T>(self) -> *mut T {
+        self.ptr.as_ptr().cast()
+    }
+}
+
+pub struct InstallCtx {
+    pub entry_id: u32,
+    pub installer: InstallerHandle,
+}
+
 pub struct LifecycleScriptState {
     pub scripts: ScriptsList,
     pub package_name: Box<[u8]>,
@@ -54,11 +78,19 @@ pub struct LifecycleScriptState {
     pub foreground: bool,
     pub optional: bool,
     pub started_at: u64,
+    pub timer: Option<Timer>,
+    pub has_incremented_alive_count: bool,
+    pub ctx: Option<InstallCtx>,
 }
 
 impl LifecycleScriptState {
     #[inline]
-    pub fn new(scripts: ScriptsList, foreground: bool, optional: bool) -> Self {
+    pub fn new(
+        scripts: ScriptsList,
+        foreground: bool,
+        optional: bool,
+        ctx: Option<InstallCtx>,
+    ) -> Self {
         let package_name = scripts.package_name.clone();
         Self {
             scripts,
@@ -69,6 +101,9 @@ impl LifecycleScriptState {
             foreground,
             optional,
             started_at: 0,
+            timer: None,
+            has_incremented_alive_count: false,
+            ctx,
         }
     }
 
@@ -196,6 +231,7 @@ mod tests {
             },
             false,
             false,
+            None,
         );
 
         state.record_output_fd();

@@ -21,9 +21,8 @@ use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::{
     invalid_package_id, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
 };
-use crate::lifecycle_script_runner::{
-    InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
-};
+use bun_install_types::lifecycle::InstallCtx;
+use crate::lifecycle_script_runner::LifecycleScriptSubprocess as RealLifecycleScriptSubprocess;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use super::directories;
@@ -409,7 +408,7 @@ impl PackageManager {
         list: ScriptsList,
         optional: bool,
         foreground: bool,
-        install_ctx: Option<InstallCtx<'_>>,
+        install_ctx: Option<InstallCtx>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let log_level = self.options.log_level;
@@ -636,7 +635,7 @@ pub fn spawn_package_lifecycle_scripts(
     list: ScriptsList,
     optional: bool,
     foreground: bool,
-    install_ctx: Option<InstallCtx<'_>>,
+    install_ctx: Option<InstallCtx>,
 ) -> Result<(), bun_core::Error> {
     this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
 }

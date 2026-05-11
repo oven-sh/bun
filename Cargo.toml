@@ -130,15 +130,16 @@ edition = "2024"
 # `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
 # the whole Rust crate graph into one LLVM module, matching Zig's shape.
 #
-# `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` prints the
-# trace string + uploads then aborts (matching Zig's `noreturn` panic), so
-# `catch_unwind` is unreachable for Rust panics anyway. Dropping unwind keeps
-# landing pads / drop-glue cleanup out of every function (smaller `.eh_frame`
-# on POSIX, smaller `.pdata`/`.xdata` on Windows). Stack traces are unaffected:
-# `Bun__captureStackTrace` walks frame pointers (`-Cforce-frame-pointers=yes`),
-# not unwind tables. JSC does not throw C++ exceptions across its API (it uses
-# VM exception slots), so nothing relies on `catch_unwind` catching foreign
-# unwinds either.
+# `panic = "unwind"` — the `std::panic` hook in `bun_crash_handler` aborts,
+# so `catch_unwind` is unreachable for Rust panics regardless. We *want*
+# `panic = "abort"` (smaller `.pdata`/`.xdata`, no landing pads), but switching
+# to it exposed a latent Windows-only `Strong<Impl>* corrupted (0x1)` in the
+# fs/promises writeFile async-iterable path (#53265+): the corruption is not
+# an over-deref (the `raw_ref_count` underflow assert does not fire), and
+# `/OPT:SAFEICF` folds enough Rust+C++ bodies under abort's simpler codegen
+# that PDB symbolication can't identify the owning struct. Revert to `unwind`
+# until that's root-caused with a no-ICF profile build; the size win can land
+# afterward.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
@@ -149,10 +150,10 @@ lto = "fat"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
-panic = "abort"
+panic = "unwind"
 
 [profile.dev]
-panic = "abort"
+panic = "unwind"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.

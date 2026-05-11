@@ -1337,6 +1337,9 @@ dependencies = [
 [[package]]
 name = "bun_jsc_types"
 version = "0.0.0"
+dependencies = [
+ "bun_opaque",
+]
 
 [[package]]
 name = "bun_libarchive"

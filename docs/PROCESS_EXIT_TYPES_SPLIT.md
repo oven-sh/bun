@@ -91,8 +91,10 @@ Natural sibling crates
   │     ├─> ProcessExitContext
   │     └─> ProcessExitReadiness
   ├─> bun_jsc_types
-  │     └─> GlobalRef<T>
-  │           └─> copyable VM-lifetime pointer wrapper; bun_jsc aliases it as GlobalRef<JSGlobalObject>
+  │     ├─> GlobalRef<T>
+  │     │     └─> copyable VM-lifetime pointer wrapper; bun_jsc aliases it as GlobalRef<JSGlobalObject>
+  │     └─> StrongRefSlot
+  │           └─> opaque strong-reference slot identity; allocation, mutation, clear, and drop stay in bun_jsc::strong
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     ├─> LifecycleScriptState
@@ -274,11 +276,13 @@ This is still not enough to remove `ProcessExitKind::Subprocess`; the wrapper
 owns the JSC refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer
 cleanup, and self deref edges that have to move or be named through a typed
 runtime effect boundary. `GlobalRef<T>` has been moved into `bun_jsc_types`
-because it is only a copyable raw VM-lifetime pointer wrapper; `bun_jsc` now
-aliases
-`GlobalRef<JSGlobalObject>` so existing effect code keeps the same API. `JsRef`,
-`Strong::Optional`, and `JSPromiseStrong` still own JSC handle slots and release
-them on drop. Moving the full `Subprocess`/cron job owner below `bun_runtime`
+because it is only a copyable raw VM-lifetime pointer wrapper; `StrongRefSlot`
+has also moved into `bun_jsc_types` as only the opaque slot identity. `bun_jsc`
+now aliases `GlobalRef<JSGlobalObject>` and `bun_jsc::strong::Impl` so existing
+effect code keeps the same API shape while `bun_jsc::strong::{Strong, Optional}`
+still own allocation, mutation, clearing, and destruction of those slots.
+`JsRef`, `Strong::Optional`, and `JSPromiseStrong` still carry drop/effect
+semantics. Moving the full `Subprocess`/cron job owner below `bun_runtime`
 is therefore not a matter of copying a few pointer-sized fields into
 `bun_runtime_types`; the drop-owning JSC handles still need a real lower
 handle/sys split, with effectful promise/global operations applied by
@@ -559,7 +563,7 @@ Required deeper type movement
         ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
-        ├─> GlobalRef<T> has moved to bun_jsc_types as an inert pointer wrapper, but JsRef/Strong/JSPromiseStrong bring JSC handle-slot allocation and drop semantics with them
+        ├─> GlobalRef<T> and StrongRefSlot have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
         ├─> a real split therefore needs the remaining lower JSC handle/sys sidecar work before Subprocess or cron can move all owner state below bun_runtime
         └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```

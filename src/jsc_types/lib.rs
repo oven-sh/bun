@@ -2,6 +2,15 @@
 
 use core::fmt;
 
+/// Opaque handle slot allocated by JSC's strong-reference table.
+///
+/// The type crate owns only the pointer identity shape. Allocation, mutation,
+/// clearing, and destruction stay in `bun_jsc::strong`, which owns the JSC FFI
+/// calls and the drop semantics.
+bun_opaque::opaque_ffi! {
+    pub struct StrongRefSlot;
+}
+
 /// VM-lifetime handle to a JSC-owned global object.
 ///
 /// This is only pointer identity. The concrete JSC crate supplies the typed

@@ -2,10 +2,11 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue};
+
+pub type Impl = bun_jsc_types::StrongRefSlot;
 
 // PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
 pub struct Strong {
@@ -18,11 +19,11 @@ impl Strong {
     /// Hold a strong reference to a JavaScript value. Released on `Drop`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Strong {
         debug_assert!(!value.is_empty());
-        Strong { handle: Impl::init(global, value) }
+        Strong { handle: init_handle(global, value) }
     }
 
     pub fn get(&self) -> JSValue {
-        let result = Impl::get(self.handle);
+        let result = get_handle(self.handle);
         debug_assert!(!result.is_empty());
         result
     }
@@ -30,12 +31,12 @@ impl Strong {
     /// Set a new value for the strong reference.
     pub fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
         debug_assert!(!new_value.is_empty());
-        Impl::set(self.handle, global, new_value);
+        set_handle(self.handle, global, new_value);
     }
 
     /// Swap a new value for the strong reference.
     pub fn swap(&mut self, global: &JSGlobalObject, new_value: JSValue) -> JSValue {
-        let result = Impl::get(self.handle);
+        let result = get_handle(self.handle);
         self.set(global, new_value);
         result
     }
@@ -54,8 +55,8 @@ impl Strong {
 impl Drop for Strong {
     /// Release the strong reference.
     fn drop(&mut self) {
-        // SAFETY: `self.handle` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(self.handle) };
+        // SAFETY: `self.handle` came from `init_handle` and is consumed exactly once here.
+        unsafe { destroy_handle(self.handle) };
         // Zig: `if (Environment.isDebug) strong.* = undefined;` — Rust drop
         // already invalidates the binding; no poison needed.
     }
@@ -95,7 +96,7 @@ impl Optional {
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Optional {
         if !value.is_empty() {
-            Optional { handle: Some(Impl::init(global, value)) }
+            Optional { handle: Some(init_handle(global, value)) }
         } else {
             Optional::empty()
         }
@@ -104,7 +105,7 @@ impl Optional {
     /// Clears the value, but does not de-allocate the Strong reference.
     pub fn clear_without_deallocation(&mut self) {
         let Some(r) = self.handle else { return };
-        Impl::clear(r);
+        clear_handle(r);
     }
 
     pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
@@ -118,7 +119,7 @@ impl Optional {
 
     pub fn get(&self) -> Option<JSValue> {
         let imp = self.handle?;
-        let result = Impl::get(imp);
+        let result = get_handle(imp);
         if result.is_empty() {
             return None;
         }
@@ -127,17 +128,17 @@ impl Optional {
 
     pub fn swap(&mut self) -> JSValue {
         let Some(imp) = self.handle else { return JSValue::ZERO };
-        let result = Impl::get(imp);
+        let result = get_handle(imp);
         if result.is_empty() {
             return JSValue::ZERO;
         }
-        Impl::clear(imp);
+        clear_handle(imp);
         result
     }
 
     pub fn has(&self) -> bool {
         let Some(r) = self.handle else { return false };
-        !Impl::get(r).is_empty()
+        !get_handle(r).is_empty()
     }
 
     pub fn try_swap(&mut self) -> Option<JSValue> {
@@ -153,8 +154,8 @@ impl Optional {
     /// in place and leaving `self` empty so `Drop` is a no-op.
     pub fn deinit(&mut self) {
         let Some(r) = self.handle.take() else { return };
-        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
+        // SAFETY: `r` came from `init_handle` and is consumed exactly once here.
+        unsafe { destroy_handle(r) };
     }
 
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
@@ -162,10 +163,10 @@ impl Optional {
             if value.is_empty() {
                 return;
             }
-            self.handle = Some(Impl::init(global, value));
+            self.handle = Some(init_handle(global, value));
             return;
         };
-        Impl::set(r, global, value);
+        set_handle(r, global, value);
     }
 }
 
@@ -173,50 +174,43 @@ impl Drop for Optional {
     /// Frees memory for the underlying Strong reference.
     fn drop(&mut self) {
         let Some(r) = self.handle.take() else { return };
-        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
+        // SAFETY: `r` came from `init_handle` and is consumed exactly once here.
+        unsafe { destroy_handle(r) };
     }
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle. Backed by a `JSC::JSValue`-sized HandleSlot; see Strong.cpp.
-    pub struct Impl;
+pub fn init_handle(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
+    crate::mark_binding!();
+    // SAFETY: FFI call; `global` is a live JSGlobalObject.
+    NonNull::new(unsafe { Bun__StrongRef__new(global, value) })
+        .expect("Bun__StrongRef__new returned null")
 }
 
-impl Impl {
-    pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
-        crate::mark_binding!();
-        // SAFETY: FFI call; `global` is a live JSGlobalObject.
-        NonNull::new(unsafe { Bun__StrongRef__new(global, value) })
-            .expect("Bun__StrongRef__new returned null")
-    }
+pub fn get_handle(this: NonNull<Impl>) -> JSValue {
+    // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
+    // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
+    // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
+    // size); reading it directly is the encode() operation.
+    // TODO(b2): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
+    unsafe { *this.as_ptr().cast::<JSValue>() }
+}
 
-    pub fn get(this: NonNull<Impl>) -> JSValue {
-        // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
-        // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
-        // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
-        // size); reading it directly is the encode() operation.
-        // TODO(b2): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
-        unsafe { *this.as_ptr().cast::<JSValue>() }
-    }
+pub fn set_handle(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
+    crate::mark_binding!();
+    // SAFETY: `this` is a valid handle from `init_handle`.
+    unsafe { Bun__StrongRef__set(this.as_ptr(), global, value) };
+}
 
-    pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
-        crate::mark_binding!();
-        // SAFETY: `this` is a valid handle from `init`.
-        unsafe { Bun__StrongRef__set(this.as_ptr(), global, value) };
-    }
+pub fn clear_handle(this: NonNull<Impl>) {
+    crate::mark_binding!();
+    // SAFETY: `this` is a valid handle from `init_handle`.
+    unsafe { Bun__StrongRef__clear(this.as_ptr()) };
+}
 
-    pub fn clear(this: NonNull<Impl>) {
-        crate::mark_binding!();
-        // SAFETY: `this` is a valid handle from `init`.
-        unsafe { Bun__StrongRef__clear(this.as_ptr()) };
-    }
-
-    /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
-    pub unsafe fn destroy(this: NonNull<Impl>) {
-        crate::mark_binding!();
-        unsafe { Bun__StrongRef__delete(this.as_ptr()) };
-    }
+/// SAFETY: `this` must be a valid handle from `init_handle`; consumed here (do not reuse).
+pub unsafe fn destroy_handle(this: NonNull<Impl>) {
+    crate::mark_binding!();
+    unsafe { Bun__StrongRef__delete(this.as_ptr()) };
 }
 
 // TODO(port): move to jsc_sys

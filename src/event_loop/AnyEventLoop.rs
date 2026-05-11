@@ -1,5 +1,8 @@
+use core::ptr::NonNull;
+
 use bun_io::FilePoll;
 use bun_dotenv::Loader as DotEnvLoader;
+use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
@@ -279,10 +282,14 @@ pub enum EventLoopHandle {
         /// `Copy`.
         owner: JsEventLoop,
     },
-    // PORT NOTE: raw `*mut MiniEventLoop` (not `&mut`) because the handle is
+    // PORT NOTE: `BackRef<MiniEventLoop>` (not `&mut`) because the handle is
     // `Copy` and stored in `uws::InternalLoopData` as a non-owning backref —
-    // matches Zig `*MiniEventLoop`.
-    Mini(*mut MiniEventLoop<'static>),
+    // matches Zig `*MiniEventLoop`. The pointee is the per-thread singleton
+    // (`init_global`) or an `AnyEventLoop::Mini`-owned loop, both of which
+    // strictly outlive every `EventLoopHandle` derived from them — the
+    // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
+    // `&mut`-taking dispatch sites use the documented `get_mut()` escape hatch.
+    Mini(BackRef<MiniEventLoop<'static>>),
 }
 
 /// Untagged pointer to either kind of concurrent task. Tag is the surrounding
@@ -348,7 +355,12 @@ impl EventLoopHandle {
 
     #[inline]
     pub fn init_mini(mini: *mut MiniEventLoop<'static>) -> EventLoopHandle {
-        EventLoopHandle::Mini(mini)
+        // `mini` is the live per-thread singleton (or an `AnyEventLoop::Mini`
+        // payload) — never null at any call site. `BackRef: From<NonNull<T>>`
+        // wraps it without an `unsafe` block; the back-reference invariant
+        // (pointee outlives every copy of the handle) is the caller's
+        // structural guarantee, same as before.
+        EventLoopHandle::Mini(NonNull::new(mini).expect("MiniEventLoop ptr is non-null").into())
     }
 
     #[inline]
@@ -361,7 +373,7 @@ impl EventLoopHandle {
             EventLoopHandle::Js { owner } => unsafe {
                 bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
             },
-            EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini),
+            EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini.as_ptr()),
         }
     }
 
@@ -372,7 +384,7 @@ impl EventLoopHandle {
     pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
             EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
-            EventLoopHandle::Mini(mini) => (2, mini.cast()),
+            EventLoopHandle::Mini(mini) => (2, mini.as_ptr().cast()),
         }
     }
 
@@ -391,7 +403,9 @@ impl EventLoopHandle {
             1 => EventLoopHandle::Js {
                 owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
-            2 => EventLoopHandle::Mini(ptr.cast()),
+            // Per fn contract `(tag, ptr)` came from `into_tag_ptr` on a live
+            // loop, so `ptr` is non-null. `BackRef: From<NonNull<T>>`.
+            2 => EventLoopHandle::Mini(NonNull::new(ptr.cast()).expect("non-null mini ptr").into()),
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }
@@ -424,7 +438,7 @@ impl EventLoopHandle {
     pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
-            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(std::ptr::from_mut(mini)),
+            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new_mut(mini)),
         }
     }
 
@@ -454,8 +468,10 @@ impl EventLoopHandle {
     pub fn stdout(self) -> *mut () {
         match self {
             EventLoopHandle::Js { owner } => owner.stdout(),
-            // SAFETY: `mini` is a live backref (set in `init_global` / caller).
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).stdout() },
+            // SAFETY: `BackRef::get_mut` — the per-thread `MiniEventLoop` is
+            // `!Send` and no other `&`/`&mut` to it is live for this call's
+            // duration (handle is `Copy`, but dispatch is single-threaded).
+            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().stdout() },
         }
     }
 
@@ -464,7 +480,7 @@ impl EventLoopHandle {
         match self {
             EventLoopHandle::Js { owner } => owner.stderr(),
             // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).stderr() },
+            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().stderr() },
         }
     }
 
@@ -495,9 +511,9 @@ impl EventLoopHandle {
     pub fn file_polls(self) -> *mut bun_io::file_poll::Store {
         match self {
             EventLoopHandle::Js { owner } => owner.file_polls(),
-            // SAFETY: see `stdout`. We hold `*mut MiniEventLoop`; derive a
-            // unique borrow at the call site only.
-            EventLoopHandle::Mini(mini) => unsafe { std::ptr::from_mut((*mini).file_polls()) },
+            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
+            // this call's duration.
+            EventLoopHandle::Mini(mut mini) => unsafe { std::ptr::from_mut(mini.get_mut().file_polls()) },
         }
     }
 
@@ -507,12 +523,13 @@ impl EventLoopHandle {
             .contains(bun_io::file_poll::Flags::WasEverRegistered);
         match self {
             EventLoopHandle::Js { owner } => owner.put_file_poll(poll, was_ever_registered),
-            // SAFETY: see `stdout`. Same disjoint-field reasoning as
+            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
+            // this call's duration. Same disjoint-field reasoning as
             // `AnyEventLoop::put_file_poll` — the ctx only touches
             // `after_event_loop_callback{,_ctx}`, not `file_polls_`.
             EventLoopHandle::Mini(mini) => unsafe {
-                let ctx = MiniEventLoop::as_event_loop_ctx(*mini);
-                (**mini).file_polls().put(poll, ctx, was_ever_registered);
+                let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
+                mini.get_mut().file_polls().put(poll, ctx, was_ever_registered);
             },
         }
     }
@@ -521,16 +538,17 @@ impl EventLoopHandle {
         match self {
             // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
             EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
-            // SAFETY: caller guarantees `task.mini` is active; `mini` is a live backref.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).enqueue_task_concurrent(task.mini) },
+            // SAFETY: caller guarantees `task.mini` is active; `BackRef::get_mut`
+            // exclusivity holds (see `stdout`).
+            EventLoopHandle::Mini(mut mini) => unsafe { mini.get_mut().enqueue_task_concurrent(task.mini) },
         }
     }
 
     pub fn r#loop(self) -> *mut UwsLoop {
         match self {
             EventLoopHandle::Js { owner } => owner.uws_loop(),
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).loop_ptr() },
+            // `loop_ptr` takes `&self`; safe via `BackRef: Deref`.
+            EventLoopHandle::Mini(mini) => mini.loop_ptr(),
         }
     }
 
@@ -566,8 +584,9 @@ impl EventLoopHandle {
     pub fn pipe_read_buffer(self) -> *mut [u8] {
         match self {
             EventLoopHandle::Js { owner } => owner.pipe_read_buffer(),
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { std::ptr::from_mut::<[u8]>((*mini).pipe_read_buffer()) },
+            // SAFETY: see `stdout` — `BackRef::get_mut` exclusivity holds for
+            // this call's duration.
+            EventLoopHandle::Mini(mut mini) => unsafe { std::ptr::from_mut::<[u8]>(mini.get_mut().pipe_read_buffer()) },
         }
     }
 
@@ -584,12 +603,13 @@ impl EventLoopHandle {
     pub fn env(self) -> *mut DotEnvLoader<'static> {
         match self {
             EventLoopHandle::Js { owner } => owner.env(),
-            // SAFETY: see `stdout`. Zig unwraps `mini.env.?` — caller invariant.
-            // `MiniEventLoop::env` is `Option<NonNull<DotEnvLoader>>` so
-            // provenance is mutable (Zig field is `?*DotEnvLoader`).
-            EventLoopHandle::Mini(mini) => unsafe {
-                (*mini).env.expect("MiniEventLoop.env unset").as_ptr().cast()
-            },
+            // Zig unwraps `mini.env.?` — caller invariant. `env_ptr()` takes
+            // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
+            // provenance; Zig field is `?*DotEnvLoader`). Safe via
+            // `BackRef: Deref`.
+            EventLoopHandle::Mini(mini) => {
+                mini.env_ptr().expect("MiniEventLoop.env unset").as_ptr().cast()
+            }
         }
     }
 
@@ -597,8 +617,10 @@ impl EventLoopHandle {
         match self {
             // SAFETY: slice borrowed for VM lifetime.
             EventLoopHandle::Js { owner } => unsafe { &*owner.top_level_dir() },
-            // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { &(*mini).top_level_dir },
+            // SAFETY: `BackRef::get()` ties the borrow to the local `mini`, but
+            // the pointee is the per-thread singleton (process-lifetime); widen
+            // to `'static` so the return type matches the Js arm.
+            EventLoopHandle::Mini(mini) => unsafe { &(*mini.as_ptr()).top_level_dir },
         }
     }
 
@@ -607,13 +629,15 @@ impl EventLoopHandle {
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         match self {
             EventLoopHandle::Js { owner } => owner.create_null_delimited_env_map(),
-            // SAFETY: see `stdout`. Zig unwraps `mini.env.?`. `env` is a
-            // `NonNull<DotEnvLoader>` backref; the loader outlives the loop.
-            EventLoopHandle::Mini(mini) => unsafe {
-                (*(*mini).env.expect("MiniEventLoop.env unset").as_ptr())
-                    .map
-                    .create_null_delimited_env_map()
-            },
+            EventLoopHandle::Mini(mini) => {
+                // `env_ptr()` takes `&self` — safe via `BackRef: Deref`. Zig
+                // unwraps `mini.env.?` (caller invariant).
+                let env = mini.env_ptr().expect("MiniEventLoop.env unset");
+                // SAFETY: `env` is a `NonNull<DotEnvLoader>` backref; the
+                // loader is a thread-/process-lifetime singleton (see
+                // `MiniEventLoop::env_ptr` invariant) and outlives this call.
+                unsafe { (*env.as_ptr()).map.create_null_delimited_env_map() }
+            }
         }
     }
 

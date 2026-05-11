@@ -4656,6 +4656,23 @@ impl<'a> Resolver<'a> {
         pm.as_ptr()
     }
 
+    /// Safe accessor for the optional [`AutoInstaller`] back-reference.
+    ///
+    /// Single `unsafe` deref site for the `package_manager:
+    /// Option<NonNull<dyn AutoInstaller>>` field. The pointee is the
+    /// process-static `PackageManager` singleton (set via
+    /// [`get_package_manager`](Self::get_package_manager) /
+    /// `__bun_resolver_init_package_manager`), so it strictly outlives the
+    /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
+    /// the only live reference for its lifetime.
+    #[inline]
+    pub fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
+        // SAFETY: BACKREF — `package_manager` names the bun_install-owned
+        // singleton, live for the resolver's lifetime once installed; `&mut
+        // self` ⇒ exclusive access to the only Rust handle.
+        self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    }
+
     #[inline]
     pub fn use_package_manager(&self) -> bool {
         // TODO(@paperclover): make this configurable. the rationale for disabling

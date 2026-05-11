@@ -2862,48 +2862,39 @@ describe("fs/promises", () => {
     // name-as-buffer (encoding option) and path-as-buffer (path arg type) are
     // independent flags. Storage representation must track `path_is_buffer`,
     // not `encoding`, or non-ASCII paths produce mojibake / lossy output.
-    it.skipIf(isWindows)(
-      "non-ASCII string path + encoding='buffer' → parentPath is the original string",
-      () => {
-        using dir = tempDir("readdir-café-", { "a.txt": "x" });
-        const [entry] = readdirSync(String(dir), { withFileTypes: true, encoding: "buffer" });
-        expect(entry).toBeInstanceOf(Dirent);
-        expect(typeof entry.parentPath).toBe("string");
-        expect(entry.parentPath).toBe(String(dir));
-        expect(entry.name).toBeInstanceOf(Buffer);
-        expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
-      },
-    );
+    it.skipIf(isWindows)("non-ASCII string path + encoding='buffer' → parentPath is the original string", () => {
+      using dir = tempDir("readdir-café-", { "a.txt": "x" });
+      const [entry] = readdirSync(String(dir), { withFileTypes: true, encoding: "buffer" });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(typeof entry.parentPath).toBe("string");
+      expect(entry.parentPath).toBe(String(dir));
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
+    });
 
-    it.skipIf(isWindows)(
-      "non-ASCII Buffer path + encoding='buffer' → parentPath has original bytes",
-      () => {
-        using dir = tempDir("readdir-ünïcode-", { "a.txt": "x" });
-        const pathBytes = Buffer.from(String(dir));
-        const [entry] = readdirSync(pathBytes, { withFileTypes: true, encoding: "buffer" });
-        expect(entry).toBeInstanceOf(Dirent);
-        expect(entry.parentPath).toBeInstanceOf(Buffer);
-        expect(entry.parentPath.equals(pathBytes)).toBe(true);
-        expect(entry.name).toBeInstanceOf(Buffer);
-        expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
-      },
-    );
+    it.skipIf(isWindows)("non-ASCII Buffer path + encoding='buffer' → parentPath has original bytes", () => {
+      using dir = tempDir("readdir-ünïcode-", { "a.txt": "x" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = readdirSync(pathBytes, { withFileTypes: true, encoding: "buffer" });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect(entry.parentPath.equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
+    });
 
-    it.skipIf(isWindows)(
-      "non-ASCII Buffer path + default encoding → parentPath is a Buffer, name is a string",
-      () => {
-        using dir = tempDir("readdir-ünïcode2-", { "a.txt": "x" });
-        const pathBytes = Buffer.from(String(dir));
-        const [entry] = readdirSync(pathBytes, { withFileTypes: true });
-        expect(entry).toBeInstanceOf(Dirent);
-        // Path arg was a Buffer → parentPath is a Buffer, independent of encoding.
-        expect(entry.parentPath).toBeInstanceOf(Buffer);
-        expect(entry.parentPath.equals(pathBytes)).toBe(true);
-        // encoding defaulted to utf8 → name is a string.
-        expect(typeof entry.name).toBe("string");
-        expect(entry.name).toBe("a.txt");
-      },
-    );
+    it.skipIf(isWindows)("non-ASCII Buffer path + default encoding → parentPath is a Buffer, name is a string", () => {
+      using dir = tempDir("readdir-ünïcode2-", { "a.txt": "x" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = readdirSync(pathBytes, { withFileTypes: true });
+      expect(entry).toBeInstanceOf(Dirent);
+      // Path arg was a Buffer → parentPath is a Buffer, independent of encoding.
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect(entry.parentPath.equals(pathBytes)).toBe(true);
+      // encoding defaulted to utf8 → name is a string.
+      expect(typeof entry.name).toBe("string");
+      expect(entry.name).toBe("a.txt");
+    });
 
     // POSIX filesystems allow arbitrary bytes in paths — not just valid UTF-8.
     // When the caller passes those bytes as a Buffer, `parentPath` must be

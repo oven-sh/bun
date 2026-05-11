@@ -522,7 +522,13 @@ describe("tls.createSecureContext().context.addCACert", () => {
       hostname: "127.0.0.1",
       port: 0,
       tls: { cert: agent1Cert, key: agent1Key },
-      socket: { data() {}, error() {}, open(s) { s.end(); } },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
     });
 
     const ctx = tls.createSecureContext();
@@ -553,7 +559,13 @@ describe("tls.createSecureContext().context.addCACert", () => {
       hostname: "127.0.0.1",
       port: 0,
       tls: { cert: agent1Cert, key: agent1Key },
-      socket: { data() {}, error() {}, open(s) { s.end(); } },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
     });
 
     // Add ca2 — server cert is signed by ca1, so authorization must fail.
@@ -586,7 +598,13 @@ describe("tls.createSecureContext().context.addCACert", () => {
       hostname: "127.0.0.1",
       port: 0,
       tls: { cert: agent1Cert, key: agent1Key },
-      socket: { data() {}, error() {}, open(s) { s.end(); } },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
     });
 
     const ctx = tls.createSecureContext();
@@ -640,7 +658,13 @@ describe("tls.createSecureContext().context.addCACert", () => {
       hostname: "127.0.0.1",
       port: 0,
       tls: { cert: agent1Cert, key: agent1Key },
-      socket: { data() {}, error() {}, open(s) { s.end(); } },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
     });
 
     const ctx = tls.createSecureContext();

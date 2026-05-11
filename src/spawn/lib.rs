@@ -160,7 +160,6 @@ impl ProcessExitTarget {
 bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
-        LifecycleScript,
         CronRegister,
         CronRemove,
     ] {

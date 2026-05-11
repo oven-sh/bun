@@ -1,5 +1,4 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
-#![feature(sync_unsafe_cell)]
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
 

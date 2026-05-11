@@ -922,16 +922,21 @@ impl EventLoop {
     /// value field of it, so the pointer is non-null and live for the VM
     /// lifetime. Prefer this over `unsafe { &*self.vm() }` for read-only field
     /// access; whole-struct mutation goes through [`VirtualMachine::as_mut`].
-    #[inline]
+    ///
+    /// Called 5× in `drain_microtasks_with_global` alone; node:http perf shows
+    /// the `Option::unwrap` (vs Zig's bare `vm.*` field load) is one of ~200
+    /// diffuse ~15-insn idiom-tax sites contributing the residual +3.3k
+    /// insn/req. Force-inline so the unwrap collapses to one load+test.
+    #[inline(always)]
     fn vm_ref(&self) -> &'static VirtualMachine {
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
         // owning per-thread singleton; non-null and outlives `self`.
-        unsafe { self.virtual_machine.unwrap().as_ref() }
+        unsafe { self.virtual_machine.unwrap_unchecked().as_ref() }
     }
-    #[inline]
+    #[inline(always)]
     fn global_ref(&self) -> &JSGlobalObject {
         // SAFETY: global is set during VM init and outlives EventLoop
-        unsafe { self.global.unwrap().as_ref() }
+        unsafe { self.global.unwrap_unchecked().as_ref() }
     }
 }
 

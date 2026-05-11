@@ -220,8 +220,9 @@ pub fn frontend_dev_server_agent_set_enabled(
     // SAFETY: called on the JS thread with a live VM (C++ inspector agent
     // invokes this only after the VM is initialized).
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-        // SAFETY: JS-thread only; sole access to the `UnsafeCell` slot here.
-        unsafe { (*dbg.frontend_dev_server_agent.get()).handle = agent };
+        // `dbg: &mut Debugger`, so safe `UnsafeCell::get_mut` applies — no
+        // raw-pointer deref needed.
+        dbg.frontend_dev_server_agent.get_mut().handle = agent;
     }
 }
 

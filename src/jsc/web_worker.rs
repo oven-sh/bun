@@ -59,6 +59,7 @@
 //! leaked (see `Worker::dispatchExit`).
 
 use core::cell::{Cell, UnsafeCell};
+use crate::JsCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -119,14 +120,16 @@ pub struct WebWorker {
     /// before the thread is spawned; removed in `shutdown()` once the worker is
     /// past all process-global resolver access.
     ///
-    /// `UnsafeCell` because `terminate_all_and_wait` walks the list through
+    /// `Cell` because `terminate_all_and_wait` walks the list through
     /// `&WebWorker` while `register`/`unregister` (under `live_workers::MUTEX`)
     /// write these on another thread — the mutex serialises memory ops, but
-    /// Rust's aliasing model still requires interior mutability.
+    /// Rust's aliasing model still requires interior mutability. `*mut T` is
+    /// `Copy`, so `Cell` (not `UnsafeCell`) suffices and every read/write is
+    /// safe `.get()`/`.set()`.
     // TODO(port): intrusive doubly-linked list node — `bun_collections` has no
     // `IntrusiveList` yet; raw next/prev pointers used directly.
-    live_next: UnsafeCell<*mut WebWorker>,
-    live_prev: UnsafeCell<*mut WebWorker>,
+    live_next: Cell<*mut WebWorker>,
+    live_prev: Cell<*mut WebWorker>,
 
     /// Set by the parent (`notifyNeedTermination`) or by the worker itself
     /// (`exit`). The worker loop polls this between ticks.
@@ -136,12 +139,14 @@ pub struct WebWorker {
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
     /// any cross-thread read (see header comment).
     ///
-    /// `UnsafeCell` because this is read through `&WebWorker` on the parent /
-    /// main thread (`notify_need_termination`, `terminate_all_and_wait`, `exit`)
-    /// and written on the worker thread (`start_vm`, `shutdown`) — `vm_lock`
+    /// `Cell` because this is read through `&WebWorker` on the parent / main
+    /// thread (`notify_need_termination`, `terminate_all_and_wait`, `exit`) and
+    /// written on the worker thread (`start_vm`, `shutdown`) — `vm_lock`
     /// serialises the memory ops, but Rust's aliasing model still requires
-    /// interior mutability for a field written while a `&WebWorker` may be live.
-    vm: UnsafeCell<*mut VirtualMachine>,
+    /// interior mutability for a field written while a `&WebWorker` may be
+    /// live. `*mut T` is `Copy`, so `Cell` gives safe `.get()`/`.set()`/
+    /// `.replace()` and no `unsafe` at the access sites.
+    vm: Cell<*mut VirtualMachine>,
     vm_lock: Mutex,
 
     // ---- Parent-thread only -------------------------------------------------
@@ -168,7 +173,9 @@ pub struct WebWorker {
     // PERF(port): was MimallocArena bulk-free backing the worker VM — keep as
     // explicit arena rather than deleting per §Allocators non-AST rule, because
     // the VM's allocator IS this arena (load-bearing). Profile in Phase B.
-    arena: UnsafeCell<Option<bun_alloc::Arena>>,
+    // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
+    // so the single-owner-thread invariant `JsCell` documents is upheld.
+    arena: JsCell<Option<bun_alloc::Arena>>,
     /// Heap-owned cloned env (Map + Loader) for the worker VM. In Zig both
     /// were `allocator.create`'d on the worker arena and bulk-freed by
     /// `arena.deinit()`. Rust's `Arena = bumpalo::Bump` does not run `Drop`
@@ -248,10 +255,10 @@ mod live_workers {
         // SAFETY: MUTEX held; `worker` is a valid heap allocation owned by C++.
         unsafe {
             let head = HEAD.read();
-            *(*worker).live_prev.get() = core::ptr::null_mut();
-            *(*worker).live_next.get() = head;
+            (*worker).live_prev.set(core::ptr::null_mut());
+            (*worker).live_next.set(head);
             if !head.is_null() {
-                *(*head).live_prev.get() = worker;
+                (*head).live_prev.set(worker);
             }
             HEAD.write(worker);
         }
@@ -271,24 +278,24 @@ mod live_workers {
 
     // `*const WebWorker` (not `*mut`): called from `shutdown(&self)` while
     // other threads may hold `&WebWorker`, so the caller only has shared-ref
-    // provenance. All writes here go through `UnsafeCell` fields
+    // provenance. All writes here go through `Cell` fields
     // (`live_next`/`live_prev`), which is sound via shared provenance.
     pub(super) fn unregister(worker: *const WebWorker) {
         MUTEX.lock();
         // SAFETY: MUTEX held; node was registered in `register`.
         unsafe {
-            let prev = *(*worker).live_prev.get();
-            let next = *(*worker).live_next.get();
+            let prev = (*worker).live_prev.get();
+            let next = (*worker).live_next.get();
             if !prev.is_null() {
-                *(*prev).live_next.get() = next;
+                (*prev).live_next.set(next);
             } else {
                 HEAD.write(next);
             }
             if !next.is_null() {
-                *(*next).live_prev.get() = prev;
+                (*next).live_prev.set(prev);
             }
-            *(*worker).live_prev.get() = core::ptr::null_mut();
-            *(*worker).live_next.get() = core::ptr::null_mut();
+            (*worker).live_prev.set(core::ptr::null_mut());
+            (*worker).live_next.set(core::ptr::null_mut());
         }
         MUTEX.unlock();
         // Wake any waiter in terminateAllAndWait when we hit zero. Waking
@@ -337,8 +344,8 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
         while !it.is_null() {
             // SAFETY: worker valid while registered (removed only in shutdown()).
             let w = unsafe { &*it };
-            // SAFETY: live_workers::MUTEX held; list links written only under it.
-            it = unsafe { *w.live_next.get() };
+            // live_workers::MUTEX held; list links written only under it.
+            it = w.live_next.get();
             if w.requested_terminate.swap(true, Ordering::Release) {
                 continue;
             }
@@ -397,14 +404,12 @@ impl WebWorker {
     /// Raw read of the `vm` cell. Worker-thread-only callers (which are also
     /// the writers) may call this without `vm_lock`; cross-thread callers
     /// (`notify_need_termination`, `terminate_all_and_wait`) must hold
-    /// `vm_lock`. Wraps the `unsafe { *self.vm.get() }` UnsafeCell read so the
-    /// `unsafe` is centralized at one audited site.
+    /// `vm_lock`. The cell itself is `Cell<*mut _>` so the read is a safe
+    /// `Copy` load; synchronization (where required) is the caller's
+    /// responsibility per the doc above.
     #[inline]
     fn vm_ptr(&self) -> *mut VirtualMachine {
-        // SAFETY: `vm` is an `UnsafeCell<*mut VirtualMachine>`. Reading the
-        // pointer value is a plain word load; synchronization (where required)
-        // is the caller's responsibility per the doc above.
-        unsafe { *self.vm.get() }
+        self.vm.get()
     }
 
     /// Safe `&mut KeepAlive` accessor for `parent_poll_ref`. The cell is
@@ -544,14 +549,14 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
-            live_next: UnsafeCell::new(core::ptr::null_mut()),
-            live_prev: UnsafeCell::new(core::ptr::null_mut()),
+            live_next: Cell::new(core::ptr::null_mut()),
+            live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
-            vm: UnsafeCell::new(core::ptr::null_mut()),
+            vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: UnsafeCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
-            arena: UnsafeCell::new(None),
+            arena: JsCell::new(None),
             worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
@@ -843,8 +848,8 @@ impl WebWorker {
             }
         }
 
-        // SAFETY: worker-thread only field; no other thread reads `arena`.
-        unsafe { *self.arena.get() = Some(bun_alloc::Arena::new()) };
+        // worker-thread only field; no other thread reads `arena`.
+        self.arena.set(Some(bun_alloc::Arena::new()));
 
         // Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage. We need a consistent snapshot of
@@ -917,9 +922,11 @@ impl WebWorker {
             // SAFETY: init_worker returns a valid heap-allocated VM ptr;
             // not yet published, so this `&mut` is exclusive.
             let vm_ref = unsafe { &mut *vm };
-            // SAFETY: arena initialised above; worker-thread only field.
+            // arena initialised above; worker-thread only field. `with_mut`
+            // scopes a `&mut Option<Arena>` to the closure; we extract the raw
+            // address (escaping as `*mut`, no borrow) for the VM backref.
             vm_ref.arena =
-                NonNull::new(std::ptr::from_mut(unsafe { &mut *self.arena.get() }.as_mut().unwrap()));
+                self.arena.with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
             // Move the pre-cloned proxy storage into the worker VM.
             *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
@@ -940,8 +947,8 @@ impl WebWorker {
         // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
         // first check observes requested_terminate.
         self.vm_lock.lock();
-        // SAFETY: vm_lock held; this is the publish point.
-        unsafe { *self.vm.get() = vm };
+        // vm_lock held; this is the publish point.
+        self.vm.set(vm);
         self.vm_lock.unlock();
 
         // Post-publish: do NOT re-form `&mut VirtualMachine`. Field/method
@@ -1186,15 +1193,15 @@ impl WebWorker {
 
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
-        // SAFETY: worker-thread only field; no other thread reads `arena`.
-        let mut arena = unsafe { &mut *self.arena.get() }.take();
+        // worker-thread only field; no other thread reads `arena`.
+        let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
         let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
-        // SAFETY: vm_lock held; this is the unpublish point.
-        let vm_ptr = unsafe { core::ptr::replace(self.vm.get(), core::ptr::null_mut()) };
+        // vm_lock held; this is the unpublish point.
+        let vm_ptr = self.vm.replace(core::ptr::null_mut());
         self.vm_lock.unlock();
         let mut loop_: Option<*mut bun_uws::Loop> = None;
         if !vm_ptr.is_null() {

@@ -612,13 +612,16 @@ fn spawnWindows(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPa
     // Start reading from Chrome's reply pipe. Data flows:
     //   uv_read_cb → onReadChunk → Bun__Chrome__onData → Transport::onData
     //
+    // Pass a nullable context pointer so the callbacks stay valid even
+    // if the pipe fires a late (post-close) callback — we null
+    // pipe.data in onProcessExit before destroying self; the readStart
+    // wrapper re-derives the context from pipe.data via an unchecked
+    // cast, so the callback parameter type must be `?*ChromeProcess`.
+    //
     // Error path here owns the pipes (they were transferred into self),
-    // so destroying self leaks them — close them explicitly. uv_close is
-    // async but closeAndDestroy handles the lifetime. Chrome is still
-    // running; process.deref + no exit handler set means SIGKILL via
-    // Bun__Chrome__kill is the only cleanup handle, but that's what the
-    // C++ side uses on the error-rethrow path too.
-    switch (read_pipe.asStream().readStart(self, onReadAlloc, onReadError, onReadChunk)) {
+    // so destroying self leaks them — close them explicitly.
+    const self_opt: ?*ChromeProcess = self;
+    switch (read_pipe.asStream().readStart(self_opt, onReadAlloc, onReadError, onReadChunk)) {
         .result => {},
         .err => |e| {
             log("read_start failed: {f}", .{e});

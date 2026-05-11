@@ -148,37 +148,6 @@ impl Owner {
             .unwrap_or(Self::NULL)
     }
 
-    /// # Safety
-    /// If `ptr` is non-null, it must point to a live owner of the concrete
-    /// type represented by `kind`.
-    #[inline]
-    pub unsafe fn from_raw_parts(kind: Kind, ptr: *mut ()) -> Self {
-        match kind {
-            Kind::Null => Self::NULL,
-            Kind::FileSink => Self::pipe_writer::<FileSink>(ptr),
-            Kind::StaticPipeWriter => Self::pipe_writer::<StaticPipeWriter>(ptr),
-            Kind::ShellStaticPipeWriter => Self::pipe_writer::<ShellStaticPipeWriter>(ptr),
-            Kind::SecurityScanStaticPipeWriter => Self::pipe_writer::<SecurityScanStaticPipeWriter>(ptr),
-            Kind::BufferedReader => BufferedReaderHandle::from_usize(ptr as usize)
-                .map(Self::BufferedReader)
-                .unwrap_or(Self::NULL),
-            Kind::DnsResolver => Self::dns_resolver(ptr),
-            Kind::GetAddrInfoRequest => Self::get_addr_info_request(ptr),
-            Kind::Request => Self::dns_request(ptr),
-            Kind::Process => ProcessHandle::from_usize(ptr as usize)
-                .map(Self::Process)
-                .unwrap_or(Self::NULL),
-            Kind::ShellBufferedWriter => Self::pipe_writer::<ShellBufferedWriter>(ptr),
-            Kind::TerminalPoll => Self::pipe_writer::<TerminalPoll>(ptr),
-            Kind::ParentDeathWatchdog => Self::parent_death_watchdog(ptr),
-            Kind::LifecycleScriptSubprocessOutputReader => {
-                BufferedReaderHandle::from_usize(ptr as usize)
-                    .map(Self::LifecycleScriptSubprocessOutputReader)
-                    .unwrap_or(Self::NULL)
-            }
-        }
-    }
-
     #[inline]
     pub const fn is_null(&self) -> bool {
         matches!(self, Self::Null)
@@ -325,10 +294,10 @@ mod tests {
     }
 
     #[test]
-    fn raw_parts_reenter_the_closed_owner_shape() {
+    fn process_variant_preserves_typed_handle() {
         let ptr = 0x5000usize as *mut ();
-        let owner = unsafe { Owner::from_raw_parts(Kind::Process, ptr) };
         let handle = ProcessHandle::from_usize(ptr as usize).unwrap();
+        let owner = Owner::Process(handle);
 
         assert_eq!(owner, Owner::Process(handle));
         assert_eq!(owner.process_handle(), Some(handle));
@@ -337,10 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn raw_parts_preserve_buffered_reader_handle() {
+    fn buffered_reader_variant_preserves_typed_handle() {
         let ptr = 0x6000usize as *mut ();
-        let owner = unsafe { Owner::from_raw_parts(Kind::BufferedReader, ptr) };
         let handle = BufferedReaderHandle::from_usize(ptr as usize).unwrap();
+        let owner = Owner::BufferedReader(handle);
 
         assert_eq!(owner, Owner::BufferedReader(handle));
         assert_eq!(owner.buffered_reader_handle(), Some(handle));
@@ -349,15 +318,14 @@ mod tests {
     }
 
     #[test]
-    fn raw_parts_preserve_dns_handles() {
+    fn dns_constructors_preserve_typed_handles() {
         let resolver_ptr = 0x7000usize as *mut ();
         let get_addr_info_ptr = 0x8000usize as *mut ();
         let request_ptr = 0x9000usize as *mut ();
 
-        let resolver = unsafe { Owner::from_raw_parts(Kind::DnsResolver, resolver_ptr) };
-        let get_addr_info =
-            unsafe { Owner::from_raw_parts(Kind::GetAddrInfoRequest, get_addr_info_ptr) };
-        let request = unsafe { Owner::from_raw_parts(Kind::Request, request_ptr) };
+        let resolver = Owner::dns_resolver(resolver_ptr);
+        let get_addr_info = Owner::get_addr_info_request(get_addr_info_ptr);
+        let request = Owner::dns_request(request_ptr);
 
         assert_eq!(
             resolver.dns_resolver_handle(),
@@ -377,9 +345,9 @@ mod tests {
     }
 
     #[test]
-    fn raw_parts_preserve_parent_death_watchdog_handle() {
+    fn parent_death_watchdog_constructor_preserves_typed_handle() {
         let ptr = 0xa000usize as *mut ();
-        let owner = unsafe { Owner::from_raw_parts(Kind::ParentDeathWatchdog, ptr) };
+        let owner = Owner::parent_death_watchdog(ptr);
         let handle = ParentDeathWatchdogHandle::from_usize(ptr as usize).unwrap();
 
         assert_eq!(owner.parent_death_watchdog_handle(), Some(handle));

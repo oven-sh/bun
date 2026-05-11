@@ -87,6 +87,8 @@ Natural sibling crates
   │     └─> ProcessExitReadiness
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
+  │     ├─> ScriptsList
+  │     │     └─> lifecycle command list data formerly owned in bun_install::lockfile::package::scripts
   │     └─> SecurityScanExit
   └─> owning crates
         ├─> bun_io stores IO owner/token values and owns kernel registration
@@ -431,6 +433,7 @@ Remaining owner movement
 What a real next split must change
   ├─> lifecycle
   │     ├─> current typed reducer: LifecycleScriptExit in bun_install_types
+  │     ├─> current typed command data: ScriptsList in bun_install_types
   │     ├─> missing typed consumer: exact lifecycle owner/effect state, not PackageManager as a broad context
   │     └─> valid shape: move the lifecycle completion state that owns "spawn next / finish / destroy" decisions into an install sidecar type, then let bun_install apply only the package-manager effects
   ├─> cron
@@ -456,6 +459,7 @@ Required deeper type movement
   │     │     - stdout/stderr buffers and reader teardown/reuse
   │     │     - PackageManager/Installer effects
   │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
+  │     ├─> ScriptsList has moved into bun_install_types as the first command-data piece; the old lockfile path re-exports that sidecar type so install callers keep the same surface
   │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
   │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
   │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context

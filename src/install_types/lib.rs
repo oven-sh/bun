@@ -4,6 +4,7 @@
 
 #![warn(unreachable_pub)]
 pub mod NodeLinker;
+pub mod lifecycle;
 pub mod process_exit;
 pub mod resolver_hooks;
 

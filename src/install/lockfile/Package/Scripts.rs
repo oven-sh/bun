@@ -3,8 +3,8 @@ use bstr::BStr;
 use bun_core::ZBox;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Lockfile;
-use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{initialize_store, Resolution, ResolutionTag};
+use bun_install_types::lifecycle::{SCRIPT_NAMES, SCRIPT_NAMES_LEN};
 use bun_logger as logger;
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
@@ -19,7 +19,7 @@ use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileSt
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
+pub use bun_install_types::lifecycle::ScriptsList as List;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
@@ -274,7 +274,7 @@ impl Scripts {
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
-                for script_name in LockfileScripts::NAMES {
+                for script_name in SCRIPT_NAMES {
                     if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
                         // PORT NOTE: Zig `script.asString(allocator)` — JSON parser
                         // produces UTF-8 `EString`s, so the alloc-free literal accessor
@@ -293,7 +293,7 @@ impl Scripts {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
-                for (dst, script_name) in dsts.into_iter().zip(LockfileScripts::NAMES) {
+                for (dst, script_name) in dsts.into_iter().zip(SCRIPT_NAMES) {
                     if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
                         if let Some(input) = script.as_utf8_string_literal() {
                             *dst = builder.append::<SemverString>(input);
@@ -430,24 +430,19 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-// PORT NOTE: `Clone` — Zig had borrowed slices so `list.*` was a shallow
-// pointer copy. The Rust port owns `cwd`/`package_name`/`items`, but
-// `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
-// by-value copy while the original allocation in `Store.entries.scripts`
-// must stay live for the post-install pass, so a deep clone is required.
-#[derive(Clone)]
-pub struct List {
-    pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
-    pub first_index: u8,
-    pub total: u8,
-    // Zig `stringZ` ([:0]const u8) owned via `allocator.dupeZ`; (commented-out)
-    // deinit frees it → owned NUL-terminated heap string, not a borrow.
-    pub cwd: ZBox,
-    pub package_name: Box<[u8]>,
+pub trait ListExt {
+    fn print_scripts(
+        &self,
+        resolution: &Resolution,
+        resolution_buf: &[u8],
+        format_type: PrintFormat,
+    );
+
+    fn append_to_lockfile(&self, lockfile: &mut Lockfile);
 }
 
-impl List {
-    pub fn print_scripts(
+impl ListExt for List {
+    fn print_scripts(
         &self,
         resolution: &Resolution,
         resolution_buf: &[u8],
@@ -472,7 +467,7 @@ impl List {
 
         for (script_index, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
-                let name = LockfileScripts::NAMES[script_index];
+                let name = SCRIPT_NAMES[script_index];
                 match format_type {
                     PrintFormat::Completed => bun_core::pretty!(
                         " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
@@ -494,13 +489,6 @@ impl List {
         }
     }
 
-    pub fn first(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.items[self.first_index as usize].is_some());
-        }
-        self.items[self.first_index as usize].as_ref().unwrap()
-    }
-
     // pub fn deinit(this: Package.Scripts.List, std.mem.Allocator param) void {
     //     for (this.items) |maybe_item| {
     //         if (maybe_item) |item| {
@@ -512,7 +500,7 @@ impl List {
     // }
     // (Commented out in Zig too; Box<[u8]> fields drop automatically.)
 
-    pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
+    fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
                 bun_output::scoped_log!(

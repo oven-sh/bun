@@ -230,6 +230,10 @@ Process-exit production shape
   │     │     └─> carries process identity + status + target data
   │     └─> shell::NodeId
   │           └─> sidecar-owned command identity for the shell arena
+  ├─> bun_runtime_types::cron
+  │     ├─> CronRegisterState
+  │     └─> CronRemoveState
+  │           └─> sidecar-owned cron state-machine discriminants; JSC promise effects stay in bun_runtime
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects
@@ -440,7 +444,8 @@ Required deeper type movement
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
-  │     ├─> the honest shape is a runtime sidecar state that can own the non-JSC cron transition data and expose typed actions to bun_runtime
+  │     ├─> CronRegisterState / CronRemoveState now live in bun_runtime_types::cron
+  │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   ├─> Bun.spawn needs a separable subprocess exit state
   │     ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref

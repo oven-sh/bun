@@ -35,6 +35,9 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_spawn_types::process_exit::{
     ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessIdentity,
 };
+use bun_runtime_types::cron::{
+    CronRegisterState as RegisterState, CronRemoveState as RemoveState,
+};
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_sys::FdDirExt as _;
@@ -197,18 +200,6 @@ pub struct CronRegisterJob {
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RegisterState {
-    ReadingCrontab,
-    InstallingCrontab,
-    WritingPlist,
-    BootingOut,
-    Bootstrapping,
-    Done,
-    Failed,
 }
 
 bun_io::buffered_reader_parent_link!(CronRegister for CronRegisterJob);
@@ -940,16 +931,6 @@ pub struct CronRemoveJob {
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RemoveState {
-    ReadingCrontab,
-    InstallingCrontab,
-    BootingOut,
-    Done,
-    Failed,
 }
 
 bun_io::buffered_reader_parent_link!(CronRemove for CronRemoveJob);

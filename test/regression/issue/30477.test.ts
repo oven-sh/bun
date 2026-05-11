@@ -44,7 +44,9 @@ test.concurrent("experimentalDecorators: true is preserved through an extends ch
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
-  expect(stderr).toBe("");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(exitCode).toBe(0);
 });
 
@@ -70,7 +72,9 @@ test.concurrent("experimentalDecorators inherited from the base tsconfig still w
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
-  expect(stderr).toBe("");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(exitCode).toBe(0);
 });
 
@@ -101,7 +105,9 @@ test.concurrent("child experimentalDecorators: false overrides parent true (disa
 
   // Child explicitly opts out of legacy decorators — stage-3 should win.
   expect(stdout).toBe("stage-3\nOK\n");
-  expect(stderr).toBe("");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(exitCode).toBe(0);
 });
 

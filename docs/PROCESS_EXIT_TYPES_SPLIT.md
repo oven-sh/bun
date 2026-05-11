@@ -513,21 +513,21 @@ Required deeper type movement
 ```
 Typed reader-delivery follow-through
   ├─> current converted reader path
-  │     └─> SecurityScan IPC reader stores BufferedReaderTarget::SecurityScanIpc
-  │           - bun_io mutates only bun_install_types::SecurityScanExit
-  │           - bun_install still performs scanner parsing/drain/deinit effects
-  ├─> runtime CLI reader paths that are structurally close
-  │     ├─> FilterRunHandle
-  │     ├─> MultiRunPipeReader
-  │     └─> TestParallelWorkerPipe
+  │     ├─> SecurityScan IPC reader stores BufferedReaderTarget::SecurityScanIpc
+  │     │     - bun_io mutates only bun_install_types::SecurityScanExit
+  │     │     - bun_install still performs scanner parsing/drain/deinit effects
+  │     └─> runtime CLI readers store BufferedReaderTarget::Runtime
+  │           - FilterRunHandle chunks route through RuntimeBufferedReaderDelivery::FilterRunHandleChunk
+  │           - MultiRunPipeReader chunks route through RuntimeBufferedReaderDelivery::MultiRunPipeReaderChunk
+  │           - TestParallelWorkerPipe chunks/done route through RuntimeBufferedReaderDelivery::{TestParallelWorkerPipeChunk,TestParallelWorkerPipeDone}
   ├─> why they are not the same as SecurityScan
   │     ├─> read chunks immediately mutate runtime-owned output state
   │     ├─> the state owner is the active Mini/JS driver context, not inert reducer state
   │     └─> bun_io cannot name the runtime owner without rebuilding the callback cycle
-  └─> valid next shape
-        ├─> add a typed runtime reader-delivery action in bun_runtime_types
-        ├─> let bun_io store RuntimeBufferedReaderTarget values and emit typed borrowed chunk/done/error deliveries
-        ├─> dispatch through a single high-tier hook carrying typed action data plus the event-loop current context
+  └─> converted runtime-reader shape
+        ├─> typed runtime reader-delivery actions live in bun_runtime_types
+        ├─> bun_io stores RuntimeBufferedReaderTarget values and emits typed borrowed chunk/done/error deliveries
+        ├─> dispatch goes through a single high-tier hook carrying typed action data plus the event-loop current context
         └─> no target may carry ProcessHandle*/WorkerPipe*/PipeReader* back to bun_io
 ```
 

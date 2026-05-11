@@ -5,12 +5,13 @@ use std::time::Instant;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, err, Error, Global, Output};
-use bun_io::{BufferedReader, ReadState};
+use bun_io::{BufferedReader, BufferedReaderTarget};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_runtime_types::reader::{RuntimeBufferedReaderTarget, RuntimePipeKind};
 use bun_spawn_types::ProcessIdentity;
 use bun_str::strings;
 
@@ -26,7 +27,6 @@ use crate::api::bun::process::{
 };
 // TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
-// TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`
 // TODO(port): crate path for Output writer type
 type OutputWriter = bun_core::io::Writer;
 
@@ -45,66 +45,21 @@ struct ScriptConfig {
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
-struct PipeReader<'a> {
+struct PipeReader {
     reader: BufferedReader,
-    handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
     line_buffer: Vec<u8>,
 }
 
-impl<'a> PipeReader<'a> {
+impl PipeReader {
     fn new(is_stderr: bool) -> Self {
         Self {
-            // BufferedReader::init(This) — Zig passes the parent type for vtable.
-            reader: BufferedReader::init::<Self>(),
-            handle: ptr::null(),
+            // Runtime target is installed in ProcessHandle::start once the
+            // stable State slot index and event-loop handle are known.
+            reader: BufferedReader::init_detached(),
             is_stderr,
             line_buffer: Vec::new(),
         }
-    }
-
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop<'static> {
-        // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
-        // outlives all handles (lives on `run`'s stack frame for the whole event loop).
-        unsafe { (*(*self.handle).state).event_loop }
-    }
-}
-
-// SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-// `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader may
-// be live on the caller's stack. Callbacks here touch only `line_buffer` /
-// `handle` / the State backref, never `reader`.
-bun_io::buffered_reader_parent_link!(MultiRunPipeReader for PipeReader<'static>);
-impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::MultiRunPipeReader;
-    const HAS_ON_READ_CHUNK: bool = true;
-
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _has_more: ReadState) -> bool {
-        // SAFETY: backrefs set in ProcessHandle::start(); State outlives all handles.
-        let state = unsafe { &mut *((*(*this).handle).state as *mut State) };
-        let _ = state.read_chunk(unsafe { &mut *this }, chunk);
-        true
-    }
-
-    unsafe fn on_reader_done(_this: *mut Self) {}
-
-    unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
-
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // SAFETY: backref; see on_read_chunk. State outlives all handles.
-        unsafe { (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx() }
-    }
-
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is the
-        // platform's uws wrapper; on POSIX `bun_io::Loop` *is* that wrapper
-        // (identity cast); on Windows project the embedded `uv_loop_t*`.
-        #[cfg(not(windows))]
-        { unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_io::Loop>() } }
-        #[cfg(windows)]
-        // SAFETY: `loop_` is the live `us_loop`; `uv_loop` set once at init.
-        { unsafe { (*(*(*this).event_loop_ptr()).loop_).uv_loop } }
     }
 }
 
@@ -121,8 +76,8 @@ pub struct ProcessHandle<'a> {
     state: *const State<'a>,
     color_idx: usize,
 
-    stdout_reader: PipeReader<'a>,
-    stderr_reader: PipeReader<'a>,
+    stdout_reader: PipeReader,
+    stderr_reader: PipeReader,
 
     process: Option<ProcessSlot>,
     options: SpawnOptions,
@@ -191,14 +146,20 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        self.stdout_reader.handle = std::ptr::from_ref(self);
-        self.stderr_reader.handle = std::ptr::from_ref(self);
-        // PORT NOTE: compute parent ptrs before calling `set_parent` to avoid
-        // borrowck seeing two simultaneous &mut borrows of the same field.
-        let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
-        self.stdout_reader.reader.set_parent(stdout_parent);
-        let stderr_parent = (&raw mut self.stderr_reader).cast::<c_void>();
-        self.stderr_reader.reader.set_parent(stderr_parent);
+        self.stdout_reader.reader.set_target(BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::MultiRunPipeReader {
+                index: self.idx,
+                pipe: RuntimePipeKind::Stdout,
+            },
+            event_loop: state.event_loop_handle.as_event_loop_ctx(),
+        });
+        self.stderr_reader.reader.set_target(BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::MultiRunPipeReader {
+                index: self.idx,
+                pipe: RuntimePipeKind::Stderr,
+            },
+            event_loop: state.event_loop_handle.as_event_loop_ctx(),
+        });
 
         #[cfg(windows)]
         {
@@ -294,6 +255,37 @@ pub(crate) unsafe fn on_process_exit_from_mini_context(
     unsafe { (*handle).on_process_exit(process, status) };
 }
 
+pub(crate) unsafe fn on_reader_chunk_from_mini_context(
+    context: *mut c_void,
+    index: usize,
+    pipe: RuntimePipeKind,
+    chunk: &[u8],
+) -> bool {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return false;
+    }
+
+    let state = context.cast::<State<'_>>();
+    let handle = unsafe {
+        let state_ref = &mut *state;
+        if index >= state_ref.handles.len() {
+            debug_assert!(index < state_ref.handles.len());
+            return false;
+        }
+        state_ref.handles.as_mut_ptr().add(index)
+    };
+    let pipe = unsafe {
+        match pipe {
+            RuntimePipeKind::Stdout => &raw mut (*handle).stdout_reader,
+            RuntimePipeKind::Stderr => &raw mut (*handle).stderr_reader,
+        }
+    };
+
+    let _ = unsafe { (*state).read_chunk(&*handle, &mut *pipe, chunk) };
+    true
+}
+
 const COLORS: [&[u8]; 6] = [
     b"\x1b[36m", // cyan
     b"\x1b[33m", // yellow
@@ -326,7 +318,12 @@ impl<'a> State<'a> {
     }
 
     // TODO(port): narrow error set — was `(std.Io.Writer.Error || bun.OOM)!void`
-    fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
+    fn read_chunk(
+        &mut self,
+        handle: &ProcessHandle<'a>,
+        pipe: &mut PipeReader,
+        chunk: &[u8],
+    ) -> Result<(), Error> {
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
@@ -339,8 +336,6 @@ impl<'a> State<'a> {
         // Process complete lines
         while let Some(newline_pos) = pipe.line_buffer.iter().position(|&b| b == b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
-            // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let handle = unsafe { &*pipe.handle };
             self.write_line_with_prefix(handle, line, writer)?;
             // Remove processed line from buffer
             let remaining_len = pipe.line_buffer.len() - (newline_pos + 1);
@@ -386,7 +381,7 @@ impl<'a> State<'a> {
     fn flush_pipe_buffer(
         &self,
         handle: &ProcessHandle<'a>,
-        pipe: &mut PipeReader<'a>,
+        pipe: &mut PipeReader,
     ) -> Result<(), Error> {
         if !pipe.line_buffer.is_empty() {
             let line = &pipe.line_buffer[..];

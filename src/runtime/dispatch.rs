@@ -225,6 +225,29 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
         RuntimeBufferedReaderDelivery::FilterRunHandleChunk { index, chunk } => unsafe {
             crate::cli::filter_run::on_reader_chunk_from_mini_context(context, index, chunk)
         },
+        RuntimeBufferedReaderDelivery::MultiRunPipeReaderChunk { index, pipe, chunk } => unsafe {
+            crate::cli::multi_run::on_reader_chunk_from_mini_context(
+                context,
+                index,
+                pipe,
+                chunk,
+            )
+        },
+        RuntimeBufferedReaderDelivery::TestParallelWorkerPipeChunk { index, pipe, chunk } => unsafe {
+            crate::cli::test::parallel::worker::on_reader_chunk_from_event_loop_context(
+                context,
+                index,
+                pipe,
+                chunk,
+            )
+        },
+        RuntimeBufferedReaderDelivery::TestParallelWorkerPipeDone { index, pipe } => unsafe {
+            crate::cli::test::parallel::worker::on_reader_done_from_event_loop_context(
+                context,
+                index,
+                pipe,
+            )
+        },
     }
 }
 

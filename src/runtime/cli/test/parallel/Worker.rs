@@ -10,6 +10,7 @@ use bun_jsc as jsc;
 use bun_io as r#async;
 use bun_io;
 use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_runtime_types::reader::{RuntimeBufferedReaderTarget, RuntimePipeKind};
 use bun_spawn_types::ProcessIdentity;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
@@ -80,16 +81,21 @@ impl Worker {
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
         let coord = unsafe { &*coord_ptr };
 
-        // SAFETY: out/err are fields of self; setParent stores the raw parent
-        // pointer for later `container_of`-style callback recovery. The
-        // pointers remain valid as long as `self` is not moved (Coordinator
-        // holds workers in a stable slice).
-        unsafe {
-            let out_ptr: *mut WorkerPipe = &raw mut self.out;
-            (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
-            let err_ptr: *mut WorkerPipe = &raw mut self.err;
-            (*err_ptr).reader.set_parent(err_ptr.cast::<c_void>());
-        }
+        let event_loop = coord.event_loop_handle.as_event_loop_ctx();
+        self.out.reader.set_target(bun_io::BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::TestParallelWorkerPipe {
+                index: self.idx as usize,
+                pipe: RuntimePipeKind::Stdout,
+            },
+            event_loop,
+        });
+        self.err.reader.set_target(bun_io::BufferedReaderTarget::Runtime {
+            target: RuntimeBufferedReaderTarget::TestParallelWorkerPipe {
+                index: self.idx as usize,
+                pipe: RuntimePipeKind::Stderr,
+            },
+            event_loop,
+        });
 
         // All resource cleanup on any error return — including watchOrReap
         // failure below. Each guard checks for null/unstarted so the order in
@@ -410,6 +416,61 @@ pub(crate) unsafe fn on_process_exit_from_event_loop_context(
     }
 }
 
+unsafe fn worker_pipe_from_event_loop_context(
+    context: *mut c_void,
+    index: usize,
+    pipe: RuntimePipeKind,
+) -> Option<(*mut Worker, *mut WorkerPipe)> {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return None;
+    }
+
+    let coord = unsafe { &mut *context.cast::<Coordinator<'static>>() };
+    if index >= coord.workers.len() {
+        debug_assert!(index < coord.workers.len());
+        return None;
+    }
+
+    let worker = unsafe { coord.workers.as_mut_ptr().add(index) };
+    let pipe = unsafe {
+        match PipeRole::from_runtime(pipe) {
+            PipeRole::Stdout => &raw mut (*worker).out,
+            PipeRole::Stderr => &raw mut (*worker).err,
+        }
+    };
+    Some((worker, pipe))
+}
+
+pub(crate) unsafe fn on_reader_chunk_from_event_loop_context(
+    context: *mut c_void,
+    index: usize,
+    pipe: RuntimePipeKind,
+    chunk: &[u8],
+) -> bool {
+    let target = unsafe { worker_pipe_from_event_loop_context(context, index, pipe) };
+    let Some((worker, _pipe)) = target else {
+        return false;
+    };
+
+    unsafe { (*worker).captured.extend_from_slice(chunk) };
+    true
+}
+
+pub(crate) unsafe fn on_reader_done_from_event_loop_context(
+    context: *mut c_void,
+    index: usize,
+    pipe: RuntimePipeKind,
+) -> bool {
+    let target = unsafe { worker_pipe_from_event_loop_context(context, index, pipe) };
+    let Some((_worker, pipe)) = target else {
+        return false;
+    };
+
+    unsafe { (*pipe).done = true };
+    true
+}
+
 impl ChannelOwner for Worker {
     /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`
     /// in platform callbacks`).
@@ -440,13 +501,20 @@ pub enum PipeRole {
     Stderr,
 }
 
+impl PipeRole {
+    #[inline]
+    fn from_runtime(kind: RuntimePipeKind) -> Self {
+        match kind {
+            RuntimePipeKind::Stdout => Self::Stdout,
+            RuntimePipeKind::Stderr => Self::Stderr,
+        }
+    }
+}
+
 /// Reads worker stdout/stderr. Accumulates into the worker's `captured` buffer
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
 pub struct WorkerPipe {
-    // TODO(port): Zig default `BufferedReader.init(WorkerPipe)` passes the
-    // owner type for callback vtable wiring. Rust side likely a generic param
-    // or trait impl; revisit in Phase B.
     pub reader: bun_io::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,
@@ -457,72 +525,17 @@ pub struct WorkerPipe {
 impl WorkerPipe {
     pub fn new(role: PipeRole, worker: *const Worker) -> Self {
         Self {
-            reader: bun_io::BufferedReader::init::<WorkerPipe>(),
+            reader: bun_io::BufferedReader::init_detached(),
             worker,
             role,
             done: false,
         }
-    }
-
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
-        // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
-        // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
-        // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
-        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
-        true
-    }
-    pub fn on_reader_done(&mut self) {
-        self.done = true;
-    }
-    pub fn on_reader_error(&mut self, _: bun_sys::Error) {
-        self.done = true;
-    }
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.event_loop() }
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.uv_loop() }
     }
 }
 
 impl Default for WorkerPipe {
     fn default() -> Self {
         Self::new(PipeRole::Stdout, core::ptr::null())
-    }
-}
-
-// `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-bun_io::buffered_reader_parent_link!(TestParallelWorkerPipe for WorkerPipe);
-impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::TestParallelWorkerPipe;
-    const HAS_ON_READ_CHUNK: bool = true;
-    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
-    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. These touch only fields disjoint from
-    // `reader` (worker backref / done flag).
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: bun_io::ReadState) -> bool {
-        unsafe { WorkerPipe::on_read_chunk(&mut *this, chunk, state) }
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { WorkerPipe::on_reader_done(&mut *this) }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
-        unsafe { WorkerPipe::on_reader_error(&mut *this, err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        // `vm.uv_loop()` is `*mut bun_io::Loop` on every target (uv on
-        // Windows, us_loop on POSIX) — exactly the trait's nominal.
-        unsafe { (*(*(*this).worker).coord).vm.uv_loop() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx() }
     }
 }
 

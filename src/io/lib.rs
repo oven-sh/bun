@@ -193,8 +193,6 @@ bun_dispatch::link_interface! {
         Terminal,
         CronRegister,
         CronRemove,
-        MultiRunPipeReader,
-        TestParallelWorkerPipe,
         LifecycleScript,
     ] {
         fn has_on_read_chunk() -> bool;

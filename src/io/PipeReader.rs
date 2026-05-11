@@ -155,7 +155,18 @@ impl BufferedReaderTarget {
                     let _ = state.record_ipc_done();
                 });
             }
-            Self::Runtime { .. } => {}
+            Self::Runtime { target, event_loop } => {
+                if let Some(delivery) = target.on_reader_done() {
+                    // SAFETY: done delivery carries no borrowed bytes and is
+                    // consumed synchronously by the high-tier dispatcher.
+                    unsafe {
+                        let _ = __bun_dispatch_runtime_buffered_reader_delivery(
+                            delivery,
+                            event_loop.current_context(),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -171,7 +182,19 @@ impl BufferedReaderTarget {
                     let _ = state.record_ipc_done();
                 });
             }
-            Self::Runtime { .. } => {}
+            Self::Runtime { target, event_loop } => {
+                let _ = err;
+                if let Some(delivery) = target.on_reader_error() {
+                    // SAFETY: error delivery carries no borrowed bytes and is
+                    // consumed synchronously by the high-tier dispatcher.
+                    unsafe {
+                        let _ = __bun_dispatch_runtime_buffered_reader_delivery(
+                            delivery,
+                            event_loop.current_context(),
+                        );
+                    }
+                }
+            }
         }
     }
 }

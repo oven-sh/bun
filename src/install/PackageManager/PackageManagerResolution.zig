@@ -60,27 +60,23 @@ pub fn matchAuthForUrl(this: *const PackageManager, url_str: string) ?Npm.Regist
 
     var best: ?*const Npm.Registry.AuthConfiguration = null;
     var best_path_len: usize = 0;
-    var best_has_creds = false;
 
     for (this.options.auth_configurations) |*entry| {
+        // Ignore entries that carry no usable credentials (e.g. a
+        // `username` without the matching `_password` half). An empty
+        // entry at a deeper path must not shadow a credentialed match
+        // at a shorter path — npm's rule is "longest nerf-dart with
+        // credentials wins".
+        if (entry.token.len == 0 and entry.auth.len == 0) continue;
         if (!entry.matches(req_host, req_path)) continue;
-        const has_creds = entry.token.len > 0 or entry.auth.len > 0;
 
-        // Longer path wins; on a tie, prefer the one with credentials so an
-        // `email`-only entry at a longer path doesn't shadow a token/auth
-        // at the same or shorter path.
-        if (best == null or
-            entry.path.len > best_path_len or
-            (entry.path.len == best_path_len and has_creds and !best_has_creds))
-        {
+        if (best == null or entry.path.len > best_path_len) {
             best = entry;
             best_path_len = entry.path.len;
-            best_has_creds = has_creds;
         }
     }
 
     if (best) |entry| {
-        if (entry.token.len == 0 and entry.auth.len == 0) return null;
         return .{
             .token = entry.token,
             .auth = entry.auth,

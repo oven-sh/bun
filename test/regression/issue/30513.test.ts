@@ -13,7 +13,7 @@
 // request time (longest-prefix wins), matching npm's behaviour.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 type TarballHit = { url: string; authorization: string | null };
 
@@ -119,6 +119,7 @@ afterAll(() => {
 test("auth token applies to tarball URL when token path diverges from registry URL path", async () => {
   tarballHits.length = 0;
   const origin = `http://${server.hostname}:${server.port}`;
+  using cacheDir = tempDir("issue-30513-cache", {});
   using dir = tempDir("issue-30513", {
     "package.json": JSON.stringify({
       name: "issue-30513-consumer",
@@ -142,17 +143,18 @@ test("auth token applies to tarball URL when token path diverges from registry U
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: tmpdirSync() },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  const tarballAuthHeaders = tarballHits.map(h => h.authorization);
-  expect({ exitCode, stderr, stdout, tarballAuthHeaders }).toEqual({
+  // The stable signal for this regression is the recorded Authorization
+  // header on the tarball request; the reporter-output assertions
+  // (stdout progress, non-empty stderr) vary with install's reporter.
+  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
     exitCode: 0,
-    stderr: expect.stringMatching(/./), // bun always writes progress to stderr
-    stdout: expect.stringContaining(PKG_NAME),
+    hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
   });
 });
@@ -166,6 +168,7 @@ test("parent-path nerf-dart covers deeper scoped-registry URL (related: #28233)"
   // of (this case) and divergent (the primary test above) — uniformly.
   tarballHits.length = 0;
   const origin = `http://${server.hostname}:${server.port}`;
+  using cacheDir = tempDir("issue-30513-parent-cache", {});
   using dir = tempDir("issue-30513-parent", {
     "package.json": JSON.stringify({
       name: "issue-30513-parent-consumer",
@@ -186,16 +189,15 @@ test("parent-path nerf-dart covers deeper scoped-registry URL (related: #28233)"
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: tmpdirSync() },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  void stdout;
-  void stderr;
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
     exitCode: 0,
+    hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
   });
 });
@@ -206,6 +208,7 @@ test("longest nerf-dart wins when multiple entries could match the request URL",
   // npm is observed at request time.
   tarballHits.length = 0;
   const origin = `http://${server.hostname}:${server.port}`;
+  using cacheDir = tempDir("issue-30513-longest-cache", {});
   using dir = tempDir("issue-30513-longest", {
     "package.json": JSON.stringify({
       name: "issue-30513-longest-consumer",
@@ -226,16 +229,15 @@ test("longest nerf-dart wins when multiple entries could match the request URL",
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: tmpdirSync() },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  void stdout;
-  void stderr;
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect({ exitCode, tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
     exitCode: 0,
+    hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
   });
 });

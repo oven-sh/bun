@@ -430,6 +430,15 @@ pub const Registry = struct {
         password: string = "",
 
         pub fn finalize(self: *AuthConfigurationBuilder, allocator: std.mem.Allocator) !AuthConfiguration {
+            // `username`/`_password` halves aren't carried onto the final
+            // entry: we either combine them into a base64 `auth` now, or
+            // drop them. Either way they're this call's temp storage, so
+            // free them here — the builder itself is discarded shortly.
+            defer {
+                if (self.username.len > 0) allocator.free(self.username);
+                if (self.password.len > 0) allocator.free(self.password);
+            }
+
             var auth = self.auth_b64;
             if (auth.len == 0 and self.username.len > 0 and self.password.len > 0) {
                 const raw = try allocator.alloc(u8, self.username.len + 1 + self.password.len);

@@ -1207,7 +1207,13 @@ pub fn loadNpmrc(
         // (token, auth, username, password) and is finalised at the end
         // into `install.auth_configurations`.
         var auth_by_dart = bun.StringHashMap(Registry.AuthConfigurationBuilder).init(allocator);
-        defer auth_by_dart.deinit();
+        defer {
+            // The map stores heap-allocated dart-keys; its own deinit
+            // only frees table storage, so release each key explicitly.
+            var key_it = auth_by_dart.keyIterator();
+            while (key_it.next()) |k| allocator.free(k.*);
+            auth_by_dart.deinit();
+        }
 
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
@@ -1339,17 +1345,34 @@ pub fn loadNpmrc(
         }
 
         // Serialize the nerf-dart map into a flat slice for the manager.
+        // `loadNpmrcConfig` calls us once per `.npmrc` file with a shared
+        // `configs` accumulator, so on each call `auth_by_dart` is rebuilt
+        // from every entry seen so far. That means the fresh list already
+        // subsumes the previous one — replace (don't append) to avoid
+        // stale duplicates that would let an earlier file shadow a later
+        // override at an identical nerf-dart.
         if (auth_by_dart.count() > 0) {
             const previous = install.auth_configurations;
-            const list = try allocator.alloc(Registry.AuthConfiguration, previous.len + auth_by_dart.count());
-            @memcpy(list[0..previous.len], previous);
+            const list = try allocator.alloc(Registry.AuthConfiguration, auth_by_dart.count());
             var it = auth_by_dart.valueIterator();
-            var i: usize = previous.len;
+            var i: usize = 0;
             while (it.next()) |v| : (i += 1) {
                 list[i] = try v.finalize(allocator);
             }
             install.auth_configurations = list;
-            if (previous.len > 0) allocator.free(previous);
+            // Release the stale slice. The strings inside those stale
+            // entries came from this same allocator; the fresh list
+            // carries its own duplicates (builder.finalize duped them),
+            // so freeing here doesn't dangle any slice in `list`.
+            if (previous.len > 0) {
+                for (previous) |*p| {
+                    if (p.host.len > 0) allocator.free(p.host);
+                    if (p.path.len > 0) allocator.free(p.path);
+                    if (p.token.len > 0) allocator.free(p.token);
+                    if (p.auth.len > 0) allocator.free(p.auth);
+                }
+                allocator.free(previous);
+            }
         }
     }
 }

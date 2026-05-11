@@ -1,5 +1,6 @@
-import { describe, expect } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import path from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1191,5 +1192,61 @@ describe("bundler", () => {
     run: {
       stdout: "object\nobject\nobject",
     },
+  });
+
+  // https://github.com/oven-sh/bun/issues/30489
+  // Comments must not influence the renamer — two files that differ only
+  // in comments should produce byte-identical minified output.
+  describe("minify/identifiers independent of comments (#30489)", () => {
+    const code = /* js */ `var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;
+export function go() { return aa + bb + cc + dd + ee + ff; }
+`;
+    // 42+ characters to force the >=32 byte path in CharFreq.scanBig,
+    // plus enough repetition that if it leaked into the histogram the
+    // chosen letter would visibly shift.
+    const filler = "x".repeat(42);
+    const variants: Record<string, string> = {
+      baseline: code,
+      leadingLineComment: `// ${filler}\n` + code,
+      leadingBlockComment: `/* ${filler} */\n` + code,
+      midFileLineComment: code.replace(
+        "export function",
+        `// ${filler}\nexport function`,
+      ),
+      midFileBlockComment: code.replace(
+        "export function",
+        `/* ${filler} */\nexport function`,
+      ),
+      trailingLineComment: code + `// ${filler}\n`,
+      trailingBlockComment: code + `/* ${filler} */\n`,
+    };
+
+    async function minify(source: string): Promise<string> {
+      const dir = tempDirWithFiles("issue-30489", { "entry.js": source });
+      const build = await Bun.build({
+        entrypoints: [path.join(dir, "entry.js")],
+        minify: true,
+      });
+      expect(build.success).toBe(true);
+      return await build.outputs[0].text();
+    }
+
+    test.concurrent.each(Object.keys(variants).filter(k => k !== "baseline"))(
+      "%s produces identical output to baseline",
+      async variant => {
+        const [baseline, withComment] = await Promise.all([
+          minify(variants.baseline),
+          minify(variants[variant]),
+        ]);
+        expect(withComment).toBe(baseline);
+      },
+    );
+
+    test.concurrent("baseline has expected minified shape", async () => {
+      // Sanity check — not literal output, just confirms we're actually
+      // minifying six vars down to single-letter names.
+      const out = await minify(variants.baseline);
+      expect(out).toMatch(/var \w=1,\w=2,\w=3,\w=4,\w=5,\w=6;/);
+    });
   });
 });

@@ -2061,7 +2061,21 @@ fn NewLexer_(
         }
 
         pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
+            return initWithTrackComments(log, source, allocator, false);
+        }
+
+        pub fn initWithTrackComments(
+            log: *logger.Log,
+            source: *const logger.Source,
+            allocator: std.mem.Allocator,
+            track_comments: bool,
+        ) !LexerType {
             var lex = initWithoutReading(log, source, allocator);
+            // Set this before calling step()/next() — the very first token
+            // may be a comment, and scanCommentText() only records comments
+            // when track_comments is true. Flipping the flag afterwards
+            // misses any comment(s) at the start of the file.
+            lex.track_comments = track_comments;
             lex.step();
             try lex.next();
 

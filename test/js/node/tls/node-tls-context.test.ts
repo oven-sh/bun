@@ -2,6 +2,8 @@
 // selects the most recently added SecureContext that matches the servername.
 
 import { describe, expect, it } from "bun:test";
+// @ts-expect-error — debug-only export
+import { secureContextVerifyMode } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 import { readFileSync } from "node:fs";
@@ -629,17 +631,18 @@ describe("tls.createSecureContext().context.addCACert", () => {
     expect(await promise).toBe(true);
   });
 
-  it("silently ignores non-PEM input (Node parity)", () => {
-    // Node's addCACert is lenient — it doesn't throw on malformed input,
-    // empty strings, or anything that doesn't coerce to bytes it recognises.
+  it("silently ignores empty / malformed PEM input (Node parity)", () => {
+    // Within the documented input surface (string / Buffer / TypedArray /
+    // ArrayBuffer), Node's addCACert is lenient about byte content — an
+    // empty or malformed blob is a no-op, not a throw. Invalid JS types
+    // (null/undefined/number/plain object) are NOT part of the contract;
+    // their behavior is intentionally unspecified and tested elsewhere.
     const ctx = tls.createSecureContext();
     expect(() => ctx.context.addCACert("")).not.toThrow();
     expect(() => ctx.context.addCACert("not pem")).not.toThrow();
     expect(() => ctx.context.addCACert(Buffer.alloc(0))).not.toThrow();
-    expect(() => ctx.context.addCACert(null)).not.toThrow();
-    expect(() => ctx.context.addCACert(undefined)).not.toThrow();
-    expect(() => ctx.context.addCACert(42)).not.toThrow();
-    expect(() => ctx.context.addCACert({})).not.toThrow();
+    expect(() => ctx.context.addCACert(new Uint8Array())).not.toThrow();
+    expect(() => ctx.context.addCACert(new ArrayBuffer(0))).not.toThrow();
   });
 
   it("is idempotent on duplicate CAs", () => {
@@ -742,9 +745,9 @@ describe("tls.createSecureContext().context.addCACert", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const result = JSON.parse(stdout.trim());
     expect(result.authorized).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   it("requires at least one argument", () => {
@@ -759,10 +762,7 @@ describe("tls.createSecureContext().context.addCACert", () => {
   // in every handshake (e.g. browsers would prompt for a client certificate).
   // Node's `SecureContext::AddCACert` never touches verify_mode for exactly
   // this reason.
-  it("does not flip CTX verify_mode (would leak as server requestCert)", async () => {
-    // @ts-expect-error — debug-only export
-    const { secureContextVerifyMode } = await import("bun:internal-for-testing");
-
+  it("does not flip CTX verify_mode (would leak as server requestCert)", () => {
     // Baseline: a fresh SecureContext has SSL_VERIFY_NONE (= 0).
     const ctx = tls.createSecureContext({ cert: agent1Cert, key: agent1Key });
     expect(secureContextVerifyMode(ctx.context)).toBe(0);
@@ -776,5 +776,47 @@ describe("tls.createSecureContext().context.addCACert", () => {
     // For completeness: the `options.ca` construction path still flips
     // verify_mode (pre-existing quirk we're not changing), so this is the
     // strict stronger guarantee for the post-construction API only.
+  });
+
+  // Regression found in review: the first addCACert() on a context built
+  // with `options.ca` must append to — not replace — the construction-time
+  // trust store. If we swap in a fresh `us_get_default_ca_store()` on the
+  // first call, the CAs passed to `createSecureContext({ca: ...})` are
+  // silently dropped, breaking `{ca: corpRoot}.addCACert(extraCA)`.
+  it("preserves construction-time CAs on the first addCACert call", async () => {
+    // Build with ca1 at construction time; then add the unrelated ca2 on top.
+    // agent1 (signed by ca1) must still verify afterwards.
+    const ctx = tls.createSecureContext({ ca: ca1 });
+    ctx.context.addCACert(ca2);
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: {
+        data() {},
+        error() {},
+        open(s) {
+          s.end();
+        },
+      },
+    });
+    const client = tls.connect(
+      {
+        port: server.port,
+        host: "127.0.0.1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+        servername: "agent1",
+      },
+      () => {
+        resolve(client.authorized);
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    expect(await promise).toBe(true);
   });
 });

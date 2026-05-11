@@ -617,7 +617,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     /* An explicit CA replaces the default trust store (Node.js semantics):
      * chains must validate exclusively against the supplied CAs. The SSL_CTX
      * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
-     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
+     * SSL_CTX_load_verify_locations below populates only the user's CAs.
+     * Flip `us_ctx_user_ca_idx` so a later `us_ssl_ctx_add_ca_pem`
+     * (addCACert) appends to THIS user-CA store rather than swapping in the
+     * default roots, and so the per-socket client override in
+     * `us_internal_ssl_attach` preserves the user CAs. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -638,7 +643,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   } else if (options.ca && options.ca_count > 0) {
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * any client certificate that chains to a public root. The marker makes
+     * a later addCACert append to this store (see ca_file_name branch). */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
@@ -654,6 +661,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   } else if (options.request_cert) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    /* See comment above the ca_file_name branch — `requestCert: true` also
+     * installs a populated trust store that a later addCACert must preserve. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,

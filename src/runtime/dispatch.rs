@@ -1012,28 +1012,51 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         }
 
         poll_tag::FILE_SINK => {
-            let h = owner_as!(FileSinkPoll);
-            h.on_poll(size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("FILE_SINK FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<FileSinkPoll, _>(writer, |h| {
+                h.on_poll(size_or_offset as isize, hup);
+            });
         }
         poll_tag::STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<Subprocess<'_>>);
-            h.on_poll(size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("STATIC_PIPE_WRITER FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<StaticPipeWriterPoll<Subprocess<'_>>, _>(
+                writer,
+                |h| h.on_poll(size_or_offset as isize, hup),
+            );
         }
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>);
-            h.on_poll(size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("SHELL_STATIC_PIPE_WRITER FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<
+                StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>,
+                _,
+            >(writer, |h| h.on_poll(size_or_offset as isize, hup));
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
             // `bun_install` builds its writer with the lower-tier
             // `bun_spawn::static_pipe_writer::StaticPipeWriter`, not the
             // runtime-tier one — cast must match the producer's type.
-            let h = owner_as!(bun_spawn::static_pipe_writer::Poll<bun_install::SecurityScanSubprocess<'_>>);
-            h.on_poll(size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("SECURITY_SCAN_STATIC_PIPE_WRITER FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<
+                bun_spawn::static_pipe_writer::Poll<bun_install::SecurityScanSubprocess<'_>>,
+                _,
+            >(writer, |h| h.on_poll(size_or_offset as isize, hup));
         }
         poll_tag::SHELL_BUFFERED_WRITER => {
             // `bun.shell.Interpreter.IOWriter.Poll`
-            let h = owner_as!(ShellBufferedWriterPoll);
-            crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("SHELL_BUFFERED_WRITER FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<ShellBufferedWriterPoll, _>(writer, |h| {
+                crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
+            });
         }
         poll_tag::DNS_RESOLVER => {
             let resolver = owner_as!(DNSResolver);
@@ -1063,8 +1086,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             }
         }
         poll_tag::TERMINAL_POLL => {
-            let h = owner_as!(TerminalPoll);
-            h.on_poll(size_or_offset as isize, hup);
+            let writer = owner
+                .pipe_writer_handle()
+                .expect("TERMINAL_POLL FilePoll owner carries a PipeWriterHandle");
+            bun_io::with_pipe_writer_handle::<TerminalPoll, _>(writer, |h| {
+                h.on_poll(size_or_offset as isize, hup);
+            });
         }
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             // `OutputReader = BufferedReader` in the install crate — same

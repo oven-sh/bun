@@ -191,7 +191,10 @@ pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 
-pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
+pub use pipe_writer::{
+    BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus,
+    with_pipe_writer_handle,
+};
 #[cfg(windows)]
 pub use source::Source;
 

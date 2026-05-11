@@ -13,9 +13,12 @@ use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
-use bun_io_types::file_poll;
+use bun_io_types::{
+    file_poll::{self, PipeWriterVariant},
+    writer::PipeWriterHandle,
+};
 
-use crate::{EventLoopHandle, FilePollRef, Owner, FilePollFlag, FilePollKind};
+use crate::{EventLoopHandle, FilePollRef, FilePollFlag, FilePollKind};
 
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
@@ -274,12 +277,11 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    /// Marker type for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixBufferedWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust derives it from this
-    /// associated marker type.
-    type PollOwner: file_poll::Variant;
+    /// Marker type for this writer's `FilePoll` owner. Zig derived the tag
+    /// from `@TypeOf` (TaggedPointerUnion); Rust derives the owner variant from
+    /// this associated marker type and records the writer through
+    /// `PipeWriterHandle`.
+    type PollOwner: file_poll::PipeWriterVariant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -369,8 +371,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
+        let writer = PipeWriterHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("PipeWriter self pointer is non-null");
         FilePollRef::init(// SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::event_loop(self.parent()) }, fd, Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()))
+            unsafe { Parent::event_loop(self.parent()) }, fd, Parent::PollOwner::writer_owner(writer))
     }
 
     pub fn get_poll(&self) -> Option<FilePollRef> {
@@ -506,9 +510,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::typed::<Parent::PollOwner>(owner.cast()));
+        let writer = PipeWriterHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("PipeWriter self pointer is non-null");
+        self.handle.set_owner(Parent::PollOwner::writer_owner(writer));
     }
 
     pub fn write(&mut self) {
@@ -573,12 +577,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    /// Marker type for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixStreamingWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust derives it from this
-    /// associated marker type.
-    type PollOwner: file_poll::Variant;
+    /// Marker type for this writer's `FilePoll` owner. Zig derived the tag
+    /// from `@TypeOf` (TaggedPointerUnion); Rust derives the owner variant from
+    /// this associated marker type and records the writer through
+    /// `PipeWriterHandle`.
+    type PollOwner: file_poll::PipeWriterVariant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
@@ -729,9 +732,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(Owner::typed::<Parent::PollOwner>(owner.cast()));
+        let writer = PipeWriterHandle::from_ptr(std::ptr::from_mut(self))
+            .expect("PipeWriter self pointer is non-null");
+        self.handle.set_owner(Parent::PollOwner::writer_owner(writer));
     }
 
     fn _on_writable(&mut self) {
@@ -1046,7 +1049,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                let p = FilePollRef::init(loop_, fd, Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()));
+                let writer = PipeWriterHandle::from_ptr(std::ptr::from_mut(self))
+                    .expect("PipeWriter self pointer is non-null");
+                let p = FilePollRef::init(loop_, fd, Parent::PollOwner::writer_owner(writer));
                 self.handle = PollOrFd::Poll(p);
                 p
             }
@@ -2301,5 +2306,15 @@ pub type BufferedWriter<P> = WindowsBufferedWriter<P>;
 pub type StreamingWriter<P> = PosixStreamingWriter<P>;
 #[cfg(not(unix))]
 pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
+
+#[inline]
+pub fn with_pipe_writer_handle<W, R>(
+    handle: PipeWriterHandle,
+    f: impl FnOnce(&mut W) -> R,
+) -> R {
+    // SAFETY: handles are recorded from live PipeWriter fields by bun_io when
+    // writers attach to FilePoll. Keep concrete writer recovery in bun_io.
+    unsafe { f(&mut *handle.as_ptr::<W>()) }
+}
 
 // ported from: src/io/PipeWriter.zig

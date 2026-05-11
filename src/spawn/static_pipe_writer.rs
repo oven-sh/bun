@@ -24,7 +24,7 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
-    type PollOwner: file_poll::Variant;
+    type PollOwner: file_poll::PipeWriterVariant;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);

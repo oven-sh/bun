@@ -776,13 +776,7 @@ impl FileSink {
         self.run_pending_later.has = true;
         if let EventLoopHandle::Js { owner } = self.event_loop() {
             self.ref_();
-            // `jsc.Task.init(&this.run_pending_later)` — the comptime type→tag
-            // map lives in `crate::dispatch`; the resolved tag for
-            // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
-            let task = bun_event_loop::Task::new(
-                bun_event_loop::task_tag::FlushPendingFileSinkTask,
-                (&raw mut self.run_pending_later).cast::<()>(),
-            );
+            let task = bun_event_loop::Task::init(&raw mut self.run_pending_later);
             owner.enqueue_task(task);
         }
     }
@@ -1288,6 +1282,10 @@ impl FileSink {
 #[derive(Default)]
 pub struct FlushPendingTask {
     pub has: bool,
+}
+
+impl bun_event_loop::Taskable for FlushPendingTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
 }
 
 impl FlushPendingTask {

@@ -2390,6 +2390,64 @@ it("should not add duplicate package.json entries when installing the same tarba
   });
 });
 
+it("should honor an explicit alias for a tarball URL already present under a different key", async () => {
+  // `bun add <tarball-url>` keys the dep by the tarball's resolved name
+  // ("baz"). A subsequent `bun add myalias@<same-url>` must create the
+  // requested "myalias" key — the URL-value fallback introduced for #30499
+  // must not silently latch onto the existing entry under a different key.
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
+  setHandler(dummyRegistry([]));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", `myalias@${tarball_url}`],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+      myalias: tarball_url,
+    },
+  });
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

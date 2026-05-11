@@ -459,7 +459,11 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if (request.e_string == null and
+                                // Only fall back to a URL-value match when the user did not
+                                // specify an explicit `alias@url`. With an explicit alias, the
+                                // user has asked for a specific key name, so reusing an existing
+                                // entry under a different key would silently drop the alias.
+                                if (request.e_string == null and !request.is_aliased and
                                     (request.version.tag == .github or request.version.tag == .git or request.version.tag == .tarball))
                                 {
                                     for (query.expr.data.e_object.properties.slice()) |item| {

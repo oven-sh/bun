@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
 
@@ -6,7 +7,7 @@ use bun_event_loop::Taskable;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
 use bun_str::{String as BunString, ZigStringSlice};
@@ -210,20 +211,25 @@ pub trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
+// R-2 Phase 2: every JS-exposed mixin method takes `&T`; per-field interior
+// mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
+// cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
+// The codegen `host_fn_this` shim still passes `&mut T` until Phase 1 lands —
+// `&mut T` auto-reborrows to `&T` so the impls below compile against either.
 pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
-    // Field accessors (split-borrow is the impl's responsibility).
+    // Field accessors (interior-mutability cells; all `&self`).
     fn global_this(&self) -> *mut JSGlobalObject;
-    fn stream_mut(&mut self) -> &mut Self::Stream;
-    fn write_result_ptr(&mut self) -> Option<*mut u32>;
-    fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive;
-    fn this_value_mut(&mut self) -> &mut StrongOptional;
-    fn task_mut(&mut self) -> &mut WorkPoolTask;
-    fn write_in_progress_mut(&mut self) -> &mut bool;
-    fn pending_close_mut(&mut self) -> &mut bool;
-    fn pending_reset_mut(&mut self) -> &mut bool;
-    fn closed_mut(&mut self) -> &mut bool;
+    fn stream(&self) -> &JsCell<Self::Stream>;
+    fn write_result_ptr(&self) -> Option<*mut u32>;
+    fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
+    fn this_value(&self) -> &JsCell<StrongOptional>;
+    fn task(&self) -> &JsCell<WorkPoolTask>;
+    fn write_in_progress(&self) -> &Cell<bool>;
+    fn pending_close(&self) -> &Cell<bool>;
+    fn pending_reset(&self) -> &Cell<bool>;
+    fn closed(&self) -> &Cell<bool>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
     /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
@@ -234,10 +240,15 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
     /// `heap::take`) when it hits zero.
     ///
-    /// PORT NOTE: raw-pointer receiver. The previous `fn deref(&self)` cast
-    /// `&self → *const Self → *mut Self` and freed through it — UB (writes
-    /// through a pointer derived from a shared ref). All call sites already
-    /// hold either `&mut T` (which coerces) or `*mut T`.
+    /// PORT NOTE: raw-pointer receiver so the destroy path keeps the
+    /// allocation's full write provenance (routing through `&self` and casting
+    /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
+    /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
+    /// `finalize`) holds a `*mut T` derived from the original `m_ctx`
+    /// allocation; the bracketed `ref_()`/`deref()` in `write_sync` can never
+    /// hit zero while the JS wrapper's +1 is still live, so its
+    /// `(&T as *const T).cast_mut()` provenance is sufficient (only the
+    /// `Cell<u32>` is touched).
     ///
     /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
     /// in `constructor()`. After this returns, `*this` may have been freed.
@@ -251,7 +262,7 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
     pub fn write(
-        this: &mut T,
+        this: &T,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -352,56 +363,64 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         });
         let _ = (in_off, in_len, out_off, out_len);
 
-        if *this.write_in_progress_mut() {
+        if this.write_in_progress().get() {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
                 .throw());
         }
-        if *this.pending_close_mut() {
+        if this.pending_close().get() {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
                 .throw());
         }
-        *this.write_in_progress_mut() = true;
+        this.write_in_progress().set(true);
         this.ref_();
 
-        this.stream_mut().set_buffers(in_, out);
-        this.stream_mut().set_flush(i32::try_from(flush).expect("int cast"));
+        this.stream().with_mut(|s| {
+            s.set_buffers(in_, out);
+            s.set_flush(i32::try_from(flush).expect("int cast"));
+        });
 
         // Only create the strong handle when we have a pending write
         // And make sure to clear it when we are done.
-        this.this_value_mut().set(global_this, this_value);
+        this.this_value().with_mut(|v| v.set(global_this, this_value));
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global_this.bun_vm();
-        *this.task_mut() = WorkPoolTask {
+        this.task().set(WorkPoolTask {
             node: Default::default(),
             callback: Self::async_job_run_task,
-        };
-        this.poll_ref_mut().ref_(vm);
-        WorkPool::schedule(this.task_mut());
+        });
+        this.poll_ref().with_mut(|p| p.ref_(vm));
+        WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
     }
 
     // Zig: nested `const AsyncJob = struct { ... }` — namespacing only.
     unsafe fn async_job_run_task(task: *mut WorkPoolTask) {
-        // SAFETY: task points to T.task; recover &mut T via container_of
-        // (`CompressionStreamImpl::from_task`).
-        let this: &mut T = unsafe { &mut *T::from_task(task) };
+        // SAFETY: task points to T.task; recover *mut T via container_of
+        // (`CompressionStreamImpl::from_task`). The task field is a
+        // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
+        // `offset_of!(T, task)` is the value's offset.
+        let this: *mut T = unsafe { T::from_task(task) };
         Self::async_job_run(this);
     }
 
-    fn async_job_run(this: &mut T) {
+    fn async_job_run(this: *mut T) {
+        // SAFETY: `this` is the live heap m_ctx payload (kept alive by the
+        // `ref_()` in `write()`); deref shared (`&*`) — bodies use the `&self`
+        // accessor surface (R-2).
+        let this_ref: &T = unsafe { &*this };
         // SAFETY: `global_this` is the JSC_BORROW backref stored at construct
         // time; the global outlives this m_ctx payload.
-        let global_this: &JSGlobalObject = unsafe { &*this.global_this() };
+        let global_this: &JSGlobalObject = unsafe { &*this_ref.global_this() };
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
         // JS-thread debug assert; same backing pointer as `bun_vm()`).
         // SAFETY: `bun_vm_concurrently()` never returns null for a Bun-owned global.
         let vm = unsafe { &*global_this.bun_vm_concurrently() };
 
-        this.stream_mut().do_work();
+        this_ref.stream().with_mut(|s| s.do_work());
 
         // Zig: `vm.enqueueTaskConcurrent(ConcurrentTask.create(Task.init(this)))`.
         // SAFETY: `event_loop()` is a self-pointer into a live VM; the
@@ -411,65 +430,59 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // until `run_from_js_thread` runs and calls `deref()`.
         unsafe {
             (*vm.event_loop())
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<T>(this))));
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
     }
 
-    pub fn run_from_js_thread(this: &mut T) {
-        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but both
-        // `check_error` (→ `emit_error` → onerror `run_callback`) and the
-        // write-callback `run_callback` below run user JS which can re-enter
-        // via a fresh `&mut T` from the wrapper's `m_ctx` (e.g. `write()` /
-        // `reset()` / `close()`) and mutate `pending_reset` / `pending_close`
-        // / `write_in_progress` / `ref_count`. SUSPECT (not yet ASM-cached,
-        // but the trait accessors are `#[inline]` field projections — one
-        // inlining change away from reading a stale `pending_close` after the
-        // callback or store-forwarding `ref_count` across it). Launder so
-        // every field access goes through an opaque pointer; mirrors the cork
-        // fix at b818e70e1c57.
-        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
-        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
-        // aliases the original live `&mut T`; single JS thread; the matching
-        // `ref_()` in `write()` keeps the heap payload alive across re-entry
-        // until the trailing `deref()`, so `*this` stays a valid place even
-        // if a re-entrant `close()` runs. Each `&mut *this` borrow ends
-        // before the next is created (none held across a JS-re-entrant call).
-        let global: &JSGlobalObject = unsafe { &*(*this).global_this() };
+    /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
+    /// the completion task back to the JS thread.
+    ///
+    /// R-2: takes `*mut T` (full allocation provenance from `Task.ptr`) so the
+    /// trailing `T::deref(this_ptr)` may free the box if it hits zero. All
+    /// field access goes through `&*this_ptr` and the `&self` accessor surface;
+    /// every accessed field is `Cell`/`JsCell`-backed so re-entry via the
+    /// onerror / write callbacks is sound (no `noalias` to violate, no
+    /// `black_box` launders needed).
+    ///
+    /// SAFETY: `this_ptr` is the live heap m_ctx payload; the matching
+    /// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
+    pub unsafe fn run_from_js_thread(this_ptr: *mut T) {
+        // SAFETY: see fn-level contract.
+        let this: &T = unsafe { &*this_ptr };
+        // SAFETY: JSC_BORROW backref; global outlives this m_ctx payload.
+        let global: &JSGlobalObject = unsafe { &*this.global_this() };
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global.bun_vm();
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref(); defer
+        // PORT NOTE: reshaped — Zig used `defer this.deref(); defer
         // this.poll_ref.unref(vm);` (run at scope exit in reverse order). We
-        // call them explicitly on every return path instead of via scopeguard,
-        // since scopeguard would capture `&mut this` across the body.
+        // call them explicitly on every return path.
 
-        unsafe { *(*this).write_in_progress_mut() = false };
+        this.write_in_progress().set(false);
 
         // Clear the strong handle before we call any callbacks.
-        let Some(this_value) = (unsafe { (*this).this_value_mut().try_swap() }) else {
+        let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-            unsafe { (*this).poll_ref_mut().unref(vm) };
-            // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload
-            // and is not accessed after this call.
-            unsafe { T::deref(this) };
+            this.poll_ref().with_mut(|p| p.unref(vm));
+            // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
+            // payload and is not accessed after this call.
+            unsafe { T::deref(this_ptr) };
             return;
         };
 
         this_value.ensure_still_alive();
 
-        if !Self::check_error(unsafe { &mut *this }, global, this_value) {
-            // Re-escape: `check_error` → `emit_error` ran the onerror callback.
-            core::hint::black_box(this);
-            unsafe { (*this).poll_ref_mut().unref(vm) };
+        if !Self::check_error(this, global, this_value) {
+            this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
-            unsafe { T::deref(this) };
+            unsafe { T::deref(this_ptr) };
             return;
         }
 
-        if let Some(write_result) = unsafe { (*this).write_result_ptr() } {
+        if let Some(write_result) = this.write_result_ptr() {
             // SAFETY: `write_result` points at a 2-element u32[] owned by JS
             // (set in `init()`); both indices are in-bounds.
             let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-            unsafe { (*this).stream_mut().update_write_result(r1, r0) };
+            this.stream().with_mut(|s| s.update_write_result(r1, r0));
         }
         this_value.ensure_still_alive();
 
@@ -477,25 +490,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         vm.event_loop_ref()
             .run_callback(write_callback, global, this_value, &[]);
-        // Re-escape after the JS write callback so the `pending_*` / `poll_ref`
-        // / `ref_count` reads below cannot reuse any pre-call load.
-        core::hint::black_box(this);
 
-        if unsafe { *(*this).pending_reset_mut() } {
-            Self::reset_internal(unsafe { &mut *this }, global, this_value);
+        if this.pending_reset().get() {
+            Self::reset_internal(this, global, this_value);
         }
-        if unsafe { *(*this).pending_close_mut() } {
-            let _ = Self::close_internal(unsafe { &mut *this });
+        if this.pending_close().get() {
+            Self::close_internal(this);
         }
 
-        unsafe { (*this).poll_ref_mut().unref(vm) };
-        // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload and
-        // is not accessed after this call.
-        unsafe { T::deref(this) };
+        this.poll_ref().with_mut(|p| p.unref(vm));
+        // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
+        // and is not accessed after this call.
+        unsafe { T::deref(this_ptr) };
     }
 
     pub fn write_sync(
-        this: &mut T,
+        this: &T,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -593,84 +603,70 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         });
         let _ = (in_off, in_len, out_off, out_len);
 
-        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but
-        // `check_error` (→ `emit_error` → onerror `run_callback`) runs user JS
-        // which can re-enter via a fresh `&mut T` from the wrapper's `m_ctx`
-        // (the comment in `emit_error` explicitly notes the callback may call
-        // `write()`, bumping `ref_count` and flipping `write_in_progress`).
-        // SUSPECT (not yet ASM-cached): `ref_()` / `deref()` are `#[inline]`
-        // `Cell` ops on `ref_count` — one inlining change away from the
-        // store-forwarding fold seen in `dns.rs::on_dns_poll` (load once, inc,
-        // then store stale pre-inc value after the callback). Launder so all
-        // `this` accesses below go through an opaque pointer.
-        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
-        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
-        // aliases the original live `&mut T`; single JS thread; the bracketing
-        // `ref_()` keeps the heap payload alive across re-entry until the
-        // trailing `deref()`.
-        if unsafe { *(*this).write_in_progress_mut() } {
+        if this.write_in_progress().get() {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
                 .throw());
         }
-        if unsafe { *(*this).pending_close_mut() } {
+        if this.pending_close().get() {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
                 .throw());
         }
-        unsafe { *(*this).write_in_progress_mut() = true };
-        unsafe { (*this).ref_() };
+        this.write_in_progress().set(true);
+        this.ref_();
 
-        unsafe { (*this).stream_mut().set_buffers(in_, out) };
-        unsafe { (*this).stream_mut().set_flush(i32::try_from(flush).expect("int cast")) };
+        this.stream().with_mut(|s| {
+            s.set_buffers(in_, out);
+            s.set_flush(i32::try_from(flush).expect("int cast"));
+        });
         let this_value = callframe.this();
 
-        unsafe { (*this).stream_mut().do_work() };
-        if Self::check_error(unsafe { &mut *this }, global_this, this_value) {
-            if let Some(write_result) = unsafe { (*this).write_result_ptr() } {
+        this.stream().with_mut(|s| s.do_work());
+        if Self::check_error(this, global_this, this_value) {
+            if let Some(write_result) = this.write_result_ptr() {
                 // SAFETY: `write_result` points at a 2-element u32[] owned by JS.
                 let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-                unsafe { (*this).stream_mut().update_write_result(r1, r0) };
+                this.stream().with_mut(|s| s.update_write_result(r1, r0));
             }
-            unsafe { *(*this).write_in_progress_mut() = false };
+            this.write_in_progress().set(false);
         }
-        // Re-escape: on the error branch `check_error` → `emit_error` ran the
-        // onerror callback, so the `ref_count` read inside `deref()` must not
-        // be store-forwarded from the `ref_()` above.
-        core::hint::black_box(this);
-        // SAFETY: matching `ref_()` above; `this` is the heap payload and is not
-        // accessed after this call.
-        unsafe { T::deref(this) };
+        // SAFETY: matching `ref_()` above. The bracketed `ref_()`/`deref()`
+        // can never hit zero while the JS wrapper's +1 is live (we are
+        // synchronously inside a host-fn invoked through that wrapper), so the
+        // `(&T as *const T).cast_mut()` provenance is sufficient — only the
+        // `Cell<u32>` refcount is touched.
+        unsafe { T::deref((this as *const T).cast_mut()) };
 
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn reset(this: &mut T, global_this: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+    pub fn reset(this: &T, global_this: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
         Self::reset_internal(this, global_this, callframe.this());
         JSValue::UNDEFINED
     }
 
-    fn reset_internal(this: &mut T, global_this: &JSGlobalObject, this_value: JSValue) {
+    fn reset_internal(this: &T, global_this: &JSGlobalObject, this_value: JSValue) {
         // reset() destroys and re-creates the brotli/zstd encoder state (or
         // mutates the z_stream). Doing so while an async write is running on
         // the threadpool would be a use-after-free / data race, so defer it
         // until the in-flight write completes (mirrors pending_close).
-        if *this.write_in_progress_mut() {
-            *this.pending_reset_mut() = true;
+        if this.write_in_progress().get() {
+            this.pending_reset().set(true);
             return;
         }
-        *this.pending_reset_mut() = false;
-        if *this.closed_mut() {
+        this.pending_reset().set(false);
+        if this.closed().get() {
             return;
         }
-        let err = this.stream_mut().reset();
+        let err = this.stream().with_mut(|s| s.reset());
         if err.is_error() {
             Self::emit_error(this, global_this, this_value, err);
         }
     }
 
     pub fn close(
-        this: &mut T,
+        this: &T,
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -678,19 +674,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn close_internal(this: &mut T) {
-        if *this.write_in_progress_mut() {
-            *this.pending_close_mut() = true;
+    fn close_internal(this: &T) {
+        if this.write_in_progress().get() {
+            this.pending_close().set(true);
             return;
         }
-        *this.pending_close_mut() = false;
-        *this.closed_mut() = true;
-        this.this_value_mut().deinit();
-        this.stream_mut().close();
+        this.pending_close().set(false);
+        this.closed().set(true);
+        this.this_value().with_mut(|v| v.deinit());
+        this.stream().with_mut(|s| s.close());
     }
 
     pub fn set_on_error(
-        _this: &mut T,
+        _this: &T,
         this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -709,8 +705,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     /// returns true if no error was detected/emitted
-    fn check_error(this: &mut T, global_this: &JSGlobalObject, this_value: JSValue) -> bool {
-        let err = this.stream_mut().get_error_info();
+    fn check_error(this: &T, global_this: &JSGlobalObject, this_value: JSValue) -> bool {
+        let err = this.stream().with_mut(|s| s.get_error_info());
         if !err.is_error() {
             return true;
         }
@@ -719,26 +715,17 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     pub fn emit_error(
-        this: &mut T,
+        this: &T,
         global_this: &JSGlobalObject,
         this_value: JSValue,
         err_: Error,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but the
-        // onerror `run_callback` below runs user JS which can re-enter via a
-        // fresh `&mut T` from the wrapper's `m_ctx` — the comment immediately
-        // below documents exactly that (`write()` re-entry flips
-        // `write_in_progress` and may then set `pending_reset` /
-        // `pending_close`). SUSPECT (not yet ASM-cached): the trait accessors
-        // are `#[inline]` field projections, so one inlining change could let
-        // LLVM sink the `write_in_progress = false` store past the callback or
-        // read stale `pending_reset` / `pending_close` after it. Launder so
-        // every field access goes through an opaque pointer.
-        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
-        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
-        // aliases the original live `&mut T`; single JS thread; callers hold a
-        // `ref_()` bracket (`write()` / `write_sync()`), so re-entry never
-        // frees `*this`.
+        // R-2: `&T` over `Cell`/`JsCell`-backed fields — the onerror
+        // `run_callback` below runs user JS which can re-enter via a fresh
+        // `&T` from the wrapper's `m_ctx` (e.g. `write()` flips
+        // `write_in_progress` / `pending_*`). Interior mutability makes the
+        // re-entry sound and the post-callback reads observe the updated
+        // values without `noalias`-laundering.
 
         // Clear write_in_progress *before* invoking the onerror callback.
         // The callback may re-enter write(), which sets write_in_progress=true
@@ -747,7 +734,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // below could free the native zlib/brotli/zstd state while a task is
         // still queued, leading to a use-after-free when the worker thread
         // runs doWork().
-        unsafe { *(*this).write_in_progress_mut() = false };
+        this.write_in_progress().set(false);
 
         // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
         // SAFETY: when non-null, `msg`/`code` point at NUL-terminated bytes
@@ -788,15 +775,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this_value,
             &[msg_value, err_value, code_value],
         );
-        // Re-escape after the JS onerror callback so the `pending_*` reads
-        // below cannot reuse any pre-call provenance.
-        core::hint::black_box(this);
 
-        if unsafe { *(*this).pending_reset_mut() } {
-            Self::reset_internal(unsafe { &mut *this }, global_this, this_value);
+        if this.pending_reset().get() {
+            Self::reset_internal(this, global_this, this_value);
         }
-        if unsafe { *(*this).pending_close_mut() } {
-            let _ = Self::close_internal(unsafe { &mut *this });
+        if this.pending_close().get() {
+            Self::close_internal(this);
         }
     }
 
@@ -828,9 +812,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 macro_rules! __compression_stream_mixin_reexports {
     ($native:ty) => {
         impl $native {
+            // R-2: `this: &Self` — the codegen `host_fn_this` shim still
+            // passes `&mut Self` until Phase 1 lands; auto-reborrows to `&Self`.
             #[inline]
             pub fn write(
-                this: &mut Self,
+                this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
@@ -838,7 +824,7 @@ macro_rules! __compression_stream_mixin_reexports {
             }
             #[inline]
             pub fn write_sync(
-                this: &mut Self,
+                this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
@@ -846,7 +832,7 @@ macro_rules! __compression_stream_mixin_reexports {
             }
             #[inline]
             pub fn reset(
-                this: &mut Self,
+                this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {
@@ -854,7 +840,7 @@ macro_rules! __compression_stream_mixin_reexports {
             }
             #[inline]
             pub fn close(
-                this: &mut Self,
+                this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
@@ -862,7 +848,7 @@ macro_rules! __compression_stream_mixin_reexports {
             }
             #[inline]
             pub fn set_on_error(
-                this: &mut Self,
+                this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,
                 value: ::bun_jsc::JSValue,
@@ -873,7 +859,7 @@ macro_rules! __compression_stream_mixin_reexports {
             }
             #[inline]
             pub fn get_on_error(
-                this: &mut Self,
+                this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,
             ) -> ::bun_jsc::JSValue {
@@ -950,15 +936,15 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> *mut ::bun_jsc::JSGlobalObject { self.global_this.cast::<::bun_jsc::JSGlobalObject>() }
-            #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
-            #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result.map(|p| p.cast::<u32>()) }
-            #[inline] fn poll_ref_mut(&mut self) -> &mut $crate::node::node_zlib_binding::CountedKeepAlive { &mut self.poll_ref }
-            #[inline] fn this_value_mut(&mut self) -> &mut ::bun_jsc::StrongOptional { &mut self.this_value }
-            #[inline] fn task_mut(&mut self) -> &mut ::bun_jsc::WorkPoolTask { &mut self.task }
-            #[inline] fn write_in_progress_mut(&mut self) -> &mut bool { &mut self.write_in_progress }
-            #[inline] fn pending_close_mut(&mut self) -> &mut bool { &mut self.pending_close }
-            #[inline] fn pending_reset_mut(&mut self) -> &mut bool { &mut self.pending_reset }
-            #[inline] fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
+            #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
+            #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get().map(|p| p.cast::<u32>()) }
+            #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
+            #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
+            #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
+            #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
+            #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
+            #[inline] fn pending_reset(&self) -> &::core::cell::Cell<bool> { &self.pending_reset }
+            #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]
             unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {

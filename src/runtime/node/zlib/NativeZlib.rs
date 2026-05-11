@@ -16,7 +16,7 @@ mod _impl {
 use super::*;
 use core::cell::Cell;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, WorkPoolTask};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask};
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
 use crate::node::util::validators;
@@ -54,16 +54,17 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 pub struct NativeZlib {
     pub ref_count: Cell<u32>,
     // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
+    // Read-only after construction — stays bare.
     pub global_this: *mut JSGlobalObject,
-    pub stream: Context,
-    pub write_result: Option<*mut u32>,
-    pub poll_ref: CountedKeepAlive,
-    pub this_value: StrongOptional, // jsc.Strong.Optional
-    pub write_in_progress: bool,
-    pub pending_close: bool,
-    pub pending_reset: bool,
-    pub closed: bool,
-    pub task: WorkPoolTask,
+    pub stream: JsCell<Context>,
+    pub write_result: Cell<Option<*mut u32>>,
+    pub poll_ref: JsCell<CountedKeepAlive>,
+    pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+    pub write_in_progress: Cell<bool>,
+    pub pending_close: Cell<bool>,
+    pub pending_reset: Cell<bool>,
+    pub closed: Cell<bool>,
+    pub task: JsCell<WorkPoolTask>,
 }
 
 // `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
@@ -97,25 +98,25 @@ impl NativeZlib {
             }));
         }
 
-        let mut ptr = Box::new(Self {
+        let mut stream = Context::default();
+        stream.mode = c::NodeMode::from_int(mode_int as u8);
+        Ok(Box::new(Self {
             ref_count: Cell::new(1),
             // SAFETY: JSGlobalObject is an opaque FFI handle with UnsafeCell interior;
             // `as_ptr()` derives `*mut` via `UnsafeCell::get()` so the stored pointer
             // carries write provenance (C++ mutates the global). The global outlives
             // this m_ctx payload (JSC_BORROW backref).
             global_this: global.as_ptr(),
-            stream: Context::default(),
-            write_result: None,
-            poll_ref: CountedKeepAlive::default(),
-            this_value: StrongOptional::empty(),
-            write_in_progress: false,
-            pending_close: false,
-            pending_reset: false,
-            closed: false,
-            task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
-        });
-        ptr.stream.mode = c::NodeMode::from_int(mode_int as u8);
-        Ok(ptr)
+            stream: JsCell::new(stream),
+            write_result: Cell::new(None),
+            poll_ref: JsCell::new(CountedKeepAlive::default()),
+            this_value: JsCell::new(StrongOptional::empty()),
+            write_in_progress: Cell::new(false),
+            pending_close: Cell::new(false),
+            pending_reset: Cell::new(false),
+            closed: Cell::new(false),
+            task: JsCell::new(WorkPoolTask { node: Default::default(), callback: noop_task_callback }),
+        }))
     }
 
     //// adding this didnt help much but leaving it here to compare the number with later
@@ -126,7 +127,7 @@ impl NativeZlib {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn init(&mut self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_undef::<7>();
         let this_value = frame.this();
 
@@ -162,7 +163,7 @@ impl NativeZlib {
             Some(dictionary_buf.byte_slice())
         };
 
-        self.write_result = Some(write_result);
+        self.write_result.set(Some(write_result));
         js::write_callback_set_cached(this_value, global, write_callback.with_async_context_if_needed(global));
 
         // Keep the dictionary alive by keeping a reference to it in the JS object.
@@ -170,13 +171,13 @@ impl NativeZlib {
             js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
         }
 
-        self.stream.init(level, window_bits, mem_level, strategy, dictionary);
+        self.stream.with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
 
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn params(&mut self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_undef::<2>();
 
         if arguments.len != 2 {
@@ -191,23 +192,12 @@ impl NativeZlib {
         let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
         let strategy = validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
 
-        let err = self.stream.set_params(level, strategy);
+        let err = self.stream.with_mut(|s| s.set_params(level, strategy));
         if err.is_error() {
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-            // `emit_error` → `run_callback` invokes the JS onerror handler,
-            // which can re-enter `close()`/`reset()` via a fresh `&mut Self`
-            // from `m_ctx` and write `self.pending_close` / `self.pending_reset`
-            // / `self.stream`. If `emit_error` inlines into this body those
-            // fields could be cached across the callback (SUSPECT, not yet
-            // ASM-cached). Launder through an opaque pointer so the reborrow
-            // does not inherit `noalias`; mirrors the cork fix at b818e70e1c57.
-            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-            // The `&mut *this` borrow is not held across the re-entrant JS
-            // call inside `emit_error` by *this* frame, and `*this` cannot be
-            // freed re-entrantly (refcount held by the JS wrapper passed as
-            // `frame.this()`).
-            CompressionStream::<Self>::emit_error(unsafe { &mut *this }, global, frame.this(), err);
+            // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+            // `run_callback` may re-enter `close()`/`reset()` via a fresh
+            // `&Self` from `m_ctx`; interior mutability makes that sound.
+            CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -221,7 +211,7 @@ impl NativeZlib {
         // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
         // heap::take below.
         unsafe {
-            (*this).stream.close();
+            (*this).stream.with_mut(|s| s.close());
             drop(bun_core::heap::take(this));
         }
     }

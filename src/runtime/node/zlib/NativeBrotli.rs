@@ -58,7 +58,7 @@ use super::*;
 use core::cell::Cell;
 use core::ffi::c_uint;
 
-use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StrongOptional, WorkPoolTask};
+use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions, StrongOptional, WorkPoolTask};
 
 use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
 use crate::node::util::validators;
@@ -71,25 +71,28 @@ use crate::node::util::validators;
 
 // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
 // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::destroy_on_zero)]
 pub struct NativeBrotli {
     pub ref_count: Cell<u32>,
     // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
+    // Read-only after construction — stays bare.
     pub global_this: *mut JSGlobalObject,
-    pub stream: Context,
+    pub stream: JsCell<Context>,
     /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
     /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
-    pub write_result: Option<NonNull<u32>>,
-    pub poll_ref: CountedKeepAlive,
+    pub write_result: Cell<Option<NonNull<u32>>>,
+    pub poll_ref: JsCell<CountedKeepAlive>,
     // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
-    pub this_value: StrongOptional, // Strong.Optional — empty-initialised
-    pub write_in_progress: bool,
-    pub pending_close: bool,
-    pub pending_reset: bool,
-    pub closed: bool,
-    pub task: WorkPoolTask,
+    pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
+    pub write_in_progress: Cell<bool>,
+    pub pending_close: Cell<bool>,
+    pub pending_reset: Cell<bool>,
+    pub closed: Cell<bool>,
+    pub task: JsCell<WorkPoolTask>,
 }
 
 // `const impl = CompressionStream(@This())` — Zig mixin that provides
@@ -127,32 +130,32 @@ impl NativeBrotli {
             }));
         }
 
-        let mut ptr = Box::new(Self {
+        let mut stream = Context::default();
+        stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+        Ok(Box::new(Self {
             ref_count: Cell::new(1),
             // SAFETY: JSGlobalObject is an opaque FFI handle; `as_ptr()` derives `*mut`
             // via UnsafeCell so the stored pointer carries write provenance. The global
             // outlives this m_ctx payload (JSC_BORROW backref).
             global_this: global_this.as_ptr(),
-            stream: Context::default(),
-            write_result: None,
-            poll_ref: CountedKeepAlive::default(),
-            this_value: StrongOptional::empty(),
-            write_in_progress: false,
-            pending_close: false,
-            pending_reset: false,
-            closed: false,
+            stream: JsCell::new(stream),
+            write_result: Cell::new(None),
+            poll_ref: JsCell::new(CountedKeepAlive::default()),
+            this_value: JsCell::new(StrongOptional::empty()),
+            write_in_progress: Cell::new(false),
+            pending_close: Cell::new(false),
+            pending_reset: Cell::new(false),
+            closed: Cell::new(false),
             // .callback = undefined — overwritten before WorkPool::schedule()
-            task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
-        });
-        ptr.stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
-        Ok(ptr)
+            task: JsCell::new(WorkPoolTask { node: Default::default(), callback: noop_task_callback }),
+        }))
     }
 
     pub fn estimated_size(&self) -> usize {
         const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
         const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
         core::mem::size_of::<Self>()
-            + match self.stream.mode {
+            + match self.stream.get().mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
                 bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
                 _ => 0,
@@ -160,11 +163,7 @@ impl NativeBrotli {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn init(
-        this: &mut Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn init(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_undef::<3>();
         let this_value = callframe.this();
         if arguments.len != 3 {
@@ -184,7 +183,7 @@ impl NativeBrotli {
         let write_callback =
             validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
-        this.write_result = NonNull::new(write_result);
+        self.write_result.set(NonNull::new(write_result));
 
         js::write_callback_set_cached(
             this_value,
@@ -192,9 +191,9 @@ impl NativeBrotli {
             with_async_context_if_needed(write_callback, global_this),
         );
 
-        let mut err = this.stream.init();
+        let mut err = self.stream.with_mut(|s| s.init());
         if err.is_error() {
-            CompressionStream::<Self>::emit_error(this, global_this, this_value, err);
+            CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
             return Ok(JSValue::FALSE);
         }
 
@@ -206,12 +205,12 @@ impl NativeBrotli {
             if d == u32::MAX {
                 continue;
             }
-            err = this
+            err = self
                 .stream
-                .set_params(u32::try_from(i).expect("int cast") as c_uint, d);
+                .with_mut(|s| s.set_params(u32::try_from(i).expect("int cast") as c_uint, d));
             if err.is_error() {
                 // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
-                this.stream.close();
+                self.stream.with_mut(|s| s.close());
                 return Ok(JSValue::FALSE);
             }
         }
@@ -219,14 +218,7 @@ impl NativeBrotli {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn params(
-        this: &mut Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let _ = this;
-        let _ = global_this;
-        let _ = callframe;
+    pub fn params(&self, _global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         // intentionally left empty
         Ok(JSValue::UNDEFINED)
     }
@@ -250,14 +242,12 @@ impl NativeBrotli {
         // ordering parity with Zig.
         // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
         // and remove explicit deinit calls.
-        self.this_value = StrongOptional::empty();
-        drop(core::mem::take(&mut self.poll_ref));
-        match self.stream.mode {
-            bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => {
-                self.stream.close()
-            }
+        self.this_value.set(StrongOptional::empty());
+        drop(self.poll_ref.replace(CountedKeepAlive::default()));
+        self.stream.with_mut(|s| match s.mode {
+            bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
             _ => {}
-        }
+        });
         // bun.destroy(this) — freeing self is handled by IntrusiveRc / heap::take.
     }
 }
@@ -534,44 +524,45 @@ impl CompressionStreamImpl for NativeBrotli {
         self.global_this
     }
     #[inline]
-    fn stream_mut(&mut self) -> &mut Self::Stream {
-        &mut self.stream
+    fn stream(&self) -> &JsCell<Self::Stream> {
+        &self.stream
     }
     #[inline]
-    fn write_result_ptr(&mut self) -> Option<*mut u32> {
-        self.write_result.map(|p| p.as_ptr())
+    fn write_result_ptr(&self) -> Option<*mut u32> {
+        self.write_result.get().map(|p| p.as_ptr())
     }
     #[inline]
-    fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive {
-        &mut self.poll_ref
+    fn poll_ref(&self) -> &JsCell<CountedKeepAlive> {
+        &self.poll_ref
     }
     #[inline]
-    fn this_value_mut(&mut self) -> &mut StrongOptional {
-        &mut self.this_value
+    fn this_value(&self) -> &JsCell<StrongOptional> {
+        &self.this_value
     }
     #[inline]
-    fn task_mut(&mut self) -> &mut WorkPoolTask {
-        &mut self.task
+    fn task(&self) -> &JsCell<WorkPoolTask> {
+        &self.task
     }
     #[inline]
-    fn write_in_progress_mut(&mut self) -> &mut bool {
-        &mut self.write_in_progress
+    fn write_in_progress(&self) -> &Cell<bool> {
+        &self.write_in_progress
     }
     #[inline]
-    fn pending_close_mut(&mut self) -> &mut bool {
-        &mut self.pending_close
+    fn pending_close(&self) -> &Cell<bool> {
+        &self.pending_close
     }
     #[inline]
-    fn pending_reset_mut(&mut self) -> &mut bool {
-        &mut self.pending_reset
+    fn pending_reset(&self) -> &Cell<bool> {
+        &self.pending_reset
     }
     #[inline]
-    fn closed_mut(&mut self) -> &mut bool {
-        &mut self.closed
+    fn closed(&self) -> &Cell<bool> {
+        &self.closed
     }
 
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
         // Intrusive parent recovery: recover the owning NativeBrotli.
+        // `task` field is `JsCell<WorkPoolTask>` (`#[repr(transparent)]`).
         // SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
         unsafe {
             bun_core::from_field_ptr!(NativeBrotli, task, task)

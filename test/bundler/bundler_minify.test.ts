@@ -1301,50 +1301,50 @@ describe("bundler", () => {
 
   // https://github.com/oven-sh/bun/issues/30489
   // Comments must not influence the renamer — two files that differ only
-  // in comments should produce byte-identical minified output.
-  describe("minify/identifiers independent of comments (#30489)", () => {
-    const code = /* js */ `var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;
-export function go() { return aa + bb + cc + dd + ee + ff; }
-`;
-    // 42+ characters to force the >=32 byte path in CharFreq.scanBig,
-    // plus enough repetition that if it leaked into the histogram the
-    // chosen letter would visibly shift.
-    const filler = "x".repeat(42);
-    const variants: Record<string, string> = {
-      baseline: code,
-      leadingLineComment: `// ${filler}\n` + code,
-      leadingBlockComment: `/* ${filler} */\n` + code,
-      midFileLineComment: code.replace("export function", `// ${filler}\nexport function`),
-      midFileBlockComment: code.replace("export function", `/* ${filler} */\nexport function`),
-      trailingLineComment: code + `// ${filler}\n`,
-      trailingBlockComment: code + `/* ${filler} */\n`,
-    };
-
-    async function minify(source: string): Promise<string> {
-      const dir = tempDirWithFiles("issue-30489", { "entry.js": source });
-      const build = await Bun.build({
-        entrypoints: [path.join(dir, "entry.js")],
-        minify: true,
-      });
-      expect(build.success).toBe(true);
-      return await build.outputs[0].text();
-    }
-
-    test.concurrent.each(Object.keys(variants).filter(k => k !== "baseline"))(
-      "%s produces identical output to baseline",
-      async variant => {
-        const [baseline, withComment] = await Promise.all([minify(variants.baseline), minify(variants[variant])]);
-        expect(withComment).toBe(baseline);
+  // in comments must produce byte-identical minified output.
+  //
+  // Stuff a 42-byte filler (past CharFreq.scanBig's 32-byte threshold)
+  // using characters that don't appear elsewhere in the source. Before
+  // the fix, those characters would leak into the histogram and reshape
+  // the chosen identifier letters; the expected output below pins the
+  // correct renamer output and so any leak makes the test fail.
+  const issue30489Baseline = /* js */ `
+    var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;
+    export function go() { return aa + bb + cc + dd + ee + ff; }
+  `;
+  // Use Buffer.alloc().toString() over "q".repeat() — faster in debug builds.
+  const issue30489Filler = Buffer.alloc(42, "q").toString();
+  // All variants must produce this exact minified output (with my fix); any
+  // variant that differs means the comment's characters leaked into the
+  // renamer's histogram.
+  const issue30489ExpectedOutput =
+    'var e=1,r=2,a=3,c=4,f=5,n=6;function o(){return e+r+a+c+f+n}export{o as go};\n';
+  const issue30489Variants = {
+    baseline: issue30489Baseline,
+    leadingLineComment: `// ${issue30489Filler}\n` + issue30489Baseline,
+    leadingBlockComment: `/* ${issue30489Filler} */\n` + issue30489Baseline,
+    midFileLineComment: issue30489Baseline.replace(
+      "export function",
+      `// ${issue30489Filler}\nexport function`,
+    ),
+    midFileBlockComment: issue30489Baseline.replace(
+      "export function",
+      `/* ${issue30489Filler} */\nexport function`,
+    ),
+    trailingLineComment: issue30489Baseline + `// ${issue30489Filler}\n`,
+    trailingBlockComment: issue30489Baseline + `/* ${issue30489Filler} */\n`,
+  };
+  for (const [variant, source] of Object.entries(issue30489Variants)) {
+    itBundled(`minify/CommentBleedIssue30489_${variant}`, {
+      files: { "/entry.js": source },
+      minifySyntax: true,
+      minifyIdentifiers: true,
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toBe(issue30489ExpectedOutput);
       },
-    );
-
-    test.concurrent("baseline has expected minified shape", async () => {
-      // Sanity check — not literal output, just confirms we're actually
-      // minifying six vars down to single-letter names.
-      const out = await minify(variants.baseline);
-      expect(out).toMatch(/var \w=1,\w=2,\w=3,\w=4,\w=5,\w=6;/);
     });
-  });
+  }
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

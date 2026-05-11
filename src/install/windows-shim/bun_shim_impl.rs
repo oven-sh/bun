@@ -179,7 +179,7 @@ unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
 const FILE_GENERIC_READ: u32 =
     w::STANDARD_RIGHTS_READ | w::FILE_READ_DATA | w::FILE_READ_ATTRIBUTES | w::FILE_READ_EA | w::SYNCHRONIZE;
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
@@ -260,11 +260,17 @@ impl core::fmt::Display for FailReason {
             let arg = unsafe { FAILURE_REASON_ARGUMENT.read().unwrap() };
             // SAFETY: arg points into FAILURE_REASON_DATA which is a static buffer.
             let arg_slice = unsafe { bun_core::ffi::slice(arg.0, arg.1) };
-            write!(
-                writer,
-                "interpreter executable \"{}\" not found in %PATH%\n\n",
-                bstr::BStr::new(arg_slice),
-            )?;
+            // Zig spec writes raw bytes (`{s}`). `arg_slice` is filled by truncating
+            // UTF-16 code units to 7 bits (`& 0x7F`) — every byte is < 0x80, hence
+            // valid single-byte UTF-8. Avoids `bstr` so the standalone PE stays
+            // `#![no_std]` (`bstr` pulls `alloc`).
+            // SAFETY: every byte of FAILURE_REASON_DATA[..len] was written via
+            // `as u7` / `& 0x7F` (see the InterpreterNotFound producer), so the
+            // slice is ASCII ⊂ UTF-8.
+            let arg_str = unsafe { core::str::from_utf8_unchecked(arg_slice) };
+            writer.write_str("interpreter executable \"")?;
+            writer.write_str(arg_str)?;
+            writer.write_str("\" not found in %PATH%\n\n")?;
             if DBG {
                 // SAFETY: single-threaded standalone exe; debug-only reset.
                 unsafe { FAILURE_REASON_ARGUMENT.write(None) };
@@ -658,9 +664,21 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     };
 
     if DBG {
+        // Zig spec: `debug("UserArgs: '{s}' ({d} bytes)", .{ user_arguments_u8, ... })`
+        // — raw byte dump of the UTF-16-LE arg tail. Display via `fmt16` on the
+        // u16 view to keep this `core`-only (no `bstr`); bytes view is always
+        // 2-aligned (subslice of `cmd_line_u8`, itself a `[u16]` reinterpret).
         debug!(
             "UserArgs: '{}' ({} bytes)",
-            bstr::BStr::new(user_arguments_u8),
+            // SAFETY: `user_arguments_u8` is a subslice of `cmd_line_u8`, which
+            // is the byte view of `cmd_line_u16: &[u16]` (see above). Length is
+            // asserted even just below; alignment is inherited from the u16 base.
+            fmt16(unsafe {
+                core::slice::from_raw_parts(
+                    user_arguments_u8.as_ptr().cast::<u16>(),
+                    user_arguments_u8.len() / 2,
+                )
+            }),
             user_arguments_u8.len()
         );
     }

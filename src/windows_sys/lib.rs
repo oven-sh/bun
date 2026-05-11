@@ -1,3 +1,8 @@
+// Tier-0 leaf crate: pure Win32 typedefs/consts/externs over `core` only.
+// `no_std` so the standalone `bun_shim_impl.exe` (which depends on nothing
+// else from the workspace) links without the Rust runtime / CRT — matching
+// Zig's freestanding `bun_shim_impl.zig` build (no libc, ~13 KiB).
+#![no_std]
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use)]
 // AUTOGEN: mod declarations only — real exports added in B-1.

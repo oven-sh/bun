@@ -43,7 +43,7 @@ pub struct Task<'a> {
     pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub next: *mut Task<'a>,
+    pub next: bun_threading::Link<Task<'a>>,
 }
 
 /// Zig: struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
@@ -76,41 +76,17 @@ pub fn uninit() -> Task<'static> {
         },
         err: None,
         apply_patch_task: None,
-        next: core::ptr::null_mut(),
+        next: bun_threading::Link::new(),
     }
 }
 
-// SAFETY: `next` is the sole intrusive link and is only ever read/written via
-// these accessors by `UnboundedQueue<Task>`. Mirrors Zig's `@field(item, "next")`.
-unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
+// `link()` always projects to it. Mirrors Zig's `@field(item, "next")`.
+unsafe impl<'a> bun_threading::Linked for Task<'a> {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr }
-    }
-    #[inline]
-    unsafe fn atomic_load_next(
-        item: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) -> *mut Self {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .load(ordering)
-        }
-    }
-    #[inline]
-    unsafe fn atomic_store_next(
-        item: *mut Self,
-        ptr: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .store(ptr, ordering)
-        }
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

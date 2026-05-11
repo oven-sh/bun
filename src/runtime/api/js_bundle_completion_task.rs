@@ -68,7 +68,7 @@ pub struct JSBundleCompletionTask {
     pub result: BundleV2Result,
 
     /// intrusive queue link (UnboundedQueue)
-    pub next: *mut JSBundleCompletionTask,
+    pub next: bun_threading::Link<JSBundleCompletionTask>,
     /// arena-owned by BundleThread heap
     pub transpiler: *mut BundleV2<'static>,
     pub plugins: Option<NonNull<Plugin>>,
@@ -125,7 +125,7 @@ pub fn create_and_schedule_completion_task(
         cancelled: false,
         html_build_task: None,
         result: BundleV2Result::Pending,
-        next: ptr::null_mut(),
+        next: bun_threading::Link::new(),
         transpiler: ptr::null_mut(),
         plugins,
         started_at_ns: 0,
@@ -783,26 +783,12 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
 // Hands BundleThread the field accessors it needs without exposing the layout.
-// SAFETY: all four accessors touch the same `next` intrusive-link field;
-// `atomic_*` use `AtomicPtr` over its address.
-unsafe impl bun_threading::unbounded_queue::Node for JSBundleCompletionTask {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr; }
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: core::sync::atomic::Ordering) -> *mut Self {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: core::sync::atomic::Ordering) {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .store(ptr, ordering)
-        }
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
+unsafe impl bun_threading::Linked for JSBundleCompletionTask {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

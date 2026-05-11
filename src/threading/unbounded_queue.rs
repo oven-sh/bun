@@ -56,6 +56,84 @@ pub unsafe trait Node: Sized {
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering);
 }
 
+/// Intrusive next-pointer field for [`UnboundedQueue<T>`] nodes.
+///
+/// Embed this as a field in `T` and implement [`Linked`] (which only needs to
+/// project to that field) instead of open-coding all four [`Node`] accessors.
+/// Centralizes the `AtomicPtr` storage so node types no longer need
+/// `addr_of_mut!`/`AtomicPtr::from_ptr` casts over a plain `*mut T` field.
+///
+/// `#[repr(transparent)]` so it has the same layout as the `?*T` it ports.
+#[repr(transparent)]
+pub struct Link<T>(AtomicPtr<T>);
+
+impl<T> Link<T> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(AtomicPtr::new(ptr::null_mut()))
+    }
+    /// Relaxed null check — for debug assertions only (the queue itself never
+    /// reads through `Link` outside the [`Node`] accessors).
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        self.0.load(Ordering::Relaxed).is_null()
+    }
+    /// Reset to null with Relaxed ordering — used when re-queueing a popped
+    /// node so a stale link is not observed by the next push's debug walk.
+    #[inline]
+    pub fn clear(&self) {
+        self.0.store(ptr::null_mut(), Ordering::Relaxed);
+    }
+}
+
+impl<T> Default for Link<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Shorthand for the common [`Node`] case: `T` embeds a [`Link<Self>`] field.
+/// Implement this and the blanket `impl<T: Linked> Node for T` below supplies
+/// the four accessors. Node types with packed/custom link storage (e.g.
+/// `ConcurrentTask`'s `PackedNextPtr`) keep implementing [`Node`] directly.
+///
+/// # Safety
+/// `link()` must always project to the *same* embedded `Link<Self>` field of
+/// `*item`. `item` is guaranteed valid, non-null, and properly aligned by
+/// [`UnboundedQueue`].
+pub unsafe trait Linked: Sized {
+    unsafe fn link(item: *mut Self) -> *const Link<Self>;
+}
+
+// SAFETY: all four accessors route through `T::link(item)`, which by `Linked`'s
+// contract returns the same embedded `Link<Self>` field every time; `Link` is a
+// `#[repr(transparent)]` `AtomicPtr`, so atomic ops are truly atomic at the
+// requested ordering and the non-atomic get/set degrade to Relaxed (matching
+// Zig's plain `?*T` field access — never concurrent with the atomic path).
+unsafe impl<T: Linked> Node for T {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
+        unsafe { (*T::link(item)).0.load(Ordering::Relaxed) }
+    }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, p: *mut Self) {
+        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
+        unsafe { (*T::link(item)).0.store(p, Ordering::Relaxed) }
+    }
+    #[inline]
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
+        unsafe { (*T::link(item)).0.load(ordering) }
+    }
+    #[inline]
+    unsafe fn atomic_store_next(item: *mut Self, p: *mut Self, ordering: Ordering) {
+        // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
+        unsafe { (*T::link(item)).0.store(p, ordering) }
+    }
+}
+
 pub struct Batch<T: Node> {
     pub front: *mut T,
     pub last: *mut T,

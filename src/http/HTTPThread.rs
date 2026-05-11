@@ -896,7 +896,7 @@ fn start_queued_task(http: *mut AsyncHttp) {
     // which may point to other AsyncHTTP structs that could be freed before the callback
     // copies data back to the original. If not cleared, retrying a failed request would
     // re-queue with stale pointers causing use-after-free.
-    cloned.async_http.next = core::ptr::null_mut();
+    cloned.async_http.next.clear();
     cloned.async_http.task.node.next = core::ptr::null_mut();
     cloned.async_http.on_start();
 }

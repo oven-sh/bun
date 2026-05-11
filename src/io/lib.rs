@@ -819,7 +819,7 @@ impl IoRequestLoop {
 // ─── Request ──────────────────────────────────────────────────────────────────
 
 pub struct Request {
-    pub next: AtomicPtr<Request>,
+    pub next: bun_threading::Link<Request>,
     pub callback: for<'a> fn(&'a mut Request) -> Action<'a>,
     pub scheduled: bool,
 }
@@ -827,7 +827,7 @@ pub struct Request {
 impl Request {
     #[inline]
     pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
-        Self { next: AtomicPtr::new(ptr::null_mut()), callback, scheduled: false }
+        Self { next: bun_threading::Link::new(), callback, scheduled: false }
     }
 
     /// Atomic-ordered store of `callback` — mirrors Zig
@@ -853,7 +853,7 @@ impl Default for Request {
     fn default() -> Self {
         // TODO(port): Zig had `next: ?*Request = null, scheduled: bool = false` defaults
         // but `callback` has no default; callers must overwrite `callback`.
-        Self { next: AtomicPtr::new(ptr::null_mut()), callback: |_| unreachable!(), scheduled: false }
+        Self { next: bun_threading::Link::new(), callback: |_| unreachable!(), scheduled: false }
     }
 }
 
@@ -866,24 +866,12 @@ impl Default for Request {
 // paths (`get_next`/`set_next`, used only by the batch iterator and the
 // debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops, which is
 // no weaker than the original.
-// SAFETY: all four accessors touch the same `next` field; `atomic_*` delegate
-// to `AtomicPtr` with the requested ordering.
-unsafe impl bun_threading::unbounded_queue::Node for Request {
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
+unsafe impl bun_threading::Linked for Request {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        (*item).next.load(Ordering::Relaxed)
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        (*item).next.store(ptr, Ordering::Relaxed);
-    }
-    #[inline]
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        (*item).next.load(ordering)
-    }
-    #[inline]
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        (*item).next.store(ptr, ordering);
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

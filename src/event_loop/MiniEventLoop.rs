@@ -65,26 +65,12 @@ pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
-// SAFETY: all four accessors route through the `next: *mut Self` field; the
-// atomic variants treat it as an `AtomicPtr` (same layout/ABI as `*mut T`).
-unsafe impl bun_threading::unbounded_queue::Node for AnyTaskWithExtraContext {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr };
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).store(ptr, ordering)
-        }
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
+unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

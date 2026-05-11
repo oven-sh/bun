@@ -110,8 +110,17 @@ unsafe extern "C" fn noop_custom_verify(
     ssl_verify_ok
 }
 
-static CTX_STORE: core::sync::atomic::AtomicPtr<boring::SSL_CTX> =
-    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
+/// `Send + Sync` newtype around the process-lifetime client `SSL_CTX*` so it
+/// can sit inside a `OnceLock` (raw pointers opt out of `Send`/`Sync`).
+struct CtxStore(ptr::NonNull<boring::SSL_CTX>);
+// SAFETY: `SSL_CTX` is internally thread-safe per BoringSSL docs (its refcount
+// and method tables are guarded by `CRYPTO_MUTEX`); we only ever bump the
+// refcount and hand it to `SSL_new`, both of which BoringSSL documents as
+// thread-safe on a shared `SSL_CTX*`.
+unsafe impl Send for CtxStore {}
+unsafe impl Sync for CtxStore {}
+
+static CTX_STORE: std::sync::OnceLock<CtxStore> = std::sync::OnceLock::new();
 
 std::thread_local! {
     // Zig: `threadlocal var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null`
@@ -138,22 +147,27 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 }
 
 pub fn init_client() -> *mut boring::SSL {
-    use core::sync::atomic::Ordering::Relaxed;
     // SAFETY: BoringSSL FFI; single-threaded startup assumption (matches Zig).
     unsafe {
-        let mut ctx = CTX_STORE.load(Relaxed);
-        if !ctx.is_null() {
-            let _ = boring::SSL_CTX_up_ref(ctx);
-        } else {
-            // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
-            //   1. SSL_CTX_new(TLS_with_buffers_method())
-            //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
-            //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
-            ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
-            SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
-            ssl_ctx_setup(ctx);
-            CTX_STORE.store(ctx, Relaxed);
+        // Zig: `if (ctx_store != null) _ = boring.SSL_CTX_up_ref(ctx_store.?);`
+        // Bump the refcount on every call after the first; the first call's
+        // `SSL_CTX_new` already returns refcount = 1.
+        if let Some(stored) = CTX_STORE.get() {
+            let _ = boring::SSL_CTX_up_ref(stored.0.as_ptr());
         }
+        let ctx = CTX_STORE
+            .get_or_init(|| {
+                // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
+                //   1. SSL_CTX_new(TLS_with_buffers_method())
+                //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
+                //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
+                let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
+                SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
+                ssl_ctx_setup(ctx);
+                CtxStore(ptr::NonNull::new(ctx).expect("SSL_CTX_new"))
+            })
+            .0
+            .as_ptr();
 
         // Zig: `SSL.init(ctx)` = `SSL_new(ctx)`
         let ssl = boring::SSL_new(ctx);

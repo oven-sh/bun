@@ -1946,7 +1946,7 @@ pub fn install_isolated_packages(
                         callback: installer::Task::callback,
                         node: Default::default(),
                     },
-                    next: core::ptr::null_mut(),
+                    next: bun_threading::Link::new(),
                 });
             }
             // SAFETY: every element was written in the loop above.

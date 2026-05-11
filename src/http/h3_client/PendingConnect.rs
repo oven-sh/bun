@@ -8,9 +8,10 @@
 //! `onDNSResolved` runs. The `quic.PendingConnect` C handle is consumed by
 //! exactly one of `resolved()` or `cancel()`.
 
-use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 
+use bun_threading::Guarded;
 use bun_uws as uws;
 use bun_uws::quic;
 
@@ -24,8 +25,6 @@ pub struct PendingConnect {
     pc: *mut quic::PendingConnect,
     // BACKREF: the uws event loop (lives as long as the HTTP thread).
     loop_ptr: *mut uws::Loop,
-    // Intrusive singly-linked-list link for the threadsafe resolved queue.
-    next: *mut PendingConnect,
 }
 
 impl Drop for PendingConnect {
@@ -50,7 +49,6 @@ impl PendingConnect {
             session,
             pc,
             loop_ptr: l,
-            next: ptr::null_mut(),
         }));
         // SAFETY: pc is a live quic::PendingConnect C handle; addrinfo() yields its addrinfo
         // request slot which the DNS layer fills. self_ is the Box we just leaked above and
@@ -101,30 +99,21 @@ impl PendingConnect {
     ///
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
     pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
-        RESOLVED_MUTEX.lock();
-        // SAFETY: `this` is a live heap-allocated PendingConnect (guaranteed by caller).
-        // RESOLVED_HEAD is only read/written while RESOLVED_MUTEX is held; Relaxed is
-        // sufficient because the mutex provides the happens-before ordering.
-        unsafe { (*this).next = RESOLVED_HEAD.load(Ordering::Relaxed) };
-        RESOLVED_HEAD.store(this, Ordering::Relaxed);
-        RESOLVED_MUTEX.unlock();
-        // SAFETY: loop_ptr is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*(*this).loop_ptr).wakeup() };
+        // SAFETY: `this` is a live heap-allocated PendingConnect (caller contract).
+        // Read `loop_ptr` *before* publishing `this` — once pushed, the HTTP
+        // thread may free `this` at any time via `drain_resolved`.
+        let loop_ptr = unsafe { (*this).loop_ptr };
+        RESOLVED.lock().push(Resolved(this));
+        // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
+        unsafe { (*loop_ptr).wakeup() };
     }
 
     pub fn drain_resolved() {
-        RESOLVED_MUTEX.lock();
-        // RESOLVED_HEAD is only read/written while RESOLVED_MUTEX is held; Relaxed is
-        // sufficient because the mutex provides the happens-before ordering.
-        let mut head = RESOLVED_HEAD.swap(ptr::null_mut(), Ordering::Relaxed);
-        RESOLVED_MUTEX.unlock();
-        while !head.is_null() {
-            // SAFETY: every node on this list was heap-allocated in register() and
-            // is consumed exactly once by on_dns_resolved below.
-            let next = unsafe { (*head).next };
-            // SAFETY: `head` is a valid heap-allocated PendingConnect (see above).
+        let batch = core::mem::take(&mut *RESOLVED.lock());
+        for Resolved(head) in batch {
+            // SAFETY: every entry was heap-allocated in `register()` and is
+            // consumed exactly once here.
             unsafe { PendingConnect::on_dns_resolved(head) };
-            head = next;
         }
     }
 
@@ -156,10 +145,26 @@ impl PendingConnect {
     }
 }
 
-static RESOLVED_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
-// Only read/written while RESOLVED_MUTEX is held (see on_dns_resolved_threadsafe /
-// drain_resolved). AtomicPtr instead of `static mut` for edition-2024 hygiene; all
-// accesses use Relaxed because the mutex provides synchronization.
-static RESOLVED_HEAD: AtomicPtr<PendingConnect> = AtomicPtr::new(ptr::null_mut());
+/// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
+/// `*mut T` is `!Send` by default; this wrapper asserts the actual contract:
+/// the pointee is touched by exactly one thread at a time (producer pushes,
+/// consumer pops + frees), serialized by `RESOLVED`'s mutex.
+#[repr(transparent)]
+struct Resolved(*mut PendingConnect);
+// SAFETY: `Resolved` only ever crosses threads while held inside `RESOLVED`'s
+// mutex; the pointee is heap-allocated in `register()` and freed on the HTTP
+// thread in `on_dns_resolved()`. No thread touches it without the lock or
+// after handoff.
+unsafe impl Send for Resolved {}
+
+/// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, drained
+/// on the next `HTTPThread::drain_events`. Conceptually a field of
+/// [`HTTPThread`](crate::HTTPThread) (there is exactly one), but kept as a
+/// module static because `http_thread()` hands out `&'static mut HTTPThread`
+/// to the HTTP thread — projecting a shared `&` to an interior field from the
+/// DNS worker would alias that exclusive borrow under Stacked Borrows. A
+/// dedicated `Sync` static sidesteps that without weakening the singleton
+/// accessor's `&mut` contract.
+static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
 
 // ported from: src/http/h3_client/PendingConnect.zig

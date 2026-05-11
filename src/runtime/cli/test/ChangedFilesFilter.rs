@@ -390,8 +390,8 @@ pub fn init_watch_trigger() {
             jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
                 .write(Some(arena.alloc(path).as_zstr()));
         }
-        jsc::hot_reloader::WATCH_CHANGED_PATHS
-            .store(std::ptr::from_mut::<StringSet>(set), core::sync::atomic::Ordering::Release);
+        let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
+            .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
 }
 

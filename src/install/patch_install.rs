@@ -57,42 +57,15 @@ pub struct PatchTask {
     pub callback: Callback,
     pub task: ThreadPoolTask,
     pub pre: bool,
-    pub next: *mut PatchTask,
+    pub next: bun_threading::Link<PatchTask>,
 }
 
-// SAFETY: all four accessors touch the same `next: *mut PatchTask` field;
-// the atomic variants reinterpret its address as `AtomicPtr<Self>` (same layout
-// as `*mut Self`) — identical to the `NetworkTask` / `Task` impls. Zig:
-// `UnboundedQueue(PatchTask, .next)`.
-unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
+unsafe impl bun_threading::Linked for PatchTask {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr }
-    }
-    #[inline]
-    unsafe fn atomic_load_next(
-        item: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) -> *mut Self {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .load(ordering)
-        }
-    }
-    #[inline]
-    unsafe fn atomic_store_next(
-        item: *mut Self,
-        ptr: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .store(ptr, ordering)
-        }
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -826,7 +799,7 @@ impl PatchTask {
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
-            next: ptr::null_mut(),
+            next: bun_threading::Link::new(),
         });
 
         bun_core::heap::into_raw(pt)
@@ -903,7 +876,7 @@ impl PatchTask {
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
-            next: ptr::null_mut(),
+            next: bun_threading::Link::new(),
         });
 
         bun_core::heap::into_raw(pt)

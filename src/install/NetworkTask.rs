@@ -80,7 +80,7 @@ pub struct NetworkTask {
     // PORT NOTE: `'static` because NetworkTask is stored lifetime-less in
     // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
     pub apply_patch_task: Option<Box<PatchTask>>,
-    pub next: *mut NetworkTask,
+    pub next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
     /// to a worker running libarchive. `None` when streaming extraction is
@@ -107,35 +107,11 @@ pub struct NetworkTask {
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's
 // `@field(item, "next")` over `bun.UnboundedQueue(NetworkTask, .next)`.
-unsafe impl bun_threading::unbounded_queue::Node for NetworkTask {
+unsafe impl bun_threading::Linked for NetworkTask {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr }
-    }
-    #[inline]
-    unsafe fn atomic_load_next(
-        item: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) -> *mut Self {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .load(ordering)
-        }
-    }
-    #[inline]
-    unsafe fn atomic_store_next(
-        item: *mut Self,
-        ptr: *mut Self,
-        ordering: core::sync::atomic::Ordering,
-    ) {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .store(ptr, ordering)
-        }
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -901,7 +877,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
-            addr_of_mut!((*slot).next).write(ptr::null_mut());
+            addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
             addr_of_mut!((*slot).streaming_committed).write(false);

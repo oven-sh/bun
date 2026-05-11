@@ -89,22 +89,29 @@ pub struct TaggedResolution {
 // PORT NOTE: `bss_string_list!` would be the canonical declare-site macro but
 // expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
 // enable `#![feature(sync_unsafe_cell)]`. Use the heap-allocating `init()`
-// fallback under a `Once` instead — same lifetime semantics (process-static,
-// never freed), just not BSS-backed. Swap to the macro once the crate-level
-// feature flag lands.
+// fallback under a `LazyLock` instead — same lifetime semantics
+// (process-static, never freed), just not BSS-backed. Swap to the macro once
+// the crate-level feature flag lands.
 pub type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
 
-static RELATIVE_PATHS_LIST_ONCE: std::sync::Once = std::sync::Once::new();
-static RELATIVE_PATHS_LIST_PTR: core::sync::atomic::AtomicPtr<ImportPathsList> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
+/// it can sit inside a `LazyLock`. The underlying list serializes its own
+/// mutation through an internal `Mutex` (see `BSSStringList::append`), so
+/// sharing the raw pointer across threads is sound; the `&mut self` receiver
+/// on `append` is a Zig-port artifact, not an exclusivity requirement.
+struct ImportPathsListPtr(core::ptr::NonNull<ImportPathsList>);
+// SAFETY: `BSSStringList` guards every mutating method with `self.mutex`, and
+// the allocation is process-lifetime (never freed). The pointer is therefore
+// safe to publish and dereference from any thread.
+unsafe impl Send for ImportPathsListPtr {}
+unsafe impl Sync for ImportPathsListPtr {}
+
+static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
+    std::sync::LazyLock::new(|| ImportPathsListPtr(ImportPathsList::init()));
 
 #[inline]
 fn relative_paths_list_ptr() -> *mut ImportPathsList {
-    RELATIVE_PATHS_LIST_ONCE.call_once(|| {
-        let p = ImportPathsList::init();
-        RELATIVE_PATHS_LIST_PTR.store(p.as_ptr(), core::sync::atomic::Ordering::Release);
-    });
-    RELATIVE_PATHS_LIST_PTR.load(core::sync::atomic::Ordering::Acquire)
+    RELATIVE_PATHS_LIST.0.as_ptr()
 }
 
 // ── HardcodedModule alias lookup ────────────────────────────────────────

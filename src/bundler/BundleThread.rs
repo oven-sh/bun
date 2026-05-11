@@ -1,5 +1,4 @@
 use core::ptr::NonNull;
-use std::sync::Once;
 
 use bun_io as Async;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
@@ -398,19 +397,24 @@ impl<C: CompletionStruct> BundleThread<C> {
 pub mod singleton {
     use super::*;
 
-    static ONCE: Once = Once::new();
-    // PORTING.md §Global mutable state: init-once leaked Box → AtomicPtr.
-    // Type-erased because Rust forbids generic statics; see module comment.
-    static INSTANCE: core::sync::atomic::AtomicPtr<()> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    /// `Send + Sync` newtype around the leaked `BundleThread` allocation so it
+    /// can sit inside a `OnceLock`. Type-erased because Rust forbids generic
+    /// statics; see module comment. Stored as a raw pointer (not `&'static`)
+    /// because the bundle thread mutates `*self` concurrently — callers must
+    /// only ever project fields via raw-pointer access.
+    struct Instance(NonNull<()>);
+    // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
+    // `'static`; cross-thread access is mediated entirely through
+    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
+    unsafe impl Send for Instance {}
+    unsafe impl Sync for Instance {}
+
+    static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
     // Blocks the calling thread until the bun build thread is created.
-    // std.once also blocks other callers of this function until the first caller is done.
-    fn load_once_impl<C: CompletionStruct>() {
+    // OnceLock also blocks other callers of this function until the first caller is done.
+    fn load_once_impl<C: CompletionStruct>() -> Instance {
         let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
-        // Only called once under ONCE; Release pairs with `get`'s Acquire (via
-        // `Once`'s own synchronization, but the explicit ordering is harmless).
-        INSTANCE.store(bundle_thread.cast::<()>(), core::sync::atomic::Ordering::Release);
 
         // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
@@ -420,6 +424,9 @@ pub mod singleton {
             .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
         // `std.Thread.detach()` — drop the JoinHandle without joining.
         drop(os_thread);
+
+        // SAFETY: `into_raw` of a `Box` is never null.
+        Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) })
     }
 
     /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
@@ -431,10 +438,9 @@ pub mod singleton {
     /// All calls (across the process) must use the same `C`; the static is
     /// type-erased.
     pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
-        ONCE.call_once(load_once_impl::<C>);
-        // INSTANCE is non-null after call_once and never written again; pointer is
-        // a leaked 'static Box of `BundleThread<C>` (same `C` per the safety contract).
-        INSTANCE.load(core::sync::atomic::Ordering::Acquire).cast::<BundleThread<C>>()
+        // INSTANCE is a leaked 'static Box of `BundleThread<C>` (same `C` per
+        // the safety contract).
+        INSTANCE.get_or_init(load_once_impl::<C>).0.as_ptr().cast::<BundleThread<C>>()
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {

@@ -69,28 +69,11 @@ type WatcherQueue = UnboundedQueue<StatWatcher>;
 // SAFETY: all four route through the same `next: *mut StatWatcher` field; the
 // atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
 // `addr_of!` preserves provenance).
-unsafe impl bun_threading::unbounded_queue::Node for StatWatcher {
+unsafe impl bun_threading::Linked for StatWatcher {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr }
-    }
-    #[inline]
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .load(ordering)
-        }
-    }
-    #[inline]
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .store(ptr, ordering)
-        }
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -388,7 +371,7 @@ impl StatWatcherScheduler {
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
-    pub next: *mut StatWatcher, // INTRUSIVE link for UnboundedQueue
+    pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. Stored raw so we
     // can recover `&mut` for `rare_data()` without an `&self → &mut` UB cast.
@@ -811,7 +794,7 @@ impl StatWatcher {
         // SAFETY: `args.global_this` is live (caller holds it).
         let vm = unsafe { (*args.global_this).bun_vm_ptr() };
         let this = Box::new(StatWatcher {
-            next: core::ptr::null_mut(),
+            next: bun_threading::Link::new(),
             ctx: vm,
             ref_count: ThreadSafeRefCount::init(),
             closed: false,

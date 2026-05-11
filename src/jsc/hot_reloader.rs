@@ -333,9 +333,27 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
 /// contents are written to `watch_changed_trigger_file` immediately
 /// before `reload_process`; the new process reads and deletes that file.
 // Zig was `?*bun.StringSet`; written once on main thread before watcher thread
-// starts, then watcher-thread-only. `AtomicPtr` carries the publish.
-pub static WATCH_CHANGED_PATHS: core::sync::atomic::AtomicPtr<StringSet> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+// starts, then watcher-thread-only. `OnceLock` carries the publish.
+pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> =
+    std::sync::OnceLock::new();
+
+/// `Send + Sync` newtype around the arena-allocated `StringSet` pointer so it
+/// can sit inside a `OnceLock`. The set is written once on the main thread
+/// before the watcher thread starts, then mutated only from the watcher
+/// thread — never concurrently — so cross-thread publication of the raw
+/// pointer is sound.
+pub struct WatchChangedPaths(core::ptr::NonNull<StringSet>);
+impl WatchChangedPaths {
+    #[inline]
+    pub fn new(set: &'static mut StringSet) -> Self {
+        Self(core::ptr::NonNull::from(set))
+    }
+}
+// SAFETY: published exactly once before the watcher thread starts; thereafter
+// only the watcher thread dereferences it (see module docs above). The
+// allocation lives in the process-lifetime CLI arena.
+unsafe impl Send for WatchChangedPaths {}
+unsafe impl Sync for WatchChangedPaths {}
 
 /// Absolute path of the temp file `flush_changed_paths_for_reload` writes
 /// the changed-path list into. The same path is exported via the
@@ -346,16 +364,15 @@ pub static WATCH_CHANGED_TRIGGER_FILE: bun_core::RacyCell<Option<&'static ZStr>>
     bun_core::RacyCell::new(None);
 
 fn record_changed_path(path: &[u8]) {
-    let set = WATCH_CHANGED_PATHS.load(core::sync::atomic::Ordering::Acquire);
-    if set.is_null() {
+    let Some(set) = WATCH_CHANGED_PATHS.get() else {
         return;
-    }
+    };
     if path.is_empty() {
         return;
     }
     // SAFETY: pointer set once by test_command before watcher thread starts;
     // only the watcher thread reaches here.
-    bun_core::handle_oom(unsafe { (*set).insert(path) });
+    bun_core::handle_oom(unsafe { (*set.0.as_ptr()).insert(path) });
 }
 
 /// Write the recorded changed paths to the trigger file so the next
@@ -371,16 +388,15 @@ fn flush_changed_paths_for_reload() {
     }
     #[cfg(not(windows))]
     {
-        let set = WATCH_CHANGED_PATHS.load(core::sync::atomic::Ordering::Acquire);
-        if set.is_null() {
+        let Some(set) = WATCH_CHANGED_PATHS.get() else {
             return;
-        }
+        };
         // SAFETY: see doc on WATCH_CHANGED_TRIGGER_FILE — single-writer after init.
         let Some(dest) = (unsafe { WATCH_CHANGED_TRIGGER_FILE.read() }) else {
             return;
         };
         // SAFETY: same single-writer invariant as above.
-        let set = unsafe { &*set };
+        let set = unsafe { set.0.as_ref() };
         if set.count() == 0 {
             return;
         }

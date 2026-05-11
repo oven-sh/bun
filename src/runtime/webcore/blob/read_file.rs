@@ -304,7 +304,7 @@ impl ReadFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request {
-                next: AtomicPtr::new(core::ptr::null_mut()),
+                next: bun_threading::Link::new(),
                 callback: Self::on_request_readable,
                 scheduled: false,
             },

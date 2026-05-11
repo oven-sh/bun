@@ -1,5 +1,5 @@
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{Global, Output};
@@ -486,7 +486,11 @@ unsafe extern "C" {
 
 pub struct NewTaskQueue<TaskType> {
     pub thread_pool: &'static ThreadPool,
-    pub errored_task: AtomicPtr<TaskType>,
+    /// One-shot, first-write-wins handoff of the failed task from a worker
+    /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
+    /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
+    /// every reader to remember `Box::from_raw` and risked leaks/double-free).
+    pub errored_task: parking_lot::Mutex<Option<Box<TaskType>>>,
     pub wait_group: WaitGroup,
 }
 
@@ -565,16 +569,13 @@ impl HardLinkWindowsInstallTask {
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_mut();
-                let old = q.errored_task.swap(core::ptr::null_mut(), Ordering::Relaxed);
-                if !old.is_null() {
-                    drop(bun_core::heap::take(old));
-                }
+                *q.errored_task.get_mut() = None;
                 q.wait_group = WaitGroup::init();
                 q.thread_pool = &PackageManager::get().thread_pool;
             } else {
                 (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
                     thread_pool: &PackageManager::get().thread_pool,
-                    errored_task: AtomicPtr::new(core::ptr::null_mut()),
+                    errored_task: parking_lot::Mutex::new(None),
                     wait_group: WaitGroup::init(),
                 });
             }
@@ -610,26 +611,17 @@ impl HardLinkWindowsInstallTask {
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
-        // SAFETY: self_ is valid until deinit().
+        // SAFETY: self_ is valid until we reclaim the Box below.
         if let Some(err) = unsafe { (*self_).run() } {
             unsafe { (*self_).err = Some(err) };
-            // .Relaxed is okay because this value isn't read until all the tasks complete.
-            // Use compare_exchange to keep only the first error.
-            if queue
-                .errored_task
-                .compare_exchange(
-                    core::ptr::null_mut(),
-                    self_,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_err()
-            {
-                // Lost the race — another task already recorded its error. Free this one
-                // (the Zig original leaks here; in Rust the `Box<Self>` + inner `Box<[u16]>`
-                // would otherwise leak per failed file).
-                // SAFETY: self_ was heap-allocated in init() and not stored anywhere.
-                unsafe { drop(bun_core::heap::take(self_)) };
+            // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
+            let boxed = unsafe { bun_core::heap::take(self_) };
+            // First-write-wins: keep only the first error. Any later failing task
+            // simply drops its Box here (the Zig original leaks the loser; in Rust
+            // that would also leak the inner `Box<[u16]>` per failed file).
+            let mut slot = queue.errored_task.lock();
+            if slot.is_none() {
+                *slot = Some(boxed);
             }
             return;
         }
@@ -1763,13 +1755,8 @@ impl<'a> PackageInstall<'a> {
                     return Err(err);
                 }
 
-                // .Relaxed is okay because no tasks are running (could be made non-atomic).
-                // Swap to null so `init_queue()` doesn't double-free it on the next batch.
-                let task = queue.errored_task.swap(core::ptr::null_mut(), Ordering::Relaxed);
-                if !task.is_null() {
-                    // SAFETY: pointer set by run_from_thread_pool from a Box allocated in
-                    // `init()`; we've swapped it out so we are the unique owner.
-                    let task = unsafe { bun_core::heap::take(task) };
+                // No tasks are running after `wait()`, so `.take()` is uncontended.
+                if let Some(task) = queue.errored_task.lock().take() {
                     if let Some(err) = task.err {
                         return Err(err);
                     }

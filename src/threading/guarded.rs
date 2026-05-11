@@ -36,6 +36,17 @@ impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
     }
 }
 
+impl<Value> GuardedBy<Value, Mutex> {
+    /// `const` constructor for `static` initializers (`Mutex::new()` is `const`;
+    /// `M::default()` in [`init`](Self::init) is not).
+    pub const fn new(value: Value) -> Self {
+        Self {
+            unsynchronized_value: UnsafeCell::new(value),
+            mutex: Mutex::new(),
+        }
+    }
+}
+
 impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// Creates a guarded value with the given mutex.
     pub fn init_with_mutex(value: Value, mutex: M) -> Self {

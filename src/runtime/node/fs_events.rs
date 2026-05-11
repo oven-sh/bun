@@ -373,26 +373,16 @@ impl Task {
 
 pub struct ConcurrentTask {
     pub task: Task,
-    pub next: *mut ConcurrentTask,
+    pub next: bun_threading::Link<ConcurrentTask>,
     pub auto_delete: bool,
 }
 
-// SAFETY: all four accessors route through the `next: *mut Self` field; the
-// atomic variants treat it as an `AtomicPtr` (same layout/ABI as `*mut T`).
-unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr };
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe { (*ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering) }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe { (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).store(ptr, ordering) }
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
+unsafe impl bun_threading::Linked for ConcurrentTask {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -400,7 +390,7 @@ pub type ConcurrentTaskQueue = UnboundedQueue<ConcurrentTask>;
 
 impl ConcurrentTask {
     pub fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
-        *this = ConcurrentTask { task, next: ptr::null_mut(), auto_delete };
+        *this = ConcurrentTask { task, next: bun_threading::Link::new(), auto_delete };
         this
     }
 }
@@ -516,7 +506,7 @@ impl FSEventsLoop {
         let cf = CoreFoundation::get();
         let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
             task: Task { ctx: ptr::null_mut(), callback: |_| {} },
-            next: ptr::null_mut(),
+            next: bun_threading::Link::new(),
             auto_delete: false,
         }));
         // SAFETY: concurrent is a valid freshly-boxed pointer

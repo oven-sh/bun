@@ -48,7 +48,7 @@ pub struct AsyncHTTP<'a> {
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
-    pub next: *mut AsyncHTTP<'static>,
+    pub next: bun_threading::Link<AsyncHTTP<'static>>,
 
     pub task: thread_pool::Task,
     pub result_callback: HTTPClientResultCallback,
@@ -71,28 +71,14 @@ pub struct AsyncHTTP<'a> {
     pub signals: Signals,
 }
 
-// SAFETY: intrusive `next` link for `UnboundedQueue(AsyncHTTP, .next)`. All four
-// accessors target the same field; atomic variants treat it as `AtomicPtr`.
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
-// over borrow scopes and `next` is always stored as `*mut AsyncHTTP<'static>`.
-unsafe impl bun_threading::unbounded_queue::Node for AsyncHTTP<'static> {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr; }
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .store(ptr, ordering)
-        }
+// over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
+unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -522,7 +508,7 @@ impl<'a> AsyncHTTP<'a> {
             url,
             http_proxy,
             real: None,
-            next: core::ptr::null_mut(),
+            next: bun_threading::Link::new(),
             task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: start_async_http,

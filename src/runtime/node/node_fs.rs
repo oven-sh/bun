@@ -1943,7 +1943,7 @@ impl ResultListEntryValue {
 }
 
 pub struct ResultListEntry {
-    pub next: *mut ResultListEntry, // INTRUSIVE: UnboundedQueue link
+    pub next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
     pub value: ResultListEntryValue,
 }
 
@@ -1951,24 +1951,11 @@ pub struct ResultListEntry {
 // variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
 // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
 // live, properly aligned `*mut ResultListEntry` it previously had pushed.
-unsafe impl bun_threading::unbounded_queue::Node for ResultListEntry {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr };
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
-                .store(ptr, ordering)
-        };
+unsafe impl bun_threading::Linked for ResultListEntry {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -2185,7 +2172,7 @@ impl AsyncReaddirRecursiveTask {
             // Zig `@unionInit(Value, @tagName(Field), clone)` →
             // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
             let list = Box::new(ResultListEntry {
-                next: core::ptr::null_mut(),
+                next: bun_threading::Link::new(),
                 value: ResultListEntryValue::from_vec(clone),
             });
             self.result_list_queue.push(bun_core::heap::into_raw(list));

@@ -326,7 +326,7 @@ impl RuntimeTranspilerStore {
                     node: Default::default(),
                     callback: TranspilerJob::run_from_worker_thread,
                 },
-                next: AtomicPtr::new(ptr::null_mut()),
+                next: unbounded_queue::Link::new(),
             });
         }
         if cfg!(debug_assertions) {
@@ -377,27 +377,15 @@ pub struct TranspilerJob {
     pub resolved_source: ResolvedSource,
     pub work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
-    pub next: AtomicPtr<TranspilerJob>,
+    pub next: unbounded_queue::Link<TranspilerJob>,
 }
 
-// SAFETY: the four accessors operate on the same `next: AtomicPtr<Self>` field;
-// `UnboundedQueue` only ever passes valid, properly-aligned `*mut TranspilerJob`.
-unsafe impl unbounded_queue::Node for TranspilerJob {
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
+unsafe impl unbounded_queue::Linked for TranspilerJob {
     #[inline]
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next.load(Ordering::Relaxed) }
-    }
-    #[inline]
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next.store(ptr, Ordering::Relaxed) }
-    }
-    #[inline]
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe { (*item).next.load(ordering) }
-    }
-    #[inline]
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe { (*item).next.store(ptr, ordering) }
+    unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

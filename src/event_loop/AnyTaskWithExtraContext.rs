@@ -9,7 +9,7 @@ pub struct AnyTaskWithExtraContext {
     pub ctx: Option<NonNull<()>>,
     pub callback: fn(*mut (), *mut ()),
     /// Intrusive link for `UnboundedQueue(AnyTaskWithExtraContext, .next)` (MiniEventLoop).
-    pub next: *mut AnyTaskWithExtraContext,
+    pub next: bun_threading::Link<AnyTaskWithExtraContext>,
 }
 
 impl Default for AnyTaskWithExtraContext {
@@ -18,7 +18,7 @@ impl Default for AnyTaskWithExtraContext {
         Self {
             ctx: None,
             callback: |_, _| unreachable!("callback was undefined"),
-            next: core::ptr::null_mut(),
+            next: bun_threading::Link::new(),
         }
     }
 }
@@ -64,7 +64,7 @@ impl AnyTaskWithExtraContext {
             any_task: AnyTaskWithExtraContext {
                 callback: function::<T>,
                 ctx: None, // patched below to point at the Box itself
-                next: core::ptr::null_mut(),
+                next: bun_threading::Link::new(),
             },
             wrapped: ptr,
             callback,
@@ -122,7 +122,7 @@ impl<T, C> New<T, C> {
                 bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
             },
             ctx: NonNull::new(ctx.cast::<()>()),
-            next: core::ptr::null_mut(),
+            next: bun_threading::Link::new(),
         }
     }
 

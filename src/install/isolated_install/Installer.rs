@@ -616,29 +616,17 @@ pub struct Task {
     pub installer: *mut Installer<'static>, // BACKREF: Installer owns tasks[]
 
     pub task: thread_pool::Task,
-    pub next: *mut Task, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
+    pub next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub result: Result,
 }
 
-unsafe impl bun_threading::unbounded_queue::Node for Task {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr; }
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .store(ptr, ordering)
-        }
+// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
+unsafe impl bun_threading::Linked for Task {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+        unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 

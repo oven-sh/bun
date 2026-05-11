@@ -34,7 +34,7 @@ pub use thread_pool::ThreadPool;
 pub use work_pool::Task as WorkPoolTask;
 pub use work_pool::{WorkPool, OwnedTask};
 pub use channel::Channel;
-pub use unbounded_queue::UnboundedQueue;
+pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 
 /// Port of `std.Thread.getCurrentId()` — returns a non-zero OS thread id.
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).

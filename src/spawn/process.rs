@@ -945,7 +945,6 @@ pub mod waiter_thread_posix {
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
-    use core::sync::atomic::AtomicPtr;
 
     pub struct WaiterThreadPosix {
         pub started: AtomicU32,
@@ -992,29 +991,15 @@ pub mod waiter_thread_posix {
     /// drained on the waiter thread (`TrivialNew`/`TrivialDeinit` in Zig).
     pub struct TaskQueueEntry<T: 'static> {
         pub process: *mut T,
-        pub next: *mut TaskQueueEntry<T>,
+        pub next: bun_threading::Link<TaskQueueEntry<T>>,
     }
 
-    // SAFETY: all four accessors route through the same `next` field; the
-    // atomic variants reinterpret it as `AtomicPtr` (same layout/alignment as
-    // `*mut TaskQueueEntry<T>`).
-    unsafe impl<T: 'static> bun_threading::unbounded_queue::Node for TaskQueueEntry<T> {
-        unsafe fn get_next(item: *mut Self) -> *mut Self {
-            unsafe { (*item).next }
-        }
-        unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-            unsafe { (*item).next = ptr };
-        }
-        unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-            unsafe {
-                (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering)
-            }
-        }
-        unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-            unsafe {
-                (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>())
-                    .store(ptr, ordering)
-            };
+    // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
+    unsafe impl<T: 'static> bun_threading::Linked for TaskQueueEntry<T> {
+        #[inline]
+        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
+            unsafe { core::ptr::addr_of!((*item).next) }
         }
     }
 
@@ -1133,7 +1118,7 @@ pub mod waiter_thread_posix {
         pub fn append(&self, process: *mut T) {
             self.queue.push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
                 process,
-                next: core::ptr::null_mut(),
+                next: bun_threading::Link::new(),
             })));
         }
 

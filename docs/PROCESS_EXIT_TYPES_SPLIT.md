@@ -260,10 +260,16 @@ the current owner callback validates process exit through the sidecar-owned
 not enough to remove `ProcessExitKind::Subprocess`; the wrapper owns the JSC
 refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer cleanup, and self
 deref edges that have to move or be named through a typed runtime effect
-boundary. The JS shell path has the same interpreter-identity issue that Mini
-avoids with tick context: a JS event loop can have multiple live shell
-interpreters, so it carries an explicit sidecar-owned `InterpreterHandle`
-alongside the `NodeId` instead of relying on a single loop `current_context`.
+boundary. `GlobalRef` is only a copyable raw VM-lifetime handle, but `JsRef`,
+`Strong::Optional`, and `JSPromiseStrong` own JSC handle slots and release them
+on drop. Moving the full `Subprocess`/cron job owner below `bun_runtime` is
+therefore not a matter of copying a few pointer-sized fields into
+`bun_runtime_types`; it requires a real JSC handle sidecar/sys split, with
+effectful promise/global operations still applied by `bun_runtime`. The JS
+shell path has the same interpreter-identity issue that Mini avoids with tick
+context: a JS event loop can have multiple live shell interpreters, so it
+carries an explicit sidecar-owned `InterpreterHandle` alongside the `NodeId`
+instead of relying on a single loop `current_context`.
 
 ```
 Process-exit production shape
@@ -461,6 +467,7 @@ Remaining owner movement
   │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar ProcessState records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
+  │     │     - JSPromiseStrong is drop-owning JSC state; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
   │     │     - bun_runtime_types currently depends only on bun_spawn_types, and there is no bun_jsc_types sidecar for inert promise/global handles
@@ -478,6 +485,7 @@ Remaining owner movement
         │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
         │     - embeds SubprocessExitState for lower process/stdout/stderr handles
         │     - spawn setup still installs ProcessExit::Subprocess after stream/IPC setup and before watch/watch_or_reap
+        │     - send_exit_notification currently calls proc.on_exit(...) and ignores the return value because the legacy handler runs inline; a typed target would need explicit delivery consumption there too
         ├─> existing VM process tracking
         │     - ProcessAutoKiller stores Process* -> (), only for later kill/deref; it has no Subprocess* or JS object owner slot
         │     - therefore ProcessIdentity/Process* cannot recover the Subprocess owner without adding a new registry
@@ -524,6 +532,8 @@ Required deeper type movement
         ├─> SubprocessExitState now stores the lower ProcessHandle and stdout/stderr BufferedReaderHandle from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
+        ├─> GlobalRef alone could move as an inert pointer wrapper, but JsRef/Strong/JSPromiseStrong bring JSC handle-slot allocation and drop semantics with them
+        ├─> a real split therefore needs a lower JSC handle/sys sidecar before Subprocess or cron can move all owner state below bun_runtime
         └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```
 

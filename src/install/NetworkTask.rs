@@ -823,9 +823,9 @@ impl NetworkTask {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
             // `preallocated_resolve_tasks` pool via `get()` and is not aliased
-            // (cleared immediately below); `put()` is `unsafe` because it now
-            // runs `T::drop` on the slot — here `*mut Task` is a raw pointer
-            // (no `Drop`), so the only obligation is the from-this-pool one.
+            // (cleared immediately below); `put()` runs `Task::drop` on the
+            // slot — the Task was fully initialized via
+            // `enqueue::create_extract_task_for_streaming` so this is sound.
             unsafe {
                 manager
                     .preallocated_resolve_tasks
@@ -852,8 +852,9 @@ impl NetworkTask {
     /// that resets every other field to its struct default. The slot may be
     /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
     /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
-    /// contents are never dropped on `put`), so each field is written via
-    /// `addr_of_mut!().write()` without dropping the previous value.
+    /// contents ARE now dropped on `put` since 1e76047), so each field is
+    /// written via `addr_of_mut!().write()` without dropping the previous
+    /// value — the slot is freshly poisoned/uninit from `get()`.
     ///
     /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
     /// `request_buffer`, `response_buffer`) are written here with drop-safe

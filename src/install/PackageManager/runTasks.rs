@@ -958,7 +958,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task
                     // owned by this resolve task and is returned to the pool here.
+                    // `unsafe_http_client` is `MaybeUninit` so `put()`'s
+                    // `drop_in_place<NetworkTask>` skips it — drop manually
+                    // (HTTP completed, so it IS init) so the inner
+                    // `AsyncHTTP.{request,response}_headers: EntryList` don't
+                    // leak per put/get cycle.
                     unsafe {
+                        (*net_ptr).unsafe_http_client.assume_init_drop();
                         (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                     }
                 };
@@ -1027,8 +1033,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` (when non-null) is
                     // the network task owned by this resolve task.
+                    // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
+                    // skips it — drop manually so headers don't leak.
                     if !net_ptr.is_null() {
                         unsafe {
+                            (*net_ptr).unsafe_http_client.assume_init_drop();
                             (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                         }
                     }

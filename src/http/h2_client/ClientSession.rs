@@ -519,8 +519,7 @@ impl ClientSession {
             }
             false
         };
-        self.socket.timeout(0);
-        self.socket.set_timeout_minutes(if want { 5 } else { 0 });
+        self.socket.set_timeout(if want { crate::idle_timeout_seconds() } else { 0 });
     }
 
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled

@@ -794,7 +794,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
                     }
                 }
 
-                if i == 0 && string_is_number(str, &mut i) {
+                if i == 0 && string_is_number(str) {
                     return true;
                 }
                 i += 1;
@@ -821,14 +821,22 @@ fn string_needs_quotes(str: &BunString) -> bool {
                     }
                 }
 
-                if i == 0 && string_is_number(str, &mut i) {
+                if i == 0 && string_is_number(str) {
                     return true;
                 }
                 i += 1;
             }
 
             0x30..=0x39 /* '0'..='9' */ => {
-                if i == 0 && string_is_number(str, &mut i) {
+                if i == 0 && string_is_number(str) {
+                    return true;
+                }
+                i += 1;
+            }
+
+            0x2b /* '+' */ => {
+                // Leading '+' followed by digits/dot parses as a positive number.
+                if i == 0 && string_is_number(str) {
                     return true;
                 }
                 i += 1;
@@ -851,15 +859,42 @@ fn string_needs_quotes(str: &BunString) -> bool {
     false
 }
 
-fn string_is_number(str: &BunString, offset: &mut usize) -> bool {
-    let start = *offset;
-    let mut i = start;
+/// Returns true when `str` would be parsed back as a number by `YAML.parse`.
+///
+/// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
+/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
+/// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
+///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
+///   seen, and at most one additional `-`).
+/// - `0x` / `0X` → hex digits; `0o` / `0O` → octal digits.
+/// - Additionally, `wtf.parseDouble` is a prefix parser, so a leading numeric prefix is
+///   enough for `YAML.parse` to resolve a number — e.g. `"1+5"` round-trips to `1`.
+///   We err on the side of quoting when the parser's scanner would accept the full token
+///   as `valid`.
+fn string_is_number(str: &BunString) -> bool {
+    let len = str.length();
+    if len == 0 {
+        return false;
+    }
 
-    let mut plus = false;
-    let mut minus = false;
-    let mut e = false;
-    let mut dot = false;
+    let mut i: usize = 0;
 
+    // Optional leading sign.
+    let first = str.char_at(0);
+    let signed = first == 0x2b /* '+' */ || first == 0x2d /* '-' */;
+    if signed {
+        i = 1;
+        if i >= len {
+            return false; // bare "+" / "-" isn't a number
+        }
+        // Signed special floats: "+.inf", "+.Inf", "+.INF" (and the '-' variants).
+        // The parser also rejects ".nan" after a sign, so we only check ".inf" here.
+        if str.char_at(i) == 0x2e /* '.' */ && is_inf_suffix(str, i) {
+            return true;
+        }
+    }
+
+    // Hex / octal base prefix.
     #[derive(PartialEq, Eq)]
     enum Base {
         Dec,
@@ -867,130 +902,93 @@ fn string_is_number(str: &BunString, offset: &mut usize) -> bool {
         Oct,
     }
     let mut base = Base::Dec;
+    if i + 1 < len && str.char_at(i) == 0x30 /* '0' */ {
+        match str.char_at(i + 1) {
+            0x78 | 0x58 /* 'x' | 'X' */ => {
+                base = Base::Hex;
+                i += 2;
+                if i >= len {
+                    return false; // "0x" alone isn't hex
+                }
+            }
+            0x6f | 0x4f /* 'o' | 'O' */ => {
+                base = Base::Oct;
+                i += 2;
+                if i >= len {
+                    return false; // "0o" alone isn't oct
+                }
+            }
+            _ => {}
+        }
+    }
 
-    // Zig labeled `next: switch` with `continue :next` → Rust loop+match
-    let mut c = str.char_at(i);
-    loop {
+    // Scan the rest. Track the minimal state the parser uses to decide validity.
+    let mut saw_dot = false;
+    let mut saw_exp = false;
+    let mut saw_minus_after_sign = false;
+
+    while i < len {
+        let c = str.char_at(i);
         match c {
-            0x2e /* '.' */ => {
-                if dot || base != Base::Dec {
-                    *offset = i;
-                    return false;
-                }
-                dot = true;
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
-                }
-                return true;
-            }
-
-            0x2b /* '+' */ => {
-                if plus {
-                    *offset = i;
-                    return false;
-                }
-                plus = true;
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
-                }
-                return true;
-            }
-
-            0x2d /* '-' */ => {
-                if minus {
-                    *offset = i;
-                    return false;
-                }
-                minus = true;
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
-                }
-                return true;
-            }
-
-            0x30 /* '0' */ => {
-                if i == start {
-                    if i + 1 < str.length() {
-                        match str.char_at(i + 1) {
-                            0x78 | 0x58 /* 'x' | 'X' */ => {
-                                base = Base::Hex;
-                            }
-                            0x6f | 0x4f /* 'o' | 'O' */ => {
-                                base = Base::Oct;
-                            }
-                            0x30..=0x39 /* '0'..='9' */ => {
-                                // 0 prefix allowed
-                            }
-                            _ => {
-                                *offset = i;
-                                return false;
-                            }
-                        }
-                        i += 1;
-                    } else {
-                        return true;
-                    }
-                }
-
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
-                }
-                return true;
-            }
-
-            0x65 | 0x45 /* 'e' | 'E' */ => {
-                if base == Base::Oct || (e && base == Base::Dec) {
-                    *offset = i;
-                    return false;
-                }
-                e = true;
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
-                }
-                return true;
-            }
-
+            0x30..=0x39 /* '0'..='9' */ => {}
             0x61..=0x64 /* 'a'..='d' */
             | 0x66 /* 'f' */
             | 0x41..=0x44 /* 'A'..='D' */
             | 0x46 /* 'F' */ => {
+                // Hex digits only valid in hex base.
                 if base != Base::Hex {
-                    *offset = i;
                     return false;
                 }
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
+            }
+            0x65 | 0x45 /* 'e' | 'E' */ => {
+                if base == Base::Dec {
+                    if saw_exp {
+                        return false;
+                    }
+                    saw_exp = true;
                 }
-                return true;
+                // In hex base, 'e'/'E' are just hex digits.
             }
-
-            0x31..=0x39 /* '1'..='9' */ => {
-                i += 1;
-                if i < str.length() {
-                    c = str.char_at(i);
-                    continue;
+            0x2e /* '.' */ => {
+                if saw_dot || base != Base::Dec {
+                    return false;
                 }
-                return true;
+                saw_dot = true;
             }
-
-            _ => {
-                *offset = i;
-                return false;
+            0x2b /* '+' */ => {
+                // Parser rule: '+' accepted unless we're in hex base.
+                if base == Base::Hex {
+                    return false;
+                }
             }
+            0x2d /* '-' */ => {
+                // Parser rule: at most one '-' after the leading sign.
+                if saw_minus_after_sign {
+                    return false;
+                }
+                saw_minus_after_sign = true;
+            }
+            _ => return false,
         }
+        i += 1;
     }
+    true
+}
+
+/// True if the three chars after position `i` (which is a `.`) spell "inf", "Inf",
+/// or "INF" — the suffix the YAML parser accepts after a signed `.` to mean
+/// +/- infinity. Over-matches `+.infX` etc., which is harmless for the quoting
+/// decision.
+fn is_inf_suffix(str: &BunString, i: usize) -> bool {
+    if i + 4 > str.length() {
+        return false;
+    }
+    let a = str.char_at(i + 1);
+    let b = str.char_at(i + 2);
+    let c = str.char_at(i + 3);
+    (a == 0x69 /* 'i' */ && b == 0x6e /* 'n' */ && c == 0x66 /* 'f' */)
+        || (a == 0x49 /* 'I' */ && b == 0x6e /* 'n' */ && c == 0x66 /* 'f' */)
+        || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46 /* 'F' */)
 }
 
 #[bun_jsc::host_fn]

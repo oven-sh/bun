@@ -32,7 +32,12 @@ pub struct FileReader {
     pub done: bool,
     pub pending: streams::Pending,
     pub pending_value: Strong, // Strong.Optional
-    pub pending_view: &'static mut [u8], // TODO(port): lifetime — see note above
+    // TODO(port): `&'static mut [u8]` forge — borrows a JS typed-array buffer
+    // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
+    // does not honour. `bun_ptr::Interned` is read-only by construction so
+    // does NOT cover this; tracked under the sibling `static-widen-mut`
+    // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
+    pub pending_view: &'static mut [u8],
     pub fd: Fd,
     pub start_offset: Option<usize>,
     pub max_size: Option<usize>,
@@ -79,9 +84,14 @@ pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
     None,
-    Js(&'static mut [u8]), // TODO(port): lifetime — borrows JS typed-array buffer
+    // TODO(port): `&'static mut` forge — sibling `static-widen-mut` pattern;
+    // see note on `FileReader::pending_view`.
+    Js(&'static mut [u8]),
     AmountRead(usize),
-    Temporary(&'static [u8]), // TODO(port): lifetime — borrows reader/JS buffer
+    /// Borrows the reader/JS buffer for the duration of one `on_pull` call
+    /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
+    /// `bun_ptr::Interned` Population-B triage.
+    Temporary(bun_ptr::RawSlice<u8>),
     UseBuffered(usize),
 }
 
@@ -604,9 +614,10 @@ impl FileReader {
                             unsafe { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
                         self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
-                        // SAFETY: buf outlives the on_pull call that consumes this.
-                        let temp: &'static [u8] = unsafe { bun_ptr::detach_lifetime(buf) };
-                        self.read_inside_on_pull = ReadDuringJSOnPullResult::Temporary(temp);
+                        // `buf` outlives the `on_pull` call that consumes this
+                        // variant; holder-lifetime, encoded as `RawSlice<u8>`.
+                        self.read_inside_on_pull =
+                            ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
                     } else if has_more && !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                         self.buffered.extend_from_slice(buf);
                         self.read_inside_on_pull = ReadDuringJSOnPullResult::UseBuffered(buf.len());
@@ -844,10 +855,10 @@ impl FileReader {
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
                     if self.reader().is_done() {
-                        return streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf));
+                        return streams::Result::TemporaryAndDone(buf);
                     }
 
-                    return streams::Result::Temporary(bun_ptr::RawSlice::new(buf));
+                    return streams::Result::Temporary(buf);
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());

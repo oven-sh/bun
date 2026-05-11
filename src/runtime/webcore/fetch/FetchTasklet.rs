@@ -1522,19 +1522,25 @@ impl FetchTasklet {
         // its `request_headers.buf`, `request_body`, `hostname`, and
         // `response_buffer` fields which are not reallocated for the lifetime
         // of the request.
+        // SAFETY (`Interned::assume` — Population B, holder-backed):
+        // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
+        // `request_headers.buf` / `request_body` / `hostname` fields are not
+        // reallocated for the request's lifetime, and the tasklet is freed in
+        // `deinit` only after the owned `AsyncHTTP` is dropped. NOT
+        // process-lifetime — these should become `RawSlice<u8>` once
+        // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
+        // owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] = unsafe {
-            let buf: *const [u8] = fetch_tasklet.request_headers.buf.as_slice();
-            &*buf
-        };
-        let request_body_slice: &'static [u8] = unsafe {
-            let buf: *const [u8] = fetch_tasklet.request_body.slice();
-            &*buf
-        };
-        let hostname: Option<&'static [u8]> = fetch_tasklet.hostname.as_deref().map(|s| {
-            let p: *const [u8] = s;
-            // SAFETY: see block note above.
-            unsafe { &*p }
-        });
+            bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice())
+        }
+        .as_bytes();
+        let request_body_slice: &'static [u8] =
+            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
+        let hostname: Option<&'static [u8]> = fetch_tasklet
+            .hostname
+            .as_deref()
+            // SAFETY: see block note above — same `FetchTasklet` owner.
+            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
         // struct copy → shared backing storage). `MultiArrayList` in Rust owns its

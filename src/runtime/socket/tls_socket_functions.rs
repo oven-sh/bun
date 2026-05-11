@@ -927,7 +927,14 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
         }
         // TODO(port): Zig leaks `formatted` into a global-marked ZigString; ownership semantics unclear.
-        zig_str = ZigString::init(formatted.leak());
+        // `Interned::leak_vec` makes the process-lifetime leak explicit (the
+        // bytes are never reclaimed). NOTE: `mark_global()` below tells JSC the
+        // bytes are mimalloc-owned and may be freed via `mi_free`, but
+        // `leak_vec` allocates with Rust's global allocator — allocator
+        // mismatch if JSC ever adopts the buffer. `to_error_instance` clones
+        // the string, so today the leaked bytes are simply never freed; the
+        // `mark_global` is dead weight matching Zig 1:1 (see TODO below).
+        zig_str = ZigString::init(bun_ptr::Interned::leak_vec(formatted).as_bytes());
         let mut encoded_str = zig_str.with_encoding();
         encoded_str.mark_global();
         // TODO(port): Zig discards encoded_str and continues using zig_str — possible upstream bug; matching Zig 1:1.

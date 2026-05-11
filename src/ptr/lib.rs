@@ -461,6 +461,162 @@ unsafe impl<T: Sync> Send for RawSlice<T> {}
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Interned — process-lifetime byte-slice proof type.
+//
+// The Phase-A port widened ~100 borrowed `&[u8]` to `&'static [u8]` via
+// open-coded `unsafe { &*ptr::from_ref(s) }`. Audit splits them into:
+//
+//   • Population A (~80) — bytes live in a process-lifetime store
+//     (`FilenameStore` / `DirnameStore` / `BSSStringList` singleton, a
+//     `Box::leak`, or a true `static` literal). The widen is sound, but the
+//     bare `&'static [u8]` carries no proof, so a refactor can silently feed
+//     it a stack slice.
+//   • Population B (~24) — bytes are owned by a value with a `Drop` that runs
+//     before process exit (UserOptions arena, FetchTasklet, JSC slice, SSL
+//     session). The widen is unsound the moment the value escapes the holder.
+//
+// `Interned` is the type-level proof that a `&'static [u8]` came from
+// Population A. Safe constructors accept only genuinely-process-lifetime
+// inputs (`from_static`, `leak`, `leak_vec`); the single `unsafe` escape hatch
+// (`assume`) forces every Population-B caller to spell out — in its SAFETY
+// comment — exactly which owner backs the bytes and when it drops, so the lie
+// is grep-able rather than ambient.
+//
+// `repr(transparent)` over `&'static [u8]`: zero-cost, FFI-identical to the
+// fields it replaces, `Option<Interned>` niche-packs, and `Send + Sync` is
+// inherited via auto-traits (no `unsafe impl` needed).
+//
+// This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
+// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// — those are tracked under the sibling `static-widen-mut` pattern and want a
+// raw-pointer field or a future `RawSliceMut<T>`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A byte slice backed by **process-lifetime** storage.
+///
+/// Process-lifetime ≡ one of:
+///   • interned in a `BSSStringList` singleton (`FilenameStore`, `DirnameStore`),
+///   • a `Box::leak` / `Vec::leak` that is never reclaimed,
+///   • a true `'static` item (string literal, `static` array).
+///
+/// `Interned` exists so that the ~80 open-coded `&[u8] → &'static [u8]` widens
+/// become a safe value flowing from the store, and so that the ~24 sites whose
+/// backing **does** drop can no longer pretend to be `'static` — they must
+/// spell `unsafe { Interned::assume(..) }` and name the owner in the SAFETY
+/// comment, or (correctly) switch to [`RawSlice<u8>`] / [`BackRef<T>`].
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct Interned(&'static [u8]);
+
+impl Interned {
+    /// Empty slice. Safe — `b""` is a true `'static` literal.
+    pub const EMPTY: Self = Interned(b"");
+
+    /// Wrap a true `'static` input — string literals, `static` arrays. Safe by
+    /// definition: the borrow checker has already proved process lifetime.
+    #[inline]
+    pub const fn from_static(s: &'static [u8]) -> Self {
+        Interned(s)
+    }
+
+    /// Adopt a leaked allocation. Consumes the `Box` so the leak is explicit at
+    /// the call site (replaces ad-hoc `intern` helpers in the bundler/linker).
+    #[inline]
+    pub fn leak(b: Box<[u8]>) -> Self {
+        Interned(Box::leak(b))
+    }
+
+    /// `leak` for `Vec<u8>` — shrinks to fit and leaks.
+    #[inline]
+    pub fn leak_vec(v: Vec<u8>) -> Self {
+        Self::leak(v.into_boxed_slice())
+    }
+
+    /// Escape hatch for storage this module cannot see (mmap'd standalone
+    /// graph, mimalloc arena leaked for the process, C-side constant table).
+    ///
+    /// # Safety
+    /// `s` must remain valid and immutable for the rest of the process. Name
+    /// the owning store in the SAFETY comment. **Never** call this on bytes
+    /// owned by a value with a `Drop` impl that runs before process exit — use
+    /// [`RawSlice<u8>`] for holder-lifetime slices instead.
+    #[inline]
+    pub const unsafe fn assume(s: &[u8]) -> Self {
+        // SAFETY: caller contract — `s` is process-lifetime and immutable.
+        Interned(unsafe { &*core::ptr::from_ref::<[u8]>(s) })
+    }
+
+    /// Recover the underlying `&'static [u8]` (for storing into legacy fields
+    /// that have not yet been retyped to `Interned`).
+    #[inline]
+    pub const fn as_bytes(self) -> &'static [u8] {
+        self.0
+    }
+
+    #[inline]
+    pub const fn len(self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl core::ops::Deref for Interned {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for Interned {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl core::borrow::Borrow<[u8]> for Interned {
+    /// Lets `HashMap<Interned, _>` / `HashSet<Interned>` look up by `&[u8]`.
+    #[inline]
+    fn borrow(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl Default for Interned {
+    #[inline]
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl From<&'static str> for Interned {
+    #[inline]
+    fn from(s: &'static str) -> Self {
+        Interned(s.as_bytes())
+    }
+}
+
+impl From<&'static [u8]> for Interned {
+    #[inline]
+    fn from(s: &'static [u8]) -> Self {
+        Interned(s)
+    }
+}
+
+impl core::fmt::Debug for Interned {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // bstr-style: print as a (possibly-UTF-8) string rather than a byte
+        // array dump, matching how these slices are used (paths, identifiers).
+        core::fmt::Debug::fmt(bstr::BStr::new(self.0), f)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ThisPtr<T> — callback-dispatch self-pointer
 //
 // uSockets / C++ FFI dispatch hands every socket-event handler a raw

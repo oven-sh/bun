@@ -212,7 +212,13 @@ impl CmdHandle {
     pub unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
         // SAFETY: per fn contract — `interp` constructed via `from_raw_mut`
         // (write provenance), single-threaded, no overlapping `&mut`.
-        unsafe { self.interp.assume_mut().as_cmd_mut(self.id) }
+        // `&'static mut T` forge — `bun_ptr::Interned` is read-only by
+        // construction so does NOT cover this; tracked under the sibling
+        // `static-widen-mut` pattern. Routed through `detach_lifetime_mut` so
+        // the widen is centralised in `bun_ptr` and grep-able. The `'static` is
+        // a lie scoped to the (3) callers, all of which drop the borrow before
+        // `free_node` recycles the slot.
+        unsafe { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
     }
 }
 

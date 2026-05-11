@@ -290,11 +290,17 @@ impl StringRefList {
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
-        // SAFETY: the `ZigStringSlice` is now owned by `self.strings` and lives
-        // for the `StringRefList`'s lifetime (= `UserOptions` lifetime). Phase-A
-        // erases to `'static` per the file-level TODO(port); Phase B threads a
-        // real `'bump` through `Framework`/`FileSystemRouterType`.
-        arena_erase(self.strings.last().unwrap().slice())
+        let slice = self.strings.last().unwrap().slice();
+        // SAFETY (`Interned::assume` — Population B, holder-backed): the
+        // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
+        // long as the `StringRefList`, which is owned by `UserOptions` and
+        // dropped only when bake teardown runs (`UserOptions::deinit`). The
+        // returned slice is stored only in `Framework` / `FileSystemRouterType`
+        // / `ServerComponents` fields that are themselves owned by the same
+        // `UserOptions`, so no read outlives the holder. NOT process-lifetime
+        // — Phase B must re-thread a real `'bump` lifetime here (see file-level
+        // TODO(port)); `assume` makes the lie grep-able until then.
+        unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }
 
@@ -740,7 +746,13 @@ impl Framework {
                 return;
             }
         };
-        *path = arena_erase(result.path().unwrap().text);
+        // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
+        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
+        // `FilenameStore` singleton). No widen needed; the previous
+        // `arena_erase` here laundered an already-`'static` slice and falsely
+        // implied arena ownership. See `bun_ptr::Interned` for the type that
+        // `Path::text` should eventually become.
+        *path = result.path().unwrap().text;
     }
 
     fn from_js(
@@ -1386,7 +1398,9 @@ impl Default for ReactFastRefresh {
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        Ok(res) => Some(arena_erase(res.path_const().unwrap().text)),
+        // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
+        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
+        Ok(res) => Some(res.path_const().unwrap().text),
         Err(_) => {
             unsafe { (*r.log).reset() };
             None

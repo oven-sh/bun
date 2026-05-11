@@ -1302,8 +1302,13 @@ impl<'a> Part<'a> {
         // safe-signature wrapper does not hide the lifetime-widen.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: caller contract on `to_owned_part`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+            // SAFETY (`Interned::assume` — Population B, holder-backed): every
+            // payload slice points into `FrameworkRouter::pattern_string_arena`,
+            // which is owned by the `FrameworkRouter` and freed only on
+            // router drop/reset — strictly after every `Route` holding a
+            // `Part<'static>` is gone. NOT process-lifetime; Phase B should
+            // model this with a `'bump` parameter on `Part`.
+            unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
         }
         match self {
             Part::Text(s) => Part::Text(d(s)),

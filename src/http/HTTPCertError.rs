@@ -35,8 +35,16 @@ impl HTTPCertError {
         /// type (see TODO above re: ownership).
         #[inline]
         fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
-            // SAFETY: `p` is null or a NUL-terminated C string from uSockets,
-            // valid for the static lifetime of the error constant table.
+            // SAFETY (`bun_ptr::Interned`-style audit — Population A,
+            // process-lifetime): `code` is uSockets'
+            // `us_ssl_socket_verify_error_str` lookup into a static
+            // string-literal table; `reason` is BoringSSL's
+            // `X509_verify_cert_error_string`, which likewise returns a
+            // pointer to a compile-time string literal (switch over
+            // `X509_V_ERR_*`). Both are genuinely process-lifetime, so the
+            // widen to `&'static ZStr` is sound. (`Interned` itself is
+            // `[u8]`-only; `ZStr` keeps the open-coded widen but the owner is
+            // now named per the `Interned::assume` contract.)
             unsafe { ZStr::from_c_ptr(p) }
         }
         Self {

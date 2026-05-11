@@ -393,8 +393,15 @@ impl<'a> Transpiler<'a> {
         // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
         // `E::Object`) — same lifetime as the block-store. Only the bundler
         // resets it; install/`--define` (which also use the block-store) hold
-        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc.
-        js_ast::ast::store_ast_alloc_heap::reset();
+        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
+        // the block-store's `DISABLE_RESET` gate: macro evaluation pins the
+        // store via `DisableStoreReset` and re-enters here, so the
+        // `data_store_reset` calls above are a no-op there — the side-arena
+        // must be too, or the macro's `AstVec` buffers are freed under live
+        // `StoreRef`s (macro-test segfault@0x0, #22656 SIGABRT on asan).
+        if !js_ast::ast::stmt::data::Store::disable_reset() {
+            js_ast::ast::store_ast_alloc_heap::reset();
+        }
     }
 
     /// Port of `transpiler.zig:108 _resolveEntryPoint`.

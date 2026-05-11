@@ -1430,9 +1430,8 @@ fn get_code_for_parse_task<'b>(
         }
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
         let ctx = unsafe { task.ctx() };
-        let Some(plugin) = &ctx.plugins else { break 'brk false };
-        // SAFETY: `plugin` is a live BACKREF for the bundle pass.
-        if !unsafe { plugin.as_ref() }.has_on_before_parse_plugins() {
+        let Some(plugin) = ctx.plugins_ref() else { break 'brk false };
+        if !plugin.has_on_before_parse_plugins() {
             break 'brk false;
         }
 
@@ -1462,9 +1461,8 @@ fn get_code_for_parse_task<'b>(
     };
 
     // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-    let plugins = unsafe { ctx.task.ctx() }.plugins.expect("unreachable");
-    // SAFETY: `plugins` is a live BACKREF for the bundle pass.
-    ctx.run(unsafe { plugins.as_ref() }, from_plugin)
+    let plugins = unsafe { ctx.task.ctx() }.plugins_ref().expect("unreachable");
+    ctx.run(plugins, from_plugin)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

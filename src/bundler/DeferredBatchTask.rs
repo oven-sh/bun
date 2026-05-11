@@ -76,12 +76,9 @@ impl DeferredBatchTask {
                 .map(|c| c.result_is_err())
                 .unwrap_or(false);
             // Zig: `bv2.plugins.?.drainDeferred(rejected) catch return;`
-            let plugins = bv2.plugins.expect("plugins");
-            // SAFETY: `plugins` is a live opaque C++ BunPlugin (BACKREF held
-            // by the completion task / bake DevServer). `catch return`
-            // collapses to discarding the void result — see
+            // `catch return` collapses to discarding the void result — see
             // `Plugin::drain_deferred` for the exception-scope note.
-            unsafe { (*plugins.as_ptr()).drain_deferred(rejected) };
+            bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
         }
         self.deinit();
     }

@@ -206,6 +206,37 @@ impl<'a> BundleV2<'a> {
         self.dev_server.as_ref()
     }
 
+    /// Safe projection of the `client_transpiler` backref. Set once in `init`
+    /// (from `BakeOptions` or `initialize_client_transpiler`); the pointee is
+    /// live for `'a`.
+    #[inline]
+    pub fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
+        // SAFETY: BACKREF — points at a `Transpiler` owned by `BakeOptions` /
+        // `owned_client_transpiler`, both of which outlive every bundle-pass
+        // caller. Never reassigned after init.
+        self.client_transpiler.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
+    /// Set once in `init` from `BakeOptions` / completion config; live for the
+    /// bundle pass.
+    #[inline]
+    pub fn plugins_ref(&self) -> Option<&JSBundlerPlugin> {
+        // SAFETY: BACKREF — opaque C++ object owned by the completion task /
+        // bake DevServer, outlives the bundle pass. All `&self` methods on it
+        // are FFI calls that take `*const`.
+        self.plugins.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Mutable projection of the `plugins` backref for FFI calls that take
+    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    #[inline]
+    pub fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
+        // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
+        // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
+        self.plugins.map(|mut p| unsafe { p.as_mut() })
+    }
+
     #[inline]
     pub fn path_to_source_index_map(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
         self.graph.path_to_source_index_map(target)
@@ -2503,7 +2534,7 @@ impl<'a> BundleV2<'a> {
             this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
             this.plugins = bo.plugins;
             if this.transpiler.options.server_components {
-                debug_assert!(unsafe { this.client_transpiler.unwrap().as_ref() }.options.server_components);
+                debug_assert!(this.client_transpiler_ref().unwrap().options.server_components);
                 if separate_ssr {
                     debug_assert!(unsafe { (*this.ssr_transpiler).options.server_components });
                 }
@@ -4738,8 +4769,7 @@ impl<'a> BundleV2<'a> {
         import_record_index: u32,
         original_target: options::Target,
     ) -> bool {
-        if let Some(mut plugins_ptr) = self.plugins {
-            let plugins = unsafe { plugins_ptr.as_mut() };
+        if let Some(plugins) = self.plugins_ref() {
             // PORT NOTE: `ImportRecord.path` is `bun_paths::fs::Path`; `has_any_matches`
             // takes the structurally-identical `bun_resolver::fs::Path`. Rebuild the
             // resolver-crate variant from the same backing slices (Zig has a single
@@ -4782,8 +4812,7 @@ impl<'a> BundleV2<'a> {
         entry_point: &[u8],
         target: options::Target,
     ) -> bool {
-        if let Some(mut plugins_ptr) = self.plugins {
-            let plugins = unsafe { plugins_ptr.as_mut() };
+        if let Some(plugins) = self.plugins_ref() {
             let mut temp_path = Fs::Path::init(entry_point.into());
             temp_path.namespace = b"file";
             if plugins.has_any_matches(&temp_path, false) {
@@ -4850,8 +4879,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
-        if let Some(mut plugins_ptr) = self.plugins {
-            let plugins = unsafe { plugins_ptr.as_mut() };
+        if let Some(plugins) = self.plugins_ref() {
             if plugins.has_any_matches(&parse.path, true) {
                 // This is where onLoad plugins are enqueued
                 bun_core::scoped_log!(Bundle, "enqueue onLoad: {}:{}",

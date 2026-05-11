@@ -277,11 +277,20 @@ impl ThreadPool {
         unsafe { &*self.worker_pool }
     }
 
+    /// Safe accessor for the IO pool. `Some` only when `uses_io_pool()`; the
+    /// pointee is the module-static `io_thread_pool::THREAD_POOL`, live while
+    /// `ref_count > 0` (i.e. while any bundler `ThreadPool` exists).
+    #[inline]
+    pub fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
+        // SAFETY: points to the module-static THREAD_POOL, live while ref_count > 0;
+        // all driver methods (`schedule`, `warm`) take `&self`.
+        self.io_pool.map(|p| unsafe { p.as_ref() })
+    }
+
     pub fn start(&self) {
         self.worker_pool().warm(8);
-        if let Some(io) = self.io_pool {
-            // SAFETY: io points to the module-static THREAD_POOL, live while ref_count > 0.
-            unsafe { io.as_ref().warm(1) };
+        if let Some(io) = self.io_pool_ref() {
+            io.warm(1);
         }
     }
 
@@ -349,8 +358,8 @@ impl ThreadPool {
                     schedule_fn(self.worker_pool(), ThreadPoolLib::Batch::from(&raw mut parse_task.task));
                 }
                 ParseTaskStage::NeedsSourceCode => {
-                    // SAFETY: io_pool is Some when uses_io_pool(); points to live static.
-                    let io = unsafe { self.io_pool.unwrap_unchecked().as_ref() };
+                    // io_pool is Some when uses_io_pool().
+                    let io = self.io_pool_ref().unwrap();
                     schedule_fn(io, ThreadPoolLib::Batch::from(&raw mut parse_task.io_task));
                 }
             }
@@ -672,10 +681,10 @@ impl Worker {
         let data = self.data.as_mut().expect("Worker.data set in create()");
         if target == Target::Browser && data.transpiler.options.target != target {
             if data.other_transpiler.is_none() {
-                // SAFETY: `ctx` is a valid backref; `client_transpiler` must be
-                // Some in this branch per Zig `.?`.
+                // SAFETY: `ctx` is a valid backref (set in `create()`); the
+                // `BundleV2` outlives every worker.
                 let client: &Transpiler<'_> =
-                    unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
+                    unsafe { &*self.ctx }.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
                 // pinned for the worker's lifetime.
                 let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };

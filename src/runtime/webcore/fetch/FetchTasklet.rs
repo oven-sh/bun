@@ -339,10 +339,13 @@ impl FetchTasklet {
     /// is valid while the stream's Strong ref is held; every call site here is
     /// inside a `readable_stream_ref.get()` scope, so the stream is alive.
     #[inline]
-    fn bytes_mut<'a>(ptr: readable_stream::Source) -> Option<&'a mut crate::webcore::ByteStream> {
+    fn bytes_mut<'a>(ptr: readable_stream::Source) -> Option<&'a crate::webcore::ByteStream> {
         match ptr {
             // SAFETY: see doc comment.
-            readable_stream::Source::Bytes(b) => Some(unsafe { &mut *b }),
+            // R-2: deref shared — `on_data` re-enters JS (`pending.run()`),
+            // which can re-derive a fresh `&ByteStream` from `m_ctx`; aliased
+            // `&` is sound, aliased `&mut` is not.
+            readable_stream::Source::Bytes(b) => Some(unsafe { &*b }),
             _ => None,
         }
     }
@@ -590,7 +593,7 @@ impl FetchTasklet {
         if let Some(readable) = self.readable_stream_ref.get(&global_this) {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
             if let Some(bytes) = Self::bytes_mut(readable.ptr) {
-                bytes.size_hint = self.get_size_hint();
+                bytes.size_hint.set(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
@@ -1280,9 +1283,11 @@ impl FetchTasklet {
     fn clear_stream_cancel_handler(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let Some(bytes) = Self::bytes_mut(readable.ptr) {
-                let source = bytes.parent();
-                source.cancel_handler = None;
-                source.cancel_ctx = None;
+                // R-2: project to the parent `NewSource` via `&self`; the two
+                // fields are `Cell`-wrapped for exactly this caller.
+                let source = bytes.parent_const();
+                source.cancel_handler.set(None);
+                source.cancel_ctx.set(None);
             }
         }
     }

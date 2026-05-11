@@ -352,13 +352,13 @@ mod shim {
     #[inline] pub fn blob_needs_to_read_file(b: &Blob) -> bool {
         b.store.get().as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
-    #[inline] pub fn byte_stream_unpipe(mut s: NonNull<ByteStream>) {
+    #[inline] pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
         // SAFETY: the lone caller has just `take()`n the pointer out of
         // `self.byte_stream`, so no other borrow of the ByteStream is live;
         // the allocation is kept alive by `response_body_readable_stream_ref`.
-        // `unpipe_without_deref` only nulls two `Option` fields (no drop side
-        // effects), matching Zig's `stream.unpipeWithoutDeref()` on `*ByteStream`.
-        unsafe { s.as_mut() }.unpipe_without_deref()
+        // R-2: `unpipe_without_deref` now takes `&self` (interior-mutable
+        // `JsCell<Pipe>`), so deref as shared.
+        unsafe { s.as_ref() }.unpipe_without_deref()
     }
     #[inline] pub fn body_value_unref(v: &mut Body::Value) {
         // SAFETY: every `Body::Value` reachable from `RequestContext.request_body`
@@ -2764,9 +2764,11 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // SAFETY: Source::Bytes stores a live *mut ByteStream
-                            let byte_stream = unsafe { &mut *byte_stream_ptr };
-                            debug_assert!(byte_stream.pipe.ctx.is_none());
+                            // SAFETY: Source::Bytes stores a live *mut ByteStream.
+                            // R-2: `&` (not `&mut`) — all touched ByteStream
+                            // methods/fields are `&self`/interior-mutable.
+                            let byte_stream = unsafe { &*byte_stream_ptr };
+                            debug_assert!(byte_stream.pipe.get().ctx.is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -2777,7 +2779,7 @@ where
                             let resp = this.resp.expect("infallible: resp bound");
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
-                            if byte_stream.has_received_last_chunk {
+                            if byte_stream.has_received_last_chunk.get() {
                                 let mut byte_list = byte_stream.drain();
                                 this.blob = AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
@@ -2787,7 +2789,7 @@ where
                                 return;
                             }
                             this.ref_();
-                            byte_stream.pipe = WebCore::Wrap::<Self>::init(this);
+                            byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();

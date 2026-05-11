@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -619,8 +620,10 @@ pub struct NewSource<C: SourceContext> {
     // TODO(port): lifetime — TSV class UNKNOWN
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
-    pub cancel_handler: Option<fn(Option<*mut c_void>)>,
-    pub cancel_ctx: Option<*mut c_void>,
+    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
+    /// (through `ByteStream::parent_const`), so interior-mutable.
+    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub cancel_ctx: Cell<Option<*mut c_void>>,
     // PORT NOTE: JSC_BORROW. Stored raw because it's a heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject` argument; a `'static` borrow would be a
     // lie and a lifetime parameter would propagate into FFI codegen.
@@ -628,7 +631,9 @@ pub struct NewSource<C: SourceContext> {
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
-    pub is_closed: bool,
+    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    pub is_closed: Cell<bool>,
 }
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
@@ -641,11 +646,11 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_handler: None,
             close_ctx: None,
             close_jsvalue: bun_jsc::strong::Optional::empty(),
-            cancel_handler: None,
-            cancel_ctx: None,
+            cancel_handler: Cell::new(None),
+            cancel_ctx: Cell::new(None),
             global_this: core::ptr::null(),
             this_jsvalue: JSValue::ZERO,
-            is_closed: false,
+            is_closed: Cell::new(false),
         }
     }
 }
@@ -794,7 +799,7 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         self.context.on_cancel();
         if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx);
+            handler(self.cancel_ctx.get());
         }
     }
 
@@ -948,7 +953,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed)
+        JSValue::from(self.is_closed.get())
     }
 
     fn process_result(

@@ -583,13 +583,25 @@ impl MultiPartUpload {
             self.state = State::Finished;
             (self.callback)(S3UploadResult::Failure(err), self.callback_context)?;
 
+            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // `self.callback` (promise reject → JS) re-enters via the JS
+            // wrapper's `*mut MultiPartUpload` and may write `*self`. Nothing
+            // derived from `self` is passed to the callback, so LLVM is
+            // licensed to hoist `self.upload_id` (read by
+            // `rollback_multi_part_request` once inlined) above the call.
+            // SUSPECT (not yet ASM-cached); launder so post-callback reads go
+            // through an opaque pointer. Mirrors cork fix b818e70e1c57.
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
-                self.rollback_multi_part_request()?;
+                // SAFETY: `this` is the live heap `MultiPartUpload` (refcounted
+                // — `state == Finished` guards re-entrant `fail`/`done`);
+                // momentary `&mut` is the unique access on this JS thread.
+                unsafe { (*this).rollback_multi_part_request()? };
             } else {
                 // single file upload no need to rollback
-                MultiPartUpload::deref_(self);
+                MultiPartUpload::deref_(this);
             }
         }
         Ok(())

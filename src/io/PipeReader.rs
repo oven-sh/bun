@@ -598,6 +598,29 @@ impl PosixBufferedReader {
         _size_hint: isize,
         received_hup_initially: bool,
     ) {
+        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
+        // `vtable.on_read_chunk` below re-enters JS (e.g.
+        // `FileReader::on_read_chunk` resolves a promise → drains microtasks)
+        // and user code can reach this reader via a fresh
+        // `&mut PosixBufferedReader` from the parent's intrusive `reader`
+        // field, writing `self.flags` / `self._buffer` / `self.handle`. Not
+        // currently ASM-cached (noalias-hunt SUSPECT), but one inlining change
+        // away from caching `flags`/`_buffer.{ptr,cap}` across the call so the
+        // next loop iteration's `_buffer.capacity()` / `IS_DONE` check / poll
+        // re-arm operate on stale state. Launder so `parent` is derived from
+        // an opaque pointer that LLVM must assume the vtable dispatch may
+        // write through; mirrors the cork fix at b818e70e1c57. Stacked-Borrows
+        // is still violated by the re-entrant `&mut` alias regardless — this
+        // addresses the codegen hazard only.
+        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
+        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
+        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
+        // but a raw-ptr-derived borrow whose loads must reload after each
+        // opaque vtable call (precedent: `JSMySQLQuery::resolve`'s guard
+        // re-borrow). The reader struct is an inline field of its parent
+        // (never freed mid-call), so `*this` stays a valid place even if
+        // re-entry calls `done()`/`close()`.
+        let parent = unsafe { &mut *this };
         let mut received_hup = received_hup_initially;
         loop {
             let streaming = parent.vtable.is_streaming_enabled();
@@ -770,6 +793,27 @@ impl PosixBufferedReader {
         received_hup: bool,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
+        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
+        // `vtable.on_read_chunk` below re-enters JS (resolves the pending
+        // read, drains microtasks, fires `'data'`) and user code can reach
+        // this reader via a fresh `&mut PosixBufferedReader` from the parent's
+        // intrusive `reader` field, writing `self._buffer` / `self.flags` /
+        // `self.handle`. Not currently ASM-cached (noalias-hunt SUSPECT), but
+        // one inlining change away from caching `_buffer.{ptr,len,cap}` across
+        // the call so the post-call `_buffer.clear()` / `capacity()` / inner-
+        // loop `set_len` operate on a stale Vec header (UAF if re-entry
+        // reallocated). Launder so `parent` is derived from an opaque pointer
+        // that LLVM must assume the vtable dispatch may write through; mirrors
+        // the cork fix at b818e70e1c57. Stacked-Borrows is still violated by
+        // the re-entrant `&mut` alias regardless — this addresses the codegen
+        // hazard only.
+        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
+        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
+        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
+        // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
+        // The reader struct is an inline field of its parent (never freed
+        // mid-call), so `*this` stays a valid place across re-entry.
+        let parent = unsafe { &mut *this };
         let streaming = parent.vtable.is_streaming_enabled();
 
         if streaming {
@@ -1216,10 +1260,28 @@ impl WindowsBufferedReader {
             self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
-        let result = self.vtable.on_read_chunk(buf, has_more);
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `vtable.on_read_chunk` re-enters JS and user code can reach this
+        // reader via a fresh `&mut WindowsBufferedReader` from the parent's
+        // intrusive `reader` field, writing `self.flags` (e.g. via `pause` /
+        // `start_reading`). Not currently ASM-cached (noalias-hunt SUSPECT),
+        // but one inlining change away from caching `self.flags` across the
+        // call so the trailing `.remove(HAS_INFLIGHT_READ)` RMWs the stale
+        // pre-call value, clobbering any re-entrant flag change. Launder so
+        // the post-call RMW reloads through an opaque pointer; mirrors the
+        // cork fix at b818e70e1c57.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread. The
+        // reader struct is an inline field of its parent (never freed
+        // mid-call), so `*this` stays a valid place across re-entry.
+        let result = unsafe { (*this).vtable.on_read_chunk(buf, has_more) };
+        // Re-escape so the trailing RMW cannot reuse a spilled `self.flags`
+        // from before `on_read_chunk`.
+        core::hint::black_box(this);
         // Clear has_inflight_read after the callback completes to prevent
         // libuv from starting a new read while we're still processing data
-        self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+        // SAFETY: `this` is still live (see above).
+        unsafe { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
         result
     }
 

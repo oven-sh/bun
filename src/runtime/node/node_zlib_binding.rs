@@ -416,8 +416,25 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     pub fn run_from_js_thread(this: &mut T) {
-        // SAFETY: `global_this` backref is valid for the lifetime of `this`.
-        let global: &JSGlobalObject = unsafe { &*this.global_this() };
+        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but both
+        // `check_error` (→ `emit_error` → onerror `run_callback`) and the
+        // write-callback `run_callback` below run user JS which can re-enter
+        // via a fresh `&mut T` from the wrapper's `m_ctx` (e.g. `write()` /
+        // `reset()` / `close()`) and mutate `pending_reset` / `pending_close`
+        // / `write_in_progress` / `ref_count`. SUSPECT (not yet ASM-cached,
+        // but the trait accessors are `#[inline]` field projections — one
+        // inlining change away from reading a stale `pending_close` after the
+        // callback or store-forwarding `ref_count` across it). Launder so
+        // every field access goes through an opaque pointer; mirrors the cork
+        // fix at b818e70e1c57.
+        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
+        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
+        // aliases the original live `&mut T`; single JS thread; the matching
+        // `ref_()` in `write()` keeps the heap payload alive across re-entry
+        // until the trailing `deref()`, so `*this` stays a valid place even
+        // if a re-entrant `close()` runs. Each `&mut *this` borrow ends
+        // before the next is created (none held across a JS-re-entrant call).
+        let global: &JSGlobalObject = unsafe { &*(*this).global_this() };
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global.bun_vm();
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref(); defer
@@ -425,12 +442,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // call them explicitly on every return path instead of via scopeguard,
         // since scopeguard would capture `&mut this` across the body.
 
-        *this.write_in_progress_mut() = false;
+        unsafe { *(*this).write_in_progress_mut() = false };
 
         // Clear the strong handle before we call any callbacks.
-        let Some(this_value) = this.this_value_mut().try_swap() else {
+        let Some(this_value) = (unsafe { (*this).this_value_mut().try_swap() }) else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-            this.poll_ref_mut().unref(vm);
+            unsafe { (*this).poll_ref_mut().unref(vm) };
             // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload
             // and is not accessed after this call.
             unsafe { T::deref(this) };
@@ -439,18 +456,20 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
-        if !Self::check_error(this, global, this_value) {
-            this.poll_ref_mut().unref(vm);
+        if !Self::check_error(unsafe { &mut *this }, global, this_value) {
+            // Re-escape: `check_error` → `emit_error` ran the onerror callback.
+            core::hint::black_box(this);
+            unsafe { (*this).poll_ref_mut().unref(vm) };
             // SAFETY: see above.
             unsafe { T::deref(this) };
             return;
         }
 
-        if let Some(write_result) = this.write_result_ptr() {
+        if let Some(write_result) = unsafe { (*this).write_result_ptr() } {
             // SAFETY: `write_result` points at a 2-element u32[] owned by JS
             // (set in `init()`); both indices are in-bounds.
             let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-            this.stream_mut().update_write_result(r1, r0);
+            unsafe { (*this).stream_mut().update_write_result(r1, r0) };
         }
         this_value.ensure_still_alive();
 
@@ -458,15 +477,18 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         vm.event_loop_ref()
             .run_callback(write_callback, global, this_value, &[]);
+        // Re-escape after the JS write callback so the `pending_*` / `poll_ref`
+        // / `ref_count` reads below cannot reuse any pre-call load.
+        core::hint::black_box(this);
 
-        if *this.pending_reset_mut() {
-            Self::reset_internal(this, global, this_value);
+        if unsafe { *(*this).pending_reset_mut() } {
+            Self::reset_internal(unsafe { &mut *this }, global, this_value);
         }
-        if *this.pending_close_mut() {
-            let _ = Self::close_internal(this);
+        if unsafe { *(*this).pending_close_mut() } {
+            let _ = Self::close_internal(unsafe { &mut *this });
         }
 
-        this.poll_ref_mut().unref(vm);
+        unsafe { (*this).poll_ref_mut().unref(vm) };
         // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload and
         // is not accessed after this call.
         unsafe { T::deref(this) };
@@ -571,32 +593,51 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         });
         let _ = (in_off, in_len, out_off, out_len);
 
-        if *this.write_in_progress_mut() {
+        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but
+        // `check_error` (→ `emit_error` → onerror `run_callback`) runs user JS
+        // which can re-enter via a fresh `&mut T` from the wrapper's `m_ctx`
+        // (the comment in `emit_error` explicitly notes the callback may call
+        // `write()`, bumping `ref_count` and flipping `write_in_progress`).
+        // SUSPECT (not yet ASM-cached): `ref_()` / `deref()` are `#[inline]`
+        // `Cell` ops on `ref_count` — one inlining change away from the
+        // store-forwarding fold seen in `dns.rs::on_dns_poll` (load once, inc,
+        // then store stale pre-inc value after the callback). Launder so all
+        // `this` accesses below go through an opaque pointer.
+        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
+        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
+        // aliases the original live `&mut T`; single JS thread; the bracketing
+        // `ref_()` keeps the heap payload alive across re-entry until the
+        // trailing `deref()`.
+        if unsafe { *(*this).write_in_progress_mut() } {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Write already in progress"))
                 .throw());
         }
-        if *this.pending_close_mut() {
+        if unsafe { *(*this).pending_close_mut() } {
             return Err(global_this
                 .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
                 .throw());
         }
-        *this.write_in_progress_mut() = true;
-        this.ref_();
+        unsafe { *(*this).write_in_progress_mut() = true };
+        unsafe { (*this).ref_() };
 
-        this.stream_mut().set_buffers(in_, out);
-        this.stream_mut().set_flush(i32::try_from(flush).expect("int cast"));
+        unsafe { (*this).stream_mut().set_buffers(in_, out) };
+        unsafe { (*this).stream_mut().set_flush(i32::try_from(flush).expect("int cast")) };
         let this_value = callframe.this();
 
-        this.stream_mut().do_work();
-        if Self::check_error(this, global_this, this_value) {
-            if let Some(write_result) = this.write_result_ptr() {
+        unsafe { (*this).stream_mut().do_work() };
+        if Self::check_error(unsafe { &mut *this }, global_this, this_value) {
+            if let Some(write_result) = unsafe { (*this).write_result_ptr() } {
                 // SAFETY: `write_result` points at a 2-element u32[] owned by JS.
                 let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-                this.stream_mut().update_write_result(r1, r0);
+                unsafe { (*this).stream_mut().update_write_result(r1, r0) };
             }
-            *this.write_in_progress_mut() = false;
+            unsafe { *(*this).write_in_progress_mut() = false };
         }
+        // Re-escape: on the error branch `check_error` → `emit_error` ran the
+        // onerror callback, so the `ref_count` read inside `deref()` must not
+        // be store-forwarded from the `ref_()` above.
+        core::hint::black_box(this);
         // SAFETY: matching `ref_()` above; `this` is the heap payload and is not
         // accessed after this call.
         unsafe { T::deref(this) };
@@ -683,6 +724,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this_value: JSValue,
         err_: Error,
     ) {
+        // PORT_NOTES_PLAN R-2: `&mut T` carries LLVM `noalias`, but the
+        // onerror `run_callback` below runs user JS which can re-enter via a
+        // fresh `&mut T` from the wrapper's `m_ctx` — the comment immediately
+        // below documents exactly that (`write()` re-entry flips
+        // `write_in_progress` and may then set `pending_reset` /
+        // `pending_close`). SUSPECT (not yet ASM-cached): the trait accessors
+        // are `#[inline]` field projections, so one inlining change could let
+        // LLVM sink the `write_in_progress = false` store past the callback or
+        // read stale `pending_reset` / `pending_close` after it. Launder so
+        // every field access goes through an opaque pointer.
+        let this: *mut T = core::hint::black_box(core::ptr::from_mut(this));
+        // SAFETY (applies to every `(*this)` / `&mut *this` below): `this`
+        // aliases the original live `&mut T`; single JS thread; callers hold a
+        // `ref_()` bracket (`write()` / `write_sync()`), so re-entry never
+        // frees `*this`.
+
         // Clear write_in_progress *before* invoking the onerror callback.
         // The callback may re-enter write(), which sets write_in_progress=true
         // and schedules a WorkPool task. If we cleared the flag after the
@@ -690,7 +747,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // below could free the native zlib/brotli/zstd state while a task is
         // still queued, leading to a use-after-free when the worker thread
         // runs doWork().
-        *this.write_in_progress_mut() = false;
+        unsafe { *(*this).write_in_progress_mut() = false };
 
         // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
         // SAFETY: when non-null, `msg`/`code` point at NUL-terminated bytes
@@ -731,12 +788,15 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this_value,
             &[msg_value, err_value, code_value],
         );
+        // Re-escape after the JS onerror callback so the `pending_*` reads
+        // below cannot reuse any pre-call provenance.
+        core::hint::black_box(this);
 
-        if *this.pending_reset_mut() {
-            Self::reset_internal(this, global_this, this_value);
+        if unsafe { *(*this).pending_reset_mut() } {
+            Self::reset_internal(unsafe { &mut *this }, global_this, this_value);
         }
-        if *this.pending_close_mut() {
-            let _ = Self::close_internal(this);
+        if unsafe { *(*this).pending_close_mut() } {
+            let _ = Self::close_internal(unsafe { &mut *this });
         }
     }
 

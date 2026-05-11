@@ -174,14 +174,27 @@ pub fn addCACert(this: *SecureContext, global: *jsc.JSGlobalObject, callframe: *
     defer sob.deinit();
     const bytes = sob.slice();
 
+    // `us_ssl_ctx_add_ca_pem` short-circuits on empty input without touching
+    // the SSL_CTX, so nothing to invalidate. Bail BEFORE the cache eviction
+    // to preserve `createSecureContext(opts) === createSecureContext(opts)`
+    // identity for the "addCACert with empty bytes" Node no-op.
+    if (bytes.len == 0) return .js_undefined;
+
     // Detach from the per-VM native cache AND the per-global JS cache BEFORE
     // mutating the SSL_CTX. Both are keyed by the original config digest,
     // and a mutated CTX no longer matches that digest's "what would
     // createSSLContext(opts) build?" contract — future hits must rebuild.
     // Idempotent on repeat calls (already-removed → no-op).
     global.bunVM().rareData().sslCtxCache().invalidate(this.ctx, this.digest);
+    // JS cache: only evict if WE are still the cell under this key. A prior
+    // addCACert already evicted us; a subsequent createSecureContext with
+    // the same digest may have installed a *different* cell. Mirror the
+    // `if (entry.ctx == ctx)` guard in `SSLContextCache.invalidate`.
     const key = std.mem.readInt(u64, this.digest[0..8], .little);
-    cpp.Bun__SecureContextCache__remove(global, key);
+    const this_js = callframe.this();
+    if (cpp.Bun__SecureContextCache__get(global, key) == this_js) {
+        cpp.Bun__SecureContextCache__remove(global, key);
+    }
 
     _ = c.us_ssl_ctx_add_ca_pem(this.ctx, bytes.ptr, bytes.len);
     return .js_undefined;

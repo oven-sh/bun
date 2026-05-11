@@ -498,7 +498,7 @@ impl Archive {
     ///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
     /// Returns Promise<number> with count of extracted files
     #[bun_jsc::host_fn(method)]
-    pub fn extract(this: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!("Archive.extract requires a path argument")));
@@ -523,7 +523,7 @@ impl Archive {
             }
         }
 
-        start_extract_task(global, &this.store, path_slice.slice(), glob_patterns)
+        start_extract_task(global, &self.store, path_slice.slice(), glob_patterns)
     }
 }
 
@@ -602,21 +602,21 @@ impl Archive {
     /// Instance method: archive.blob()
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn blob(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &this.store, this.compress, BlobOutputType::Blob)
+    pub fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        start_blob_task(global, &self.store, self.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn bytes(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &this.store, this.compress, BlobOutputType::Bytes)
+    pub fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        start_blob_task(global, &self.store, self.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)
     /// Returns Promise<Map<string, File>> with archive file contents
     #[bun_jsc::host_fn(method)]
-    pub fn files(this: &mut Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn files(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let glob_arg = callframe.argument(0);
 
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -626,7 +626,7 @@ impl Archive {
             glob_patterns = parse_pattern_arg(global, glob_arg, b"Archive.files", b"glob")?;
         }
 
-        start_files_task(global, &this.store, glob_patterns)
+        start_files_task(global, &self.store, glob_patterns)
     }
 }
 

@@ -1080,7 +1080,13 @@ impl Bunfig {
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
-        let bump = Bump::new();
+        // Zig passes `bun.default_allocator` here — no side `mi_heap`. The Rust
+        // port previously called `Arena::new()` (= `mi_heap_new` +
+        // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
+        // `bun -e ''` startup to. Borrow the process default heap instead so
+        // TOML/JSON parse allocations route through plain `mi_malloc`, matching
+        // Zig. Parsed config lives for the process lifetime either way.
+        let bump = Bump::borrowing_default();
 
         let ext = source.path.name.ext;
         // Zig: `if (strings.eqlComptime(source.path.name.ext[1..], "toml"))`

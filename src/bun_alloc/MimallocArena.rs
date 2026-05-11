@@ -82,6 +82,13 @@ fn debug_thread_stamp() -> u64 {
 /// free + realloc — the thing `bumpalo::Bump` cannot do.
 pub struct MimallocArena {
     heap: NonNull<mimalloc::Heap>,
+    /// `true` when `heap` came from `mi_heap_new()` and must be
+    /// `mi_heap_destroy`ed on `Drop`/`reset()`. `false` when borrowing the
+    /// process-wide `mi_heap_main()` (see [`Self::borrowing_default`]) — Drop
+    /// is then a no-op and allocations live for the process lifetime, matching
+    /// Zig's `default_allocator` shape for callers that just need an `&Arena`
+    /// without paying `mi_heap_new` + `mi_heap_destroy`.
+    owns: bool,
     /// Zig: `thread_lock: bun.safety.ThreadLock` (debug-only). Stamped on
     /// `new()`/`reset()`; asserted on every `mi_heap_*` alloc/realloc path.
     /// Compiles out in release so the struct stays one pointer wide.
@@ -123,8 +130,36 @@ impl MimallocArena {
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
+            owns: true,
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
+        }
+    }
+
+    /// Borrow the process-wide default mimalloc heap (`mi_heap_main()`) instead
+    /// of creating a fresh one. `Drop` is a no-op; `reset()` is forbidden.
+    /// Allocations made through this arena are equivalent to global
+    /// `mi_malloc`/`mi_free` and live until individually freed (or process
+    /// exit for `into_bump_slice`-style leaks).
+    ///
+    /// Use this where Zig threads `bun.default_allocator` through an
+    /// `Allocator`-shaped parameter and the Rust port needs an `&Arena` but
+    /// the `mi_heap_new` + `mi_heap_destroy` pair is measurable overhead on a
+    /// hot, short-lived path (e.g. `Bunfig::parse` on `bun -e ''` startup).
+    #[inline]
+    pub fn borrowing_default() -> Self {
+        // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
+        // always-live process main heap (never null after mimalloc init).
+        let heap = unsafe { mimalloc::mi_heap_main() };
+        let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
+        Self {
+            heap,
+            owns: false,
+            #[cfg(debug_assertions)]
+            // `mi_heap_main()` is safe to allocate from on any thread (each
+            // thread gets its own `theap`), so the owning-thread assert is
+            // disabled by stamping 0 — see `assert_owning_thread`.
+            owning_thread: AtomicU64::new(0),
         }
     }
 
@@ -137,6 +172,11 @@ impl MimallocArena {
         #[cfg(debug_assertions)]
         {
             let owner = self.owning_thread.load(Ordering::Relaxed);
+            // 0 = `borrowing_default()`: `mi_heap_main()` alloc is thread-safe
+            // (per-thread `theap` underneath), so skip the same-thread check.
+            if owner == 0 {
+                return;
+            }
             let cur = debug_thread_stamp();
             debug_assert_eq!(
                 owner, cur,
@@ -175,6 +215,10 @@ impl MimallocArena {
     ///
     /// Any pointers previously returned by this arena are invalidated.
     pub fn reset(&mut self) {
+        debug_assert!(
+            self.owns,
+            "MimallocArena::reset() on a borrowing_default() arena — would destroy mi_heap_main()"
+        );
         #[cfg(debug_assertions)]
         {
             HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -434,6 +478,11 @@ impl MimallocArena {
 impl Drop for MimallocArena {
     #[inline]
     fn drop(&mut self) {
+        if !self.owns {
+            // `borrowing_default()` — `mi_heap_main()` is process-lifetime;
+            // destroying it would tear down the global allocator.
+            return;
+        }
         #[cfg(debug_assertions)]
         HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // Zig: `deinit` → `mi_heap_destroy`. Destroys the heap and bulk-frees

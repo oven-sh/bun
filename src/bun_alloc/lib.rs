@@ -1233,25 +1233,42 @@ pub mod allocators {
 // `instance` pointer — callers must not hold overlapping unique borrows.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Emit a `'static`-storage singleton accessor for any type with an
-/// `unsafe fn init_at(*mut Self)` in-place initializer.
+/// Emit a process-lifetime singleton accessor for any type with an
+/// `unsafe fn init_at(*mut Self)` in-place initializer. Storage is a single
+/// `AtomicPtr` (8 bytes) per declare site; the value itself is heap-allocated
+/// on first call (Zig spec: `default_allocator.create(Self)`).
 #[macro_export]
 macro_rules! bss_singleton {
     ($(#[$m:meta])* $vis:vis fn $name:ident() -> $ty:ty) => {
         $(#[$m])*
         $vis fn $name() -> *mut $ty {
-            static STORAGE: ::core::cell::SyncUnsafeCell<::core::mem::MaybeUninit<$ty>> =
-                ::core::cell::SyncUnsafeCell::new(::core::mem::MaybeUninit::uninit());
+            // Zig's spec is `default_allocator.create(Self)` on first access
+            // (heap, process-lifetime). The previous Rust expansion stored the
+            // whole `MaybeUninit<$ty>` inline in `.bss`, which for the
+            // resolver's 8 declare sites (2× entry_store_backing at 1.29 MB,
+            // 2× entries_option_map at 64 KB, 4× string lists at 32 KB) came
+            // to ~2.84 MB of static `.bss` vs Zig's 0. That doesn't show on
+            // `bun -e ''` (FileSystem::init isn't reached) but every
+            // `bun run`/`install`/`build` faults the `.bss` pages
+            // unconditionally before init runs. Store an 8-byte heap pointer
+            // instead and allocate on first call, matching the spec.
+            static STORAGE: ::core::sync::atomic::AtomicPtr<$ty> =
+                ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
             static ONCE: ::std::sync::Once = ::std::sync::Once::new();
-            // SAFETY: STORAGE is private to this fn; ONCE ensures single init before any
-            // read; matches Zig's `var instance / var loaded` lazy-singleton pattern.
-            // Returns a raw `*mut` (same contract as Zig's `*Self`) — fabricating
-            // `&'static mut` here would alias on every call (forbidden).
-            unsafe {
-                let slot = (*STORAGE.get()).as_mut_ptr();
-                ONCE.call_once(|| <$ty>::init_at(slot));
-                slot
-            }
+            // SAFETY: `init_at` writes only through its argument, which is a
+            // fresh exclusively-owned mimalloc allocation. ONCE provides the
+            // happens-before so the post-`call_once` Relaxed read observes the
+            // Relaxed store. The pointer is never null after ONCE completes
+            // (bss_heap_init aborts on OOM). Returns a raw `*mut` (same
+            // contract as Zig's `*Self`) — fabricating `&'static mut` here
+            // would alias on every call (forbidden).
+            ONCE.call_once(|| {
+                STORAGE.store(
+                    $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr(),
+                    ::core::sync::atomic::Ordering::Relaxed,
+                );
+            });
+            STORAGE.load(::core::sync::atomic::Ordering::Relaxed)
         }
     };
 }
@@ -1262,8 +1279,9 @@ macro_rules! bss_singleton {
 /// Zig's `default_allocator.create(Self)` followed by field-init. The once-guard
 /// (Zig's `loaded` flag) is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
+#[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
 #[inline]
-pub(crate) fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
+pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     let ptr = mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
     let ptr = NonNull::new(ptr).expect("OOM");
     // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for

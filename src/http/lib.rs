@@ -263,6 +263,23 @@ pub fn set_max_http_header_size(v: usize) {
 pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
     std::sync::OnceLock::new();
 
+/// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
+/// `on_open` (so it covers the TLS handshake) and re-armed on every read/write;
+/// if no bytes move in either direction for this long the request fails with
+/// `error.Timeout`. 0 disables the timer (matching `disable_timeout = true`).
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
+/// previous hard-coded value — so unchanged environments see identical
+/// behaviour except that the handshake phase is now also covered. Values
+/// above 240s are served by uSockets' minute-granularity long timer (see
+/// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
+pub static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
+
+/// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
+#[inline]
+pub fn idle_timeout_seconds() -> c_uint {
+    IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
+}
+
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
@@ -509,6 +526,9 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
 pub trait SocketTimeout {
     fn timeout(&self, seconds: core::ffi::c_uint);
     fn set_timeout_minutes(&self, minutes: core::ffi::c_uint);
+    /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
+    /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
+    fn set_timeout(&self, seconds: core::ffi::c_uint);
 }
 
 // lowercase hash header names so that we can be sure
@@ -875,6 +895,7 @@ fn socket_is_closed_or_has_error<const SSL: bool>(socket: &HttpSocket<SSL>) -> b
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn timeout(&self, seconds: c_uint) { uws::NewSocketHandler::<SSL>::timeout(self, seconds) }
     fn set_timeout_minutes(&self, minutes: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes) }
+    fn set_timeout(&self, seconds: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout(self, seconds) }
 }
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
@@ -1462,6 +1483,15 @@ impl<'a> HTTPClient<'a> {
         }
         self.register_abort_tracker::<IS_SSL>(socket);
         bun_core::scoped_log!(fetch, "Connected {} \n", BStr::new(self.url.href));
+
+        // Arm the idle timer immediately so a stalled TLS handshake (server
+        // accepts TCP but never answers ClientHello, or a NAT/middlebox silently
+        // drops the flow under load) eventually fails with error.Timeout instead
+        // of leaving the request — and for `bun install`, the whole process —
+        // blocked in epoll_wait forever. Previously the first `set_timeout` call
+        // was inside `on_writable`, which only runs *after* the handshake
+        // completes. See https://github.com/oven-sh/bun/issues/30325.
+        self.set_timeout(socket);
 
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
@@ -2592,7 +2622,7 @@ impl<'a> HTTPClient<'a> {
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
-                self.set_timeout(socket, 5);
+                self.set_timeout(socket);
                 let result = match self
                     .send_initial_request_payload::<IS_FIRST_CALL, IS_SSL>(socket)
                 {
@@ -2651,7 +2681,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                self.set_timeout(socket, 5);
+                self.set_timeout(socket);
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
@@ -2712,7 +2742,7 @@ impl<'a> HTTPClient<'a> {
                     let proxy = unsafe { &mut *proxy_ptr };
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
-                            self.set_timeout(socket, 5);
+                            self.set_timeout(socket);
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
@@ -2743,7 +2773,7 @@ impl<'a> HTTPClient<'a> {
                     // (this client holds a strong ref); the raw deref is needed
                     // because `&mut self` is reborrowed below.
                     let proxy = unsafe { &mut *proxy_ptr };
-                    self.set_timeout(socket, 5);
+                    self.set_timeout(socket);
                     // PERF(port): was stack-fallback alloc (16KB) — profile in Phase B
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
@@ -2862,7 +2892,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.set_timeout(socket, 5);
+        self.set_timeout(socket);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -3025,7 +3055,7 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
-            self.set_timeout(socket, 5);
+            self.set_timeout(socket);
             let report_progress = match self.handle_response_body_chunked_encoding(to_read!()) {
                 Ok(b) => b,
                 Err(err) => {
@@ -3061,7 +3091,7 @@ impl<'a> HTTPClient<'a> {
 
         if self.proxy_tunnel.is_some() {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(socket, 5);
+            self.set_timeout(socket);
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }
@@ -3071,7 +3101,7 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(socket, 5);
+                self.set_timeout(socket);
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3087,7 +3117,7 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(socket, 5);
+                self.set_timeout(socket);
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3245,15 +3275,19 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn set_timeout<S: SocketTimeout>(&self, socket: S, minutes: c_uint) {
-        if self.flags.disable_timeout {
-            socket.timeout(0);
-            socket.set_timeout_minutes(0);
+    pub fn set_timeout<S: SocketTimeout>(&self, socket: S) {
+        // Duration comes from `IDLE_TIMEOUT_SECONDS` (tunable via
+        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
+        // in `HTTPThread::on_start` — clamped to the uSockets long-timer bound and
+        // rounded up to a whole minute above 240s — so this is a plain
+        // pass-through. `socket.set_timeout` picks the short-tick timer for values
+        // ≤ 240s and the minute-granularity long timer above that, so the default
+        // 300s maps to the same 5-minute long timer as before.
+        if self.flags.disable_timeout || idle_timeout_seconds() == 0 {
+            socket.set_timeout(0);
             return;
         }
-
-        socket.timeout(0);
-        socket.set_timeout_minutes(minutes);
+        socket.set_timeout(idle_timeout_seconds());
     }
 
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

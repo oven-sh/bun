@@ -55,6 +55,11 @@ new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioc
 ///
 /// It's unclear why this was done.
 new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", { default: 30 });
+/// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
+/// The timer is armed when the socket opens and re-armed on every read/write;
+/// if it fires the request fails with `error.Timeout`. Covers the TLS
+/// handshake through the response body. 0 disables. See `src/http/lib.rs`.
+new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});

@@ -985,6 +985,24 @@ mod _event_loop_draft {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
+        // uSockets' long-timeout counter is `% 240` minutes (see
+        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
+        // values above 239 min wrap around and fire early. Clamp here — it's the
+        // only assignment — so the underlying timer can't wrap, and round values
+        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
+        // minute long-timer path never yields a timeout *shorter* than requested.
+        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
+        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
+        // math at each call site.
+        let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+            .get()
+            .unwrap_or(300)
+            .min(239 * 60);
+        crate::IDLE_TIMEOUT_SECONDS.store(
+            (if raw > 240 { raw.div_ceil(60) * 60 } else { raw }) as core::ffi::c_uint,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+
         // Zig: `const loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`
         // (HTTPThread.zig:228). Critical side effect: `init_global` calls
         // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this

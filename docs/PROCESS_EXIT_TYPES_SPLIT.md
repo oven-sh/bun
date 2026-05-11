@@ -421,6 +421,31 @@ What a real next split must change
         └─> valid shape: make the JS shell driver expose a per-interpreter typed context at process-exit delivery time, or move interpreter identity/state into a shell sidecar that is not a ShellSubprocess*/CmdHandle pointer
 ```
 
+```
+Required deeper type movement
+  ├─> lifecycle cannot finish with the current split alone
+  │     ├─> the reducer knows "ready", but handle_exit also needs:
+  │     │     - script/package/env/timer/install state
+  │     │     - process close/deref authority
+  │     │     - stdout/stderr buffers and reader teardown/reuse
+  │     │     - PackageManager/Installer effects
+  │     ├─> the honest shape is to move the lifecycle command state, including the data needed after readiness, into bun_install_types
+  │     ├─> that also requires lower typed handles or type movement for Process and BufferedReader storage
+  │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
+  ├─> cron cannot finish with ProcessExitReadiness alone
+  │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
+  │     ├─> the honest shape is a runtime sidecar state that can own the non-JSC cron transition data and expose typed actions to bun_runtime
+  │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
+  ├─> Bun.spawn needs a separable subprocess exit state
+  │     ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
+  │     ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
+  │     └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
+  └─> JS shell needs interpreter identity below the process-exit event
+        ├─> Mini shell works because the Mini driver supplies the live Interpreter as typed tick context
+        ├─> JS shell has a shared JS event loop with multiple possible interpreters
+        └─> the honest shape is per-interpreter typed driver context or sidecar-owned interpreter identity, not ShellSubprocess*/CmdHandle recovery
+```
+
 ## Runtime Tasks
 
 Runtime tasks follow the same split: the queue item shape can be a closed enum,

@@ -1409,6 +1409,37 @@ impl Diff {
             }
 
             // We found a changed dependency!
+            //
+            // If only the *version literal* changed and the previously-resolved
+            // package still satisfies the new range, keep the existing
+            // resolution. Otherwise widening a range (e.g. `"4.0.0"` → `"*"`)
+            // re-resolves to latest on the next `bun add <unrelated>`, which
+            // surprises migrations from npm/pnpm lockfiles whose package.json
+            // range diverged from the locked version. This matches npm's
+            // sticky-lockfile behaviour and lets `Lockfile::get_package_id`
+            // apply its order-independence guard without overriding a locked
+            // pin.
+            if let Some(mapping) = id_mapping.as_deref_mut() {
+                let from_res_id = from_resolutions[i];
+                if (from_res_id as usize) < from_lockfile.packages.len() {
+                    let from_pkg_resolution =
+                        from_lockfile.packages.items_resolution()[from_res_id as usize];
+                    let to_dep = &to_deps!()[cur_to_i];
+                    if to_dep.version.tag == dependency::version::Tag::Npm
+                        && from_pkg_resolution.tag == ResolutionTag::Npm
+                        && to_dep.version.npm().version.satisfies(
+                            from_pkg_resolution.npm().version,
+                            to_lockfile.buffers.string_bytes.as_slice(),
+                            from_lockfile.buffers.string_bytes.as_slice(),
+                        )
+                    {
+                        mapping[cur_to_i] = i as PackageID;
+                        // Still counted as an update so `had_any_diffs`
+                        // triggers the rebuild path; we just preserved the
+                        // resolved package.
+                    }
+                }
+            }
             summary.update += 1;
         }
 

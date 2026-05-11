@@ -88,6 +88,11 @@ pub fn install_with_manager(
 
     update_lockfile_if_needed(manager, &load_result)?;
 
+    // Snapshot the loaded-from-lockfile package count so
+    // `Lockfile::get_package_id` can tell loaded pins apart from packages
+    // appended by manifest fetches in this resolve session.
+    manager.lockfile.mark_loaded_packages();
+
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);
 

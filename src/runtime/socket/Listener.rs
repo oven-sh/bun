@@ -1387,6 +1387,22 @@ fn connect_finish<const IS_SSL: bool>(
     let socket_ref = unsafe { &mut *socket };
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
+    // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
+    // previous close's `mark_inactive()`. `get_this_value()` returns the
+    // existing wrapper (the Weak `try_get()` succeeds while the JS side still
+    // references it via `socket._handle`) but does NOT re-upgrade — so until
+    // `on_open()` → `mark_active()` runs, the wrapper is only kept alive by
+    // the JS-side reference cycle (`socket._handle` ↔ `wrapper.data.self`).
+    // If GC runs before the async TCP connect completes, `finalize()` sets
+    // `FINALIZING` + `close_and_detach()` → `on_open` never fires and the JS
+    // socket hangs forever with no connect/error/close. Upgrade here so the
+    // in-flight connect pins the wrapper. (Same guard as `mark_active`; no-op
+    // on the fresh-allocation path where `get_this_value` already
+    // `set_strong`'d.) Intentionally diverges from the Zig spec, which has
+    // the same race.
+    if socket_ref.this_value.is_not_empty() {
+        socket_ref.this_value.upgrade(global);
+    }
     socket_ref.flags.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
     // PORT NOTE: Zig stored `connection` in the socket field and passed the same
     // value to doConnect (single allocation, aliased read). `do_connect` now

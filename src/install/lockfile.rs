@@ -207,6 +207,19 @@ pub struct Lockfile {
     pub catalogs: CatalogMap,
 
     pub saved_config_version: Option<ConfigVersion>,
+
+    /// `packages.len()` at the moment lockfile load (including npm/pnpm/yarn
+    /// migration) finished. Packages with `id < this` were carried in from a
+    /// lockfile and represent a user-pinned resolution; packages with
+    /// `id >= this` were appended by manifest fetches in the current
+    /// resolve session. `get_package_id` uses this to keep its
+    /// order-independence guard from overriding lockfile pins. Set by
+    /// `mark_loaded_packages`; defaults to `invalid_package_id` (no lockfile
+    /// loaded → guard applies to nothing, equivalent to "all entries are
+    /// session-appended").
+    ///
+    /// Runtime-only — never serialised.
+    pub loaded_package_count: PackageID,
 }
 
 /// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
@@ -2043,7 +2056,19 @@ impl Lockfile {
             meta_hash: ZERO_HASH,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
+            // Fresh lockfile (no load): every package appended later is
+            // session-appended, so the order-independence guard in
+            // `get_package_id` applies from id 0.
+            loaded_package_count: 0,
         }
+    }
+
+    /// Snapshot `packages.len()` as the "loaded from lockfile" watermark.
+    /// Call exactly once after `load_from_cwd` (including npm/pnpm/yarn
+    /// migration) before any manifest-driven `append_package`.
+    #[inline]
+    pub fn mark_loaded_packages(&mut self) {
+        self.loaded_package_count = self.packages.len() as PackageID;
     }
 
     pub fn get_package_id(
@@ -2063,7 +2088,51 @@ impl Lockfile {
             Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
             _ => None,
         };
+        // Order-independence guard for the `satisfies` fallback below: when the
+        // caller already knows the manifest's best-match version (the npm
+        // `resolution` it passes), only dedupe to an existing entry whose
+        // version is at least that. Without this, the result depends on which
+        // sibling's manifest happened to land first — `*` deduping to a
+        // previously-appended `1.0.2` instead of resolving to `2.0.2` is the
+        // long-standing "text lockfile is hoisted" flake. Lockfile-pinned deps
+        // are kept out of this codepath by `Diff::generate`'s
+        // satisfies-preserves-mapping rule (which keeps the resolution slot
+        // populated so the early return in `get_or_put_resolved_package` fires
+        // before we get here).
+        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
+            Some(resolution.npm().version)
+        } else {
+            None
+        };
         let buf = self.buffers.string_bytes.as_slice();
+
+        let loaded_watermark = self.loaded_package_count;
+        let try_satisfies_dedupe = |id: PackageID| -> bool {
+            let existing = &resolutions[id as usize];
+            if existing.tag != ResolutionTag::Npm {
+                return false;
+            }
+            let Some(npm_v) = npm_version else {
+                return false;
+            };
+            let existing_ver = existing.npm().version;
+            if !npm_v.satisfies(existing_ver, buf, buf) {
+                return false;
+            }
+            // Only refuse to downgrade against entries appended in *this*
+            // resolve session. Entries below the watermark came from a
+            // loaded/migrated lockfile and represent the user's existing
+            // pin — deduping to those even when the manifest offers something
+            // newer is the lockfile-stickiness guarantee.
+            if id >= loaded_watermark {
+                if let Some(floor) = resolved_npm_floor {
+                    if existing_ver.order(floor, buf, buf) == Ordering::Less {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
 
         match entry {
             PackageIndexEntry::Id(id) => {
@@ -2075,13 +2144,8 @@ impl Lockfile {
                     return Some(*id);
                 }
 
-                if resolutions[*id as usize].tag == ResolutionTag::Npm {
-                    if let Some(npm_v) = npm_version {
-                        let res_ver = resolutions[*id as usize].npm().version;
-                        if npm_v.satisfies(res_ver, buf, buf) {
-                            return Some(*id);
-                        }
-                    }
+                if try_satisfies_dedupe(*id) {
+                    return Some(*id);
                 }
             }
             PackageIndexEntry::Ids(ids) => {
@@ -2094,13 +2158,8 @@ impl Lockfile {
                         return Some(id);
                     }
 
-                    if resolutions[id as usize].tag == ResolutionTag::Npm {
-                        if let Some(npm_v) = npm_version {
-                            let res_ver = resolutions[id as usize].npm().version;
-                            if npm_v.satisfies(res_ver, buf, buf) {
-                                return Some(id);
-                            }
-                        }
+                    if try_satisfies_dedupe(id) {
+                        return Some(id);
                     }
                 }
             }

@@ -170,7 +170,8 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime process completion: value-only state lives below, effect application
 stays above.
 
-This branch proves six production paths. WebView process exits use the
+This branch proves six production paths plus one Mini-shell hard-case slice.
+WebView process exits use the
 runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
@@ -185,12 +186,20 @@ re-enters the current `MiniEventLoop` context. Parallel test workers use the
 same runtime sidecar action pattern with the JS event loop: the target stores
 only the worker slot index, and `run_as_coordinator` exposes its stack-owned
 `Coordinator` as the current JS-loop driver context while `coord.drive()` runs.
+Mini shell subprocesses use the same idea with shell arena identity:
+`bun_spawn` stores `RuntimeProcessExitTarget::ShellCommand { command: NodeId }`,
+the standalone-shell driver exposes the live `Interpreter` as the Mini tick
+context, and runtime dispatch calls back into the command arena by `NodeId`
+without storing `ShellSubprocess*` in the process.
 
 Lifecycle scripts and cron register/remove already use typed readiness reducers
 for process/output ordering, but their `ProcessExit` owner re-entry remains a
 separate type-movement problem: when process exit is the last event, the current
 callback synchronously resumes the owning lifecycle/cron state and may free or
-restart that owner. A reducer pointer alone cannot preserve that behavior.
+restart that owner. A reducer pointer alone cannot preserve that behavior. The
+JS shell path has the same owner-movement requirement: a JS event loop can have
+multiple live shell interpreters, so a single loop `current_context` is not an
+identity for the interpreter.
 
 ```
 Process-exit production shape
@@ -208,7 +217,8 @@ Process-exit production shape
   ├─> bun_runtime_types
   │     ├─> RuntimeProcessExitTarget
   │     │     ├─> ChromeProcess / HostProcess
-  │     │     └─> FilterRunHandle / MultiRunHandle / TestParallelWorker slot indices
+  │     │     ├─> FilterRunHandle / MultiRunHandle / TestParallelWorker slot indices
+  │     │     └─> ShellCommand { command: NodeId } for Mini shell subprocesses
   │     ├─> RuntimeProcessExitAction
   │     │     └─> carries process identity + status + target data
   │     └─> shell::NodeId
@@ -303,6 +313,12 @@ Process-exit production wiring
   │     ├─> MiniEventLoop already exposed the tick context while draining tasks and file polls
   │     ├─> the JS AnyEventLoop arm now sets/restores EventLoop.current_context around tick work too
   │     └─> runtime dispatch can rely on the same typed current-context boundary for JS and Mini drivers
+  ├─> runtime/shell/interpreter.rs and subproc.rs
+  │     ├─> standalone shell passes the live Interpreter as MiniEventLoop tick context
+  │     ├─> Mini shell subprocesses install RuntimeProcessExitTarget::ShellCommand { command: NodeId }
+  │     ├─> bun_spawn emits RuntimeProcessExitAction::ShellCommand with NodeId + ProcessIdentity + Status
+  │     ├─> direct wait/immediate-exit paths dispatch the same typed delivery with the known interpreter context
+  │     └─> JS shell keeps the legacy handler until interpreter identity moves out of the JS owner object graph
   └─> spawn/process.rs sync Windows path
         ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
         └─> never enters the cross-crate ProcessExit table

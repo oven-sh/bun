@@ -22,6 +22,7 @@ use crate::shell::{self as sh, EnvMap, Yield};
 use crate::api::bun::process::{
     self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
 };
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
 #[cfg(windows)]
@@ -285,6 +286,45 @@ bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&*process, status, &*rusage),
+    }
+}
+
+/// Mini-shell process-exit delivery. The `Process` stores only the sidecar
+/// `NodeId`; the live interpreter comes from the MiniEventLoop tick context.
+///
+/// # Safety
+/// `context` must be the live `Interpreter*` exposed by the Mini shell driver,
+/// and `command` must still name a `Cmd` node in that interpreter.
+pub unsafe fn on_process_exit_from_event_loop_context(
+    context: *mut c_void,
+    command: NodeId,
+    status: Status,
+) {
+    if context.is_null() {
+        Output::debug_warn(format_args!(
+            "<d>[ShellSubprocess]<r> typed process exit missing shell interpreter context"
+        ));
+        return;
+    }
+
+    let exit_code = shell_exit_code(&status);
+    let Some(code) = exit_code else {
+        return;
+    };
+
+    // SAFETY: upheld by the caller; the Mini tick driver owns this context.
+    let interp = unsafe { &mut *context.cast::<Interpreter>() };
+    let cmd = interp.as_cmd_mut(command);
+    if cmd.exit_code.is_none() {
+        cmd.on_exit(code.into());
+    }
+}
+
+fn shell_exit_code(status: &Status) -> Option<u8> {
+    match status {
+        Status::Exited(exited) => Some(exited.code),
+        Status::Signaled(_) => status.signal_code().and_then(|code| code.to_exit_code()),
+        Status::Err(_) | Status::Running => None,
     }
 }
 
@@ -776,9 +816,24 @@ impl ShellSubprocess {
         let subproc = unsafe { &mut *subprocess };
         // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
         // owning `Cmd` outlives the `Process` exit callback.
-        subproc.proc().set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
-        });
+        match event_loop {
+            EventLoopHandle::Mini(_) => {
+                subproc.proc().set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
+                    RuntimeProcessExitTarget::ShellCommand {
+                        command: cmd_parent.id,
+                    },
+                ));
+            }
+            EventLoopHandle::Js { .. } => {
+                // The JS event loop may have multiple live shell interpreters.
+                // Keep the legacy owner callback there until the JS shell owner
+                // state moves far enough into a sidecar type to identify the
+                // interpreter without storing `ShellSubprocess*`.
+                subproc.proc().set_exit_handler(unsafe {
+                    bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
+                });
+            }
+        }
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
         // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
@@ -850,28 +905,17 @@ impl ShellSubprocess {
     }
 
     pub fn wait(&mut self, sync: bool) {
-        let _ = self.proc().wait(sync);
+        if let Some(delivery) = self.proc().wait(sync) {
+            crate::dispatch::__bun_dispatch_process_exit_delivery(
+                delivery,
+                self.cmd_parent.interp.cast(),
+            );
+        }
     }
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
-        let exit_code: Option<u8> = 'brk: {
-            if let Status::Exited(exited) = &status {
-                break 'brk Some(exited.code);
-            }
-
-            if matches!(status, Status::Err(_)) {
-                // TODO: handle error
-            }
-
-            if matches!(status, Status::Signaled(_)) {
-                if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
-                }
-            }
-
-            break 'brk None;
-        };
+        let exit_code = shell_exit_code(&status);
 
         if let Some(code) = exit_code {
             let handle = self.cmd_parent;

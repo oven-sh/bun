@@ -1,3 +1,4 @@
+use crate::shell::NodeId;
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,6 +13,9 @@ pub enum RuntimeProcessExitTarget {
     },
     TestParallelWorker {
         index: usize,
+    },
+    ShellCommand {
+        command: NodeId,
     },
 }
 
@@ -37,6 +41,11 @@ pub enum RuntimeProcessExitAction {
     },
     TestParallelWorker {
         index: usize,
+        process: ProcessIdentity,
+        status: Status,
+    },
+    ShellCommand {
+        command: NodeId,
         process: ProcessIdentity,
         status: Status,
     },
@@ -66,6 +75,11 @@ impl RuntimeProcessExitTarget {
             },
             Self::TestParallelWorker { index } => RuntimeProcessExitAction::TestParallelWorker {
                 index,
+                process: ctx.process_identity(),
+                status: ctx.status.clone(),
+            },
+            Self::ShellCommand { command } => RuntimeProcessExitAction::ShellCommand {
+                command,
                 process: ctx.process_identity(),
                 status: ctx.status.clone(),
             },
@@ -125,6 +139,23 @@ mod tests {
                 status,
             } => {
                 assert_eq!(index, 5);
+                assert_eq!(actual_process, process);
+                assert_eq!(status.exit_code(), Some(0));
+            }
+            _ => panic!("wrong action"),
+        }
+
+        match (RuntimeProcessExitTarget::ShellCommand {
+            command: crate::shell::NodeId(6),
+        })
+        .on_process_exit(&ctx)
+        {
+            RuntimeProcessExitAction::ShellCommand {
+                command,
+                process: actual_process,
+                status,
+            } => {
+                assert_eq!(command, crate::shell::NodeId(6));
                 assert_eq!(actual_process, process);
                 assert_eq!(status.exit_code(), Some(0));
             }

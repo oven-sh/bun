@@ -752,8 +752,8 @@ impl Interpreter {
         // Zig: `mini.tick(&is_done, IsDone.isDone)` where `isDone` reads
         // `interp.flags.done`. The closure captures a raw pointer so borrowck
         // doesn't see an overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
+        let interp_ptr: *mut Interpreter = &raw mut *interp;
+        mini.tick(interp_ptr.cast(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick
             // loop; `flags` is plain data (no interior mutation contention on
             // the mini path — all mutation happens inside tasks `tick` drains

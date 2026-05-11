@@ -968,9 +968,9 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
   },
   {
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
+    flag: c => [c.profile ? "-Wl,-icf=none" : "-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Safe identical-code-folding + linker map (release only)",
+    desc: "Identical-code-folding (none on profile builds so perf symbolication is exact; safe on regular release)",
   },
 
   // ─── Symbols / exports ───

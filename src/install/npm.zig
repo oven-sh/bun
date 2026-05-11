@@ -384,9 +384,15 @@ pub const Registry = struct {
     /// at a different path than the scoped registry) matches one of these
     /// nerf darts more specifically, these credentials win.
     pub const AuthConfiguration = struct {
-        /// `host[:port]` without any trailing slash, lower-cased by the url parser.
+        /// `host[:port]` without any trailing slash, as written in `.npmrc`.
+        /// Compared case-insensitively against the request URL's host in
+        /// `matches()` — hostnames are case-insensitive per DNS, and
+        /// `bun.URL.parse` preserves the source casing, so a `.npmrc` with
+        /// `//Git.Example.com/` still matches a request to `git.example.com`.
         host: string = "",
         /// Path prefix without trailing slash. Empty means "covers the whole host".
+        /// Paths are compared case-sensitively (HTTP paths are case-sensitive
+        /// per RFC 3986).
         path: string = "",
         /// Bearer token (`_authToken`), empty if unset.
         token: string = "",
@@ -408,7 +414,8 @@ pub const Registry = struct {
         /// path is a path-segment prefix of the request path. The empty path
         /// covers the entire host.
         pub fn matches(self: *const AuthConfiguration, req_host: string, req_path: string) bool {
-            if (!strings.eql(self.host, req_host)) return false;
+            if (self.host.len != req_host.len) return false;
+            if (self.host.len > 0 and !strings.eqlCaseInsensitiveASCIIICheckLength(self.host, req_host)) return false;
             if (self.path.len == 0) return true;
             if (self.path.len > req_path.len) return false;
             if (strings.eql(self.path, req_path)) return true;

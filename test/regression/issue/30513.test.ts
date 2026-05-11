@@ -210,6 +210,95 @@ test("parent-path nerf-dart covers deeper scoped-registry URL (related: #28233)"
   });
 });
 
+test("project .npmrc overrides home .npmrc for the same nerf-dart", async () => {
+  // npm's layered-config precedence: project .npmrc must win over
+  // ~/.npmrc at the same nerf-dart. When both files are loaded, the
+  // pre-fix code appended each rebuild onto the previous slice, so the
+  // home entry stayed at index 0 and was picked by the first-match
+  // tie-break — sending the wrong token. The fix replaces the slice
+  // on each load, so the project's override correctly wins.
+  tarballHits.length = 0;
+  using cacheDir = tempDir("issue-30513-layered-cache", {});
+  using homeDir = tempDir("issue-30513-home", {
+    // Home .npmrc: a *wrong* token keyed to the same nerf-dart the
+    // project uses. If bun picks this one the tarball will 404.
+    ".npmrc": [
+      `//${server.hostname}:${server.port}${TARBALL_PATH}/:_authToken=home-wrong-token`,
+    ].join("\n"),
+  });
+  const origin = `http://${server.hostname}:${server.port}`;
+  using dir = tempDir("issue-30513-layered", {
+    "package.json": JSON.stringify({
+      name: "issue-30513-layered-consumer",
+      version: "0.0.0",
+      dependencies: { [PKG_NAME]: PKG_VERSION },
+    }),
+    ".npmrc": [
+      `@altpay:registry=${origin}${METADATA_PATH}/`,
+      `//${server.hostname}:${server.port}${TARBALL_PATH}/:_authToken=${TOKEN}`,
+      `always-auth=true`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: String(cacheDir),
+      XDG_CONFIG_HOME: String(homeDir),
+      HOME: String(homeDir),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+    exitCode: 0,
+    hasError: false,
+    tarballAuthHeaders: [`Bearer ${TOKEN}`],
+  });
+});
+
+test("auth token matches case-insensitively on hostname", async () => {
+  // Hostnames are case-insensitive per DNS. A `.npmrc` that writes the
+  // host with mixed case should still authenticate requests whose URL
+  // host uses a different case. Pre-fix, the raw `strings.eql`
+  // comparison on `bun.URL.parse(...).host` — which preserves source
+  // casing — made this fail. We use `Localhost` in the nerf-dart and
+  // request through `localhost` (which the server is also bound to).
+  tarballHits.length = 0;
+  using cacheDir = tempDir("issue-30513-case-cache", {});
+  using dir = tempDir("issue-30513-case", {
+    "package.json": JSON.stringify({
+      name: "issue-30513-case-consumer",
+      version: "0.0.0",
+      dependencies: { [PKG_NAME]: PKG_VERSION },
+    }),
+    ".npmrc": [
+      `@altpay:registry=http://localhost:${server.port}${METADATA_PATH}/`,
+      `//Localhost:${server.port}${TARBALL_PATH}/:_authToken=${TOKEN}`,
+      `always-auth=true`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({ exitCode, hasError: stderr.includes("error:"), tarballAuthHeaders: tarballHits.map(h => h.authorization) }).toEqual({
+    exitCode: 0,
+    hasError: false,
+    tarballAuthHeaders: [`Bearer ${TOKEN}`],
+  });
+});
+
 test("longest nerf-dart wins when multiple entries could match the request URL", async () => {
   // Sanity: a broader root-path token must lose to a deeper project-
   // level token on the same host, so the "most specific wins" rule from

@@ -6,12 +6,12 @@ use super::{Expect, get_signature};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_negative(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = call_frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeNegative", "")?;
@@ -24,7 +24,7 @@ pub fn to_be_negative(
         pass = num.round() < 0.0 && !num.is_infinite() && !num.is_nan();
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

@@ -7,14 +7,14 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match_snapshot(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is expressed by
     // wrapping `this` in a scopeguard so `post_match` runs on every exit path while we still
     // deref through the guard for the body.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
@@ -22,7 +22,7 @@ pub fn to_match_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
         let signature = get_signature("toMatchSnapshot", "", true);
@@ -102,7 +102,7 @@ pub fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    Expect::snapshot(&mut **this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }
 
 // ported from: src/test_runner/expect/toMatchSnapshot.zig

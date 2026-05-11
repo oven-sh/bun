@@ -6,7 +6,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_all_values(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -30,7 +30,7 @@ pub fn to_contain_all_values(
     let value: JSValue =
         this.get_value(global, this_value, "toContainAllValues", "<green>expected<r>")?;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     if !value.is_undefined_or_null() {

@@ -5,7 +5,7 @@ use bun_jsc::console_object::Formatter;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_array(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn to_be_array(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: reshaped for borrowck — Zig's `defer this.postMatch(global)` is hoisted to a
     // tail call after an immediately-invoked closure so `this` isn't held by a scopeguard for
     // the whole body.
@@ -15,7 +15,7 @@ pub fn to_be_array(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let pass = value.js_type().is_array() != not;
 
         if pass {

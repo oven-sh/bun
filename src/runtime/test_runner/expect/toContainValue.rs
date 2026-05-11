@@ -6,13 +6,13 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_contain_value(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalObject)` becomes a
         // scopeguard owning `&mut self` so post_match runs on every exit path.
-        let mut this = scopeguard::guard(self, |t| t.post_match(global));
+        let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();
@@ -29,7 +29,7 @@ impl Expect {
         let value: JSValue =
             this.get_value(global, this_value, "toContainValue", "<green>expected<r>")?;
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         if !value.is_undefined_or_null() {

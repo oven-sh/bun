@@ -7,13 +7,13 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_start_with(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);` — side-effect must run on every exit path.
     // PORT NOTE: reshaped for borrowck (scopeguard owns the &mut Expect; access via DerefMut).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -45,7 +45,7 @@ pub fn to_start_with(
         // `defer *.deinit()` dropped — Utf8Slice/ZigString::Slice impl Drop.
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

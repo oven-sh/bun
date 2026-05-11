@@ -110,7 +110,7 @@ impl<'a> Snapshots<'a> {
 
     pub fn add_count(
         &mut self,
-        expect: &mut Expect,
+        expect: &Expect,
         hint: &[u8],
     ) -> Result<(Vec<u8>, usize), Error> {
         // TODO(port): narrow error set
@@ -131,7 +131,7 @@ impl<'a> Snapshots<'a> {
 
     pub fn get_or_put(
         &mut self,
-        expect: &mut Expect,
+        expect: &Expect,
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {

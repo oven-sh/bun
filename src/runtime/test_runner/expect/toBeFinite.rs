@@ -7,13 +7,13 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_finite(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` becomes a
         // scopeguard wrapping `this`; method calls go through DerefMut.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let value: JSValue = this.get_value(global, this_value, "toBeFinite", "")?;
@@ -26,7 +26,7 @@ impl Expect {
             pass = num.is_finite() && !num.is_nan();
         }
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         if not {
             pass = !pass;
         }

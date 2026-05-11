@@ -7,12 +7,12 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_within(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // defer this.postMatch(globalThis);
-        let mut this = scopeguard::guard(this, |t| t.post_match(global));
+        let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<2>();
@@ -57,7 +57,7 @@ impl Expect {
             pass = num >= start_value.as_number() && num < end_value.as_number();
         }
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         if not {
             pass = !pass;
         }

@@ -7,14 +7,14 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_greater_than(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is modeled by
         // wrapping `this` in a scopeguard so `post_match` runs on every exit path while the body
         // still has `&mut Expect` access via DerefMut.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
@@ -40,7 +40,7 @@ impl Expect {
             )));
         }
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         if !value.is_big_int() && !other_value.is_big_int() {

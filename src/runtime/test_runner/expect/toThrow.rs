@@ -12,14 +12,14 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
     // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
     // runs on every exit path (Ok and Err alike).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments = frame.arguments_as_array::<1>();
@@ -57,7 +57,7 @@ pub fn to_throw(
     };
     expected_value.ensure_still_alive();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
 
     let (result_, return_value_from_function) = this.get_value_as_to_throw(
         global,

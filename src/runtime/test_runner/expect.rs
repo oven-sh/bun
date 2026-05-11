@@ -1,4 +1,5 @@
 use crate::test_runner::jest::FileColumns as _;
+use core::cell::Cell;
 use core::fmt;
 
 use bun_core::Output;
@@ -47,9 +48,15 @@ pub trait FlagsGetCached {
 
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
+// field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
+// chaining getters) is `Cell`-wrapped so the codegen shim can hand out a shared
+// `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
+// read-only after `call()` constructs the wrapper; `finalize()` owns `Box<Self>`
+// so it may still tear them down by value.
 #[bun_jsc::JsClass]
 pub struct Expect {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
     pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_str::String,
 }
@@ -203,7 +210,15 @@ impl Flags {
 }
 
 impl Expect {
-    pub fn increment_expect_call_counter(&mut self) {
+    /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
+    #[inline]
+    pub fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+        let mut v = self.flags.get();
+        f(&mut v);
+        self.flags.set(v);
+    }
+
+    pub fn increment_expect_call_counter(&self) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(mut buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
@@ -326,22 +341,22 @@ impl Expect {
     }
 
     // PORT NOTE: `host_fn(getter)` shim passes `(&Self, &JSGlobalObject)` only,
-    // but these getters need `&mut Self` (mutate flags) AND `this_value`
-    // (returned to JS for chaining). Until the macro grows a `getter_this_mut`
-    // variant the shim is omitted (codegen owns the actual link name).
-    pub fn get_not(this: &mut Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        this.flags.set_not(!this.flags.not());
+    // but these getters also need `this_value` (returned to JS for chaining).
+    // The shim is omitted (codegen owns the actual link name). R-2: mutation
+    // of `flags` goes through `Cell` so the receiver is `&Self`.
+    pub fn get_not(this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        this.update_flags(|f| f.set_not(!f.not()));
         this_value
     }
 
     // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_resolves(
-        this: &mut Self,
+        this: &Self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        match this.flags.promise() {
-            Promise::Resolves | Promise::None => this.flags.set_promise(Promise::Resolves),
+        match this.flags.get().promise() {
+            Promise::Resolves | Promise::None => this.update_flags(|f| f.set_promise(Promise::Resolves)),
             Promise::Rejects => {
                 return Err(global_this.throw(format_args!("Cannot chain .resolves() after .rejects()")));
             }
@@ -351,12 +366,12 @@ impl Expect {
 
     // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_rejects(
-        this: &mut Self,
+        this: &Self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        match this.flags.promise() {
-            Promise::None | Promise::Rejects => this.flags.set_promise(Promise::Rejects),
+        match this.flags.get().promise() {
+            Promise::None | Promise::Rejects => this.update_flags(|f| f.set_promise(Promise::Rejects)),
             Promise::Resolves => {
                 return Err(global_this.throw(format_args!("Cannot chain .rejects() after .resolves()")));
             }
@@ -385,7 +400,7 @@ impl Expect {
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),
-            self.flags,
+            self.flags.get(),
             global_this,
             value,
             bstr::BStr::new(matcher_name),
@@ -513,21 +528,22 @@ impl Expect {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
                 break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectAny::from_js(instance_value) {
+                let f = (*instance).flags.get();
                 // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
-                *any_constructor_type = (*instance).flags.asymmetric_matcher_constructor_type() as u8;
-                break 'flags (*instance).flags;
+                *any_constructor_type = f.asymmetric_matcher_constructor_type() as u8;
+                break 'flags f;
             } else if let Some(instance) = ExpectAnything::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else if let Some(instance) = ExpectStringMatching::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else if let Some(instance) = ExpectCloseTo::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else if let Some(instance) = ExpectObjectContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else if let Some(instance) = ExpectStringContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else if let Some(instance) = ExpectArrayContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
+                break 'flags (*instance).flags.get();
             } else {
                 break 'flags Flags::default();
             }
@@ -648,7 +664,7 @@ impl Expect {
         // TODO(port): errdefer — verify no leak path between here and to_js()
 
         let expect = Expect {
-            flags: Flags::default(),
+            flags: Cell::new(Flags::default()),
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -718,13 +734,13 @@ impl Expect {
     // pass here has a leading underscore to avoid name collision with the pass variable in other functions
     #[bun_jsc::host_fn(method)]
     pub fn _pass(
-        this: &mut Self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&mut Self` and calls
-        // post_match on drop; the body re-borrows through DerefMut so no raw-pointer alias is needed.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
+        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&Self` and calls
+        // post_match on drop so it runs on every exit path.
+        let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -746,7 +762,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = true;
 
         if not { pass = !pass; }
@@ -765,13 +781,13 @@ impl Expect {
 
     #[bun_jsc::host_fn(method)]
     pub fn fail(
-        this: &mut Self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&mut Self`
-        // borrow and re-lends it via DerefMut; `post_match` runs on every exit.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
+        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&Self` borrow
+        // so `post_match` runs on every exit.
+        let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -793,7 +809,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         if not { pass = !pass; }
@@ -824,7 +840,7 @@ impl Expect {
         let mut return_value_from_function: JSValue = JSValue::ZERO;
 
         if !value.js_type().is_function() {
-            if self.flags.promise() != Promise::None {
+            if self.flags.get().promise() != Promise::None {
                 return Ok((Some(value), return_value_from_function));
             }
             return Err(global_this.throw(format_args!("Expected value must be a function")));
@@ -999,7 +1015,7 @@ impl Expect {
     }
 
     pub fn inline_snapshot(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         value: JSValue,
@@ -1162,7 +1178,7 @@ impl Expect {
     }
 
     pub fn snapshot(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
@@ -1568,7 +1584,10 @@ impl Expect {
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
         };
         // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.
-        let expect = unsafe { &mut *expect_ptr };
+        // R-2: deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
+        // thenable's user-defined `then`), which can call another matcher on this same
+        // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
+        let expect = unsafe { &*expect_ptr };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1590,7 +1609,7 @@ impl Expect {
         };
         value = Self::process_promise(
             expect.custom_label.clone(),
-            expect.flags,
+            expect.flags.get(),
             global_this,
             value,
             &matcher_name,
@@ -1612,7 +1631,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags, false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -1696,7 +1715,7 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn not_implemented_jsc_fn(_this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn not_implemented_jsc_fn(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
@@ -1724,10 +1743,10 @@ impl Expect {
         unsafe { (*vm).auto_garbage_collect() };
     }
 
-    /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard owns the
-    /// `&mut Expect` borrow, re-lends it via `Deref`/`DerefMut`, and calls `post_match`
-    /// on drop so every exit path (success, `?`, explicit `return Err`) triggers the GC sweep.
-    pub fn post_match_guard<'a>(&'a mut self, global: &'a JSGlobalObject) -> PostMatchGuard<'a> {
+    /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard holds the
+    /// `&Expect` borrow, re-lends it via `Deref`, and calls `post_match` on drop so every
+    /// exit path (success, `?`, explicit `return Err`) triggers the GC sweep.
+    pub fn post_match_guard<'a>(&'a self, global: &'a JSGlobalObject) -> PostMatchGuard<'a> {
         PostMatchGuard { expect: self, global }
     }
 
@@ -1751,11 +1770,13 @@ impl Expect {
     }
 }
 
-/// RAII guard returned by [`Expect::post_match_guard`]. Owns the `&mut Expect` for the
+/// RAII guard returned by [`Expect::post_match_guard`]. Holds an `&Expect` for the
 /// duration of a matcher body and runs `post_match` on drop — the Rust shape of Zig's
 /// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
+/// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
+/// matcher body take `&self`.
 pub struct PostMatchGuard<'a> {
-    expect: &'a mut Expect,
+    expect: &'a Expect,
     global: &'a JSGlobalObject,
 }
 
@@ -1763,13 +1784,6 @@ impl core::ops::Deref for PostMatchGuard<'_> {
     type Target = Expect;
     #[inline]
     fn deref(&self) -> &Expect {
-        self.expect
-    }
-}
-
-impl core::ops::DerefMut for PostMatchGuard<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Expect {
         self.expect
     }
 }
@@ -1904,44 +1918,44 @@ impl ExpectStatic {
                 return Err(global_this.throw_out_of_memory());
             };
             // SAFETY: from_js_ptr returns the live m_ctx payload owned by instance_jsvalue.
-            unsafe { *(*instance).flags_mut() = this.flags };
+            unsafe { (*instance).flags_cell().set(this.flags) };
         }
         Ok(instance_jsvalue)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn anything(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectAnything>(this, global_this, call_frame)
+    pub fn anything(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectAnything>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn any(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectAny>(this, global_this, call_frame)
+    pub fn any(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectAny>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn array_containing(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectArrayContaining>(this, global_this, call_frame)
+    pub fn array_containing(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectArrayContaining>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close_to(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectCloseTo>(this, global_this, call_frame)
+    pub fn close_to(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectCloseTo>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn object_containing(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectObjectContaining>(this, global_this, call_frame)
+    pub fn object_containing(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectObjectContaining>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn string_containing(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectStringContaining>(this, global_this, call_frame)
+    pub fn string_containing(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectStringContaining>(self, global_this, call_frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn string_matching(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        Self::create_asymmetric_matcher_with_flags::<ExpectStringMatching>(this, global_this, call_frame)
+    pub fn string_matching(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create_asymmetric_matcher_with_flags::<ExpectStringMatching>(self, global_this, call_frame)
     }
 }
 
@@ -1952,7 +1966,10 @@ impl ExpectStatic {
 pub trait AsymmetricMatcherClass {
     fn invoke(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
     fn from_js_ptr(value: JSValue) -> Option<*mut Self>;
-    fn flags_mut(&mut self) -> &mut Flags;
+    /// R-2: each asymmetric-matcher payload exposes its `Cell<Flags>` so
+    /// `ExpectStatic::create_asymmetric_matcher_with_flags` can patch it
+    /// post-construction without forming `&mut Self`.
+    fn flags_cell(&self) -> &Cell<Flags>;
 }
 
 macro_rules! impl_asymmetric_matcher_class {
@@ -1968,8 +1985,8 @@ macro_rules! impl_asymmetric_matcher_class {
                     <$t as bun_jsc::JsClass>::from_js(value)
                 }
                 #[inline]
-                fn flags_mut(&mut self) -> &mut Flags {
-                    &mut self.flags
+                fn flags_cell(&self) -> &Cell<Flags> {
+                    &self.flags
                 }
             }
         )*
@@ -2000,7 +2017,7 @@ macro_rules! __forward_matcher {
             $(
                 #[inline]
                 pub fn $method(
-                    &mut self,
+                    &self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
@@ -2090,7 +2107,7 @@ pub mod expect_custom_asymmetric_matcher_js {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectAnything {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectAnything {
@@ -2100,7 +2117,7 @@ impl ExpectAnything {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let anything_js_value = ExpectAnything { flags: Flags::default() }.to_js(global_this);
+        let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
         let vm = global_this.bun_vm();
@@ -2113,7 +2130,7 @@ impl ExpectAnything {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectStringMatching {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectStringMatching {
@@ -2132,7 +2149,7 @@ impl ExpectStringMatching {
 
         let test_value = args[0];
 
-        let string_matching_js_value = ExpectStringMatching { flags: Flags::default() }.to_js(global_this);
+        let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
 
         let vm = global_this.bun_vm();
@@ -2144,7 +2161,7 @@ impl ExpectStringMatching {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectCloseTo {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectCloseTo {
@@ -2174,7 +2191,7 @@ impl ExpectCloseTo {
             )));
         }
 
-        let instance_jsvalue = ExpectCloseTo { flags: Flags::default() }.to_js(global_this);
+        let instance_jsvalue = ExpectCloseTo { flags: Cell::new(Flags::default()) }.to_js(global_this);
         number_value.ensure_still_alive();
         precision_value.ensure_still_alive();
         expect_close_to_js::number_value_set_cached(instance_jsvalue, global_this, number_value);
@@ -2189,7 +2206,7 @@ impl ExpectCloseTo {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectObjectContaining {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectObjectContaining {
@@ -2209,7 +2226,7 @@ impl ExpectObjectContaining {
 
         let object_value = args[0];
 
-        let instance_jsvalue = ExpectObjectContaining { flags: Flags::default() }.to_js(global_this);
+        let instance_jsvalue = ExpectObjectContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_object_containing_js::object_value_set_cached(instance_jsvalue, global_this, object_value);
 
         let vm = global_this.bun_vm();
@@ -2221,7 +2238,7 @@ impl ExpectObjectContaining {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectStringContaining {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectStringContaining {
@@ -2241,7 +2258,7 @@ impl ExpectStringContaining {
 
         let string_value = args[0];
 
-        let string_containing_js_value = ExpectStringContaining { flags: Flags::default() }.to_js(global_this);
+        let string_containing_js_value = ExpectStringContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_containing_js::string_value_set_cached(string_containing_js_value, global_this, string_value);
 
         let vm = global_this.bun_vm();
@@ -2253,7 +2270,7 @@ impl ExpectStringContaining {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectAny {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectAny {
@@ -2290,7 +2307,7 @@ impl ExpectAny {
         let mut flags = Flags::default();
         flags.set_asymmetric_matcher_constructor_type(asymmetric_matcher_constructor_type);
 
-        let any_js_value = ExpectAny { flags }.to_js(global_this);
+        let any_js_value = ExpectAny { flags: Cell::new(flags) }.to_js(global_this);
         any_js_value.ensure_still_alive();
         expect_any_js::constructor_value_set_cached(any_js_value, global_this, constructor);
         any_js_value.ensure_still_alive();
@@ -2305,7 +2322,7 @@ impl ExpectAny {
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectArrayContaining {
-    pub flags: Flags,
+    pub flags: Cell<Flags>,
 }
 
 impl ExpectArrayContaining {
@@ -2325,7 +2342,7 @@ impl ExpectArrayContaining {
 
         let array_value = args[0];
 
-        let array_containing_js_value = ExpectArrayContaining { flags: Flags::default() }.to_js(global_this);
+        let array_containing_js_value = ExpectArrayContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_array_containing_js::array_value_set_cached(array_containing_js_value, global_this, array_value);
 
         let vm = global_this.bun_vm();
@@ -2587,7 +2604,7 @@ impl ExpectMatcherContext {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn equals(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         if arguments.len < 2 {
             return Err(global_this.throw2(
@@ -2659,7 +2676,7 @@ impl ExpectMatcherUtils {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn stringify(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
@@ -2667,7 +2684,7 @@ impl ExpectMatcherUtils {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn print_expected(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
@@ -2675,7 +2692,7 @@ impl ExpectMatcherUtils {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn print_received(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
@@ -2683,7 +2700,7 @@ impl ExpectMatcherUtils {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn matcher_hint(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn matcher_hint(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<4>();
         let arguments = arguments.slice();
 
@@ -2775,11 +2792,11 @@ impl ExpectTypeOf {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn fn_one_argument_returns_void(_this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_one_argument_returns_void(&self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_one_argument_returns_expect_type_of(_this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn fn_one_argument_returns_expect_type_of(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::create(global_this)
     }
     #[bun_jsc::host_fn(getter)]

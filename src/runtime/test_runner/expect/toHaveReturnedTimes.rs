@@ -7,7 +7,7 @@ use super::Expect;
 // `pub use`-re-exported, so this free function delegates to it to preserve the module-level symbol.
 #[inline]
 pub fn to_have_returned_times(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {

@@ -5,7 +5,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -15,8 +15,8 @@ pub fn to_have_been_called(
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
     // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
-    let this: &mut Expect = &mut *this;
+    let this = scopeguard::guard(this, |t| t.post_match(global));
+    let this: &Expect = *this;
 
     if !first_argument.is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -41,7 +41,7 @@ pub fn to_have_been_called(
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length > 0;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

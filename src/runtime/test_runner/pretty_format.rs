@@ -3070,7 +3070,7 @@ impl JestPrettyFormat {
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAnything".len());
@@ -3085,7 +3085,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAny<".len());
@@ -3119,7 +3119,7 @@ impl JestPrettyFormat {
             let number = number_value.to_int32();
             let digits = digits_value.to_int32();
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NumberNotCloseTo".len());
@@ -3141,7 +3141,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"ObjectNotContaining ".len());
@@ -3160,7 +3160,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotContaining ".len());
@@ -3178,7 +3178,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotMatching ".len());

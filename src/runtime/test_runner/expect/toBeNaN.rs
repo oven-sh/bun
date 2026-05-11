@@ -6,18 +6,18 @@ use super::Expect;
 use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn to_be_nan(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);` — guard owns the `&mut Expect` borrow and
     // DerefMut's back to it, so post_match runs on every exit path (including the `?` below)
     // without a raw-pointer alias.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeNaN", "")?;
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
     if value.is_number() {
         let number = value.as_number();

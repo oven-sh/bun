@@ -6,21 +6,21 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match_inline_snapshot(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
     // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
     // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toMatchInlineSnapshot", "", true);
         return this.throw(
@@ -90,7 +90,7 @@ pub fn to_match_inline_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
     Expect::inline_snapshot(
-        &mut **this,
+        &**this,
         global,
         frame,
         value,

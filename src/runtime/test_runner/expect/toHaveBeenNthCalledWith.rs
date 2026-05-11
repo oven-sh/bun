@@ -6,7 +6,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_nth_called_with(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -16,7 +16,7 @@ pub fn to_have_been_nth_called_with(
     let arguments = frame.arguments();
     // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` is expressed by
     // wrapping `this` in a scopeguard so post_match runs on every exit (including `?`).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
     let value: JSValue = this.get_value(
         global,
         this_value,
@@ -80,7 +80,7 @@ pub fn to_have_been_nth_called_with(
         }
     }
 
-    if pass != this.flags.not() {
+    if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -94,7 +94,7 @@ pub fn to_have_been_nth_called_with(
     }
     expected_args_js_array.ensure_still_alive();
 
-    if this.flags.not() {
+    if this.flags.get().not() {
         let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
         return this.throw(
             global,

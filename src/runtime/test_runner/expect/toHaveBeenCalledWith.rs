@@ -7,7 +7,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_with(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -69,7 +69,7 @@ pub fn to_have_been_called_with(
         }
     }
 
-    if pass != this.flags.not() {
+    if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -82,7 +82,7 @@ pub fn to_have_been_called_with(
     }
     expected_args_js_array.ensure_still_alive();
 
-    if this.flags.not() {
+    if this.flags.get().not() {
         let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
         return this.throw(
             global,

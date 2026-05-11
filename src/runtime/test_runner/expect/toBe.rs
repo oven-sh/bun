@@ -9,14 +9,14 @@ impl Expect {
     /// Object.is()
     #[bun_jsc::host_fn(method)]
     pub fn to_be(
-        this: &mut Self,
+        &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` becomes a
         // scopeguard that owns the &mut Expect and runs post_match on drop, so the body can
         // still use `this` mutably via DerefMut.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
+        let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
         let this_value = callframe.this();
         let arguments_ = callframe.arguments_old::<2>();
@@ -31,7 +31,7 @@ impl Expect {
         right.ensure_still_alive();
         let left = this.get_value(global_this, this_value, "toBe", "<green>expected<r>")?;
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {

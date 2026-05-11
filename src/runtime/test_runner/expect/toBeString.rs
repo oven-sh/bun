@@ -7,21 +7,21 @@ use super::get_signature;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_string(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // Zig: `defer this.postMatch(globalThis);`
         // PORT NOTE: reshaped for borrowck — scopeguard derefs to &mut Self so method
         // calls below go through the guard.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let value: JSValue = this.get_value(global, this_value, "toBeString", "")?;
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let pass = value.is_string() != not;
 
         if pass {

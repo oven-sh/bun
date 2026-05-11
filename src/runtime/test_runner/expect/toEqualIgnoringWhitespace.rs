@@ -12,14 +12,14 @@ fn is_zig_whitespace(b: u8) -> bool {
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_equal_ignoring_whitespace(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — scopeguard owns the &mut Self for the scope.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
-    let this = &mut **this;
+    let this = scopeguard::guard(this, |this| this.post_match(global));
+    let this: &Expect = *this;
 
     let this_value = frame.this();
     // TODO(port): arguments_old(1) returned a struct with ptr/len; assume &[JSValue] here.
@@ -43,7 +43,7 @@ pub fn to_equal_ignoring_whitespace(
         )));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {

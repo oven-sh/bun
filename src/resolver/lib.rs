@@ -300,11 +300,10 @@ pub mod fs {
             // doc-comment on that `init` names this as the intended seeding
             // point. Zig had a single `Fs.FileSystem.instance` global so the
             // split is a porting artifact; this keeps both halves in lockstep.
-            // SAFETY: `cwd` is `'static` (interned in `DirnameStore`); the call
-            // is a no-op on subsequent inits (`OnceLock::set` returns `Err`).
-            bun_paths::fs::FileSystem::init(unsafe {
-                core::str::from_utf8_unchecked(cwd)
-            });
+            // The call is a no-op on subsequent inits (`OnceLock::set` returns
+            // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
+            // guaranteed UTF-8, and the lower tier stores/serves bytes.
+            bun_paths::fs::FileSystem::init(cwd);
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {

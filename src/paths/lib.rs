@@ -473,9 +473,11 @@ pub mod fs {
     /// Concurrency: Zig's `instance_loaded: bool` + `instance: FileSystem = undefined`
     /// init-once pair → `OnceLock<FileSystem>` per PORTING.md §Concurrency.
     pub struct FileSystem {
-        // Zig: `top_level_dir: stringZ` — owned, NUL-terminated. Owned `String` here;
-        // callers receive `&[u8]` (matches `[]const u8` callsites in resolve_path.rs).
-        top_level_dir: String,
+        // Zig: `top_level_dir: stringZ` — owned, NUL-terminated. Stored as raw
+        // bytes (not `String`): POSIX paths are arbitrary byte sequences, not
+        // guaranteed UTF-8, and every reader (`top_level_dir()`, resolve_path.rs)
+        // wants `&[u8]` to match Zig's `[]const u8`.
+        top_level_dir: Vec<u8>,
     }
 
     static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
@@ -501,9 +503,9 @@ pub mod fs {
 
         /// Zig: `FileSystem.init(top_level_dir)` (force=false path). Higher-tier
         /// `bun_resolver::fs` calls this during its own `initWithForce` after it
-        /// resolves the cwd.
-        pub fn init(top_level_dir: impl Into<String>) -> &'static FileSystem {
-            let _ = INSTANCE.set(FileSystem { top_level_dir: top_level_dir.into() });
+        /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
+        pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
+            let _ = INSTANCE.set(FileSystem { top_level_dir: top_level_dir.to_vec() });
             INSTANCE_LOADED.store(true, Ordering::Release);
             INSTANCE.get().unwrap()
         }
@@ -521,7 +523,7 @@ pub mod fs {
             // Fallback to the seeded value only if `bun_core` was never set
             // (unit tests that init this module directly).
             if d == b"." {
-                self.top_level_dir.as_bytes()
+                self.top_level_dir.as_slice()
             } else {
                 d
             }

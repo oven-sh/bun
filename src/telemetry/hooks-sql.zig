@@ -68,7 +68,7 @@ export fn sqliteTraceCallback(
     ctx_ptr: ?*anyopaque,
     p_arg: ?*anyopaque,
     x_arg: ?*anyopaque,
-) callconv(.C) c_int {
+) callconv(.c) c_int {
     const ctx = @as(*TraceContext, @ptrCast(@alignCast(ctx_ptr orelse return 0)));
 
     switch (event_type) {
@@ -101,7 +101,7 @@ extern fn Bun__sqlite3_sql_wrapper(stmt: *sqlite3_stmt) [*:0]const u8;
 extern fn Bun__sqlite3_trace_v2_wrapper(
     db: *sqlite3,
     mask: c_uint,
-    callback: *const fn (c_uint, ?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.C) c_int,
+    callback: *const fn (c_uint, ?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) c_int,
     ctx: ?*anyopaque,
 ) c_int;
 
@@ -326,7 +326,7 @@ pub fn Bun__telemetry__sql__register_trace(
     db: *sqlite3,
     db_path_ptr: [*]const u8,
     db_path_len: usize,
-) callconv(.C) u64 {
+) callconv(.c) u64 {
     const otel = telemetry.enabled() orelse return 0;
     if (!otel.isEnabledFor(.sql)) return 0;
 

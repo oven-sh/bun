@@ -718,7 +718,7 @@ pub fn deinitGlobalTelemetry() void {
 }
 
 /// C-compatible init function for use from C++ (returns 0 on success, 1 on error)
-pub fn initGlobalTelemetryC(globalObject: *JSGlobalObject) callconv(.C) c_int {
+pub fn initGlobalTelemetryC(globalObject: *JSGlobalObject) callconv(.c) c_int {
     // Use bun.default_allocator
     const allocator = bun.default_allocator;
     initGlobalTelemetry(allocator, globalObject) catch {
@@ -728,7 +728,7 @@ pub fn initGlobalTelemetryC(globalObject: *JSGlobalObject) callconv(.C) c_int {
 }
 
 /// C-compatible deinit function
-pub fn deinitGlobalTelemetryC() callconv(.C) void {
+pub fn deinitGlobalTelemetryC() callconv(.c) void {
     deinitGlobalTelemetry();
 }
 
@@ -741,7 +741,7 @@ pub fn deinitGlobalTelemetryC() callconv(.C) void {
 pub fn jsInstrumentRefDispose(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const this = callframe.this();
 
     const telemetry = getGlobalTelemetry() orelse return .js_undefined;
@@ -768,7 +768,7 @@ pub fn jsInstrumentRefDispose(
 pub fn jsAttach(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         globalObject.throw("telemetry.attach requires 1 argument (instrument object)", .{}) catch {};
@@ -831,7 +831,7 @@ extern fn JSC__JSGlobalObject__getDisposeSymbol(globalObject: *jsc.JSGlobalObjec
 pub fn jsDetach(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         return JSValue.jsBoolean(false);
@@ -878,7 +878,7 @@ pub fn jsDetach(
 pub fn jsIsEnabledFor(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         return JSValue.jsBoolean(false);
@@ -906,7 +906,7 @@ pub fn jsIsEnabledFor(
 pub fn jsListInstruments(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(1);
     const telemetry = getGlobalTelemetry() orelse {
         return JSValue.createEmptyArray(globalObject, 0) catch .js_undefined;
@@ -991,7 +991,7 @@ inline fn jsNotifyOperationGeneric(
 pub fn jsNotifyOperationStart(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     return jsNotifyOperationGeneric(callframe, .start);
 }
 
@@ -1000,7 +1000,7 @@ pub fn jsNotifyOperationStart(
 pub fn jsNotifyOperationEnd(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     return jsNotifyOperationGeneric(callframe, .end);
 }
 
@@ -1009,7 +1009,7 @@ pub fn jsNotifyOperationEnd(
 pub fn jsNotifyOperationError(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     return jsNotifyOperationGeneric(callframe, .@"error");
 }
 
@@ -1018,7 +1018,7 @@ pub fn jsNotifyOperationError(
 pub fn jsNotifyOperationProgress(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     return jsNotifyOperationGeneric(callframe, .progress);
 }
 
@@ -1028,7 +1028,7 @@ pub fn jsNotifyOperationProgress(
 pub fn jsNotifyOperationInject(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     return jsNotifyOperationGeneric(callframe, .inject);
 }
 
@@ -1038,7 +1038,7 @@ pub fn jsNotifyOperationInject(
 pub fn jsGetConfigurationProperty(
     _: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         return .js_undefined;
@@ -1065,7 +1065,7 @@ pub fn jsGetConfigurationProperty(
 pub fn jsSetConfigurationProperty(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     const arguments = callframe.arguments_old(2);
     if (arguments.len < 2) {
         globalObject.throw("setConfigurationProperty requires 2 arguments (propertyId, value)", .{}) catch {};
@@ -1106,7 +1106,7 @@ pub fn jsSetConfigurationProperty(
 pub fn jsGetActiveSpan(
     _: *JSGlobalObject,
     _: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     // TODO: Implement AsyncLocalStorage lookup for active span context
     // For now, return null (will be implemented in Phase 5: Logging)
     return JSValue.jsNull();
@@ -1123,7 +1123,7 @@ pub fn jsGetActiveSpan(
 pub fn jsNativeHooks(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
-) callconv(.C) JSValue {
+) callconv(.c) JSValue {
     // Return undefined if telemetry is not initialized or disabled
     _ = getGlobalTelemetry() orelse return .js_undefined;
 

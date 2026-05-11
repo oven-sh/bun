@@ -811,6 +811,24 @@ identity(mod23);
   expect(text).toContain(" globalThis.");
 });
 
+test("many custom conditions does not crash", async () => {
+  const dir = tempDirWithFiles("bun-build-many-conditions", {
+    "entry.js": `console.log(1);`,
+  });
+
+  for (const target of ["bun", "browser", "node"] as const) {
+    for (const n of [1, 4, 6, 8, 12, 20]) {
+      const conditions = Array.from({ length: n }, (_, i) => `cond${i}`);
+      const build = await Bun.build({
+        entrypoints: [join(dir, "entry.js")],
+        target,
+        conditions,
+      });
+      expect(build.success).toBe(true);
+    }
+  }
+});
+
 describe.concurrent("sourcemap boolean values", () => {
   test("sourcemap: true should work (boolean)", async () => {
     const dir = tempDirWithFiles("sourcemap-true-boolean", {

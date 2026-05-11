@@ -203,13 +203,14 @@ console.log(utils());`,
       });
       expect(await exited).toBe(0);
 
-      const { stdout } = Bun.spawn({
+      await using proc = Bun.spawn({
         cmd: [path.join(baseDir, "exe.exe")],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const text = await stdout.text();
+      const text = await proc.stdout.text();
+      await proc.exited;
 
       expect(text).toContain(path.join(baseDir, "我") + "\n");
       expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");

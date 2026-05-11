@@ -233,26 +233,6 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
     return normalizeSlashesOnlyT(u8, buf, utf8, desired_slash, false);
 }
 
-pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: ?*bun.PathBuffer = null;
-    defer if (renormalized) |r| bun.path_buffer_pool.put(r);
-
-    var path_to_use = utf8;
-
-    if (bun.strings.containsChar(utf8, '/')) {
-        renormalized = bun.path_buffer_pool.get();
-        @memcpy(renormalized.?[0..utf8.len], utf8);
-        for (renormalized.?[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
-            }
-        }
-        path_to_use = renormalized.?[0..utf8.len];
-    }
-
-    return toWDirPath(wbuf, path_to_use);
-}
-
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }

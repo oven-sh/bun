@@ -22,13 +22,13 @@ pub fn main() !void {
 
     const in = brk: {
         const in_path = args.next() orelse @panic("missing argument");
-        const in = try std.fs.openFileAbsolute(in_path, .{});
+        const in = try std.fs.cwd().openFile(in_path, .{});
         defer in.close();
-        break :brk try in.readToEndAllocOptions(gpa, std.math.maxInt(u32), null, 1, 0);
+        break :brk try in.readToEndAllocOptions(gpa, std.math.maxInt(u32), null, .fromByteUnits(1), 0);
     };
     defer gpa.free(in);
 
-    var out = try std.ArrayList(u8).initCapacity(gpa, in.len);
+    var out = try std.array_list.Managed(u8).initCapacity(gpa, in.len);
     defer out.deinit();
     const w = out.writer();
 

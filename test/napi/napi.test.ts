@@ -21,7 +21,9 @@ describe.concurrent("napi", () => {
       process.exit(1);
     }
     console.timeEnd("Building node-gyp");
-  });
+    // node-gyp rebuild can take a while under a debug/ASAN binary; default
+    // 5s hook timeout kills the install subprocess mid-build.
+  }, 120_000);
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
@@ -266,6 +268,56 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {
+      const result = await checkSameOutput("test_external_buffer_data_lifetime", []);
+      expect(result).toContain("PASS: external buffer data intact through ArrayBuffer after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("rejects with napi_pending_exception before adopting data when an exception is pending", async () => {
+      const result = await checkSameOutput("test_external_buffer_with_pending_exception", []);
+      expect(result).toContain("status=10");
+      expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_external_arraybuffer", () => {
+    it("wraps caller data and does not fire finalize_cb while the ArrayBuffer is alive", async () => {
+      const result = await checkSameOutput("test_external_arraybuffer_finalizer", []);
+      expect(result).toContain("PASS: napi_create_external_arraybuffer wraps caller data without copying");
+      expect(result).toContain(
+        "PASS: napi_create_external_arraybuffer finalizer not called while ArrayBuffer is alive",
+      );
+      expect(result).toContain("PASS: napi_create_external_arraybuffer data intact after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("rejects with napi_pending_exception before adopting external_data when an exception is pending", async () => {
+      const result = await checkSameOutput("test_external_arraybuffer_with_pending_exception", []);
+      expect(result).toContain("status=10");
+      expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);
@@ -402,6 +454,13 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_object", () => {
+    // https://github.com/oven-sh/bun/issues/25658
+    it("result is clonable with structuredClone", async () => {
+      await checkSameOutput("test_napi_create_object_structured_clone", []);
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {
@@ -527,8 +586,68 @@ describe.concurrent("napi", () => {
     await checkSameOutput("test_constructor_order", []);
   });
 
+  it("handles napi_module_register called re-entrantly from nm_register_func", async () => {
+    // The init callback of the first static-constructor-registered module
+    // calls napi_module_register() 64 more times. Before the fix, that
+    // appended to the same WTF::Vector the execute loop was range-for
+    // iterating, reallocating it and leaving a dangling iterator for the
+    // second static-constructor-registered module (heap-use-after-free
+    // under ASAN, garbage nm_register_func pointer otherwise).
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "reentrant_register_addon.node");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(addonPath)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split(/\r?\n/).filter(Boolean)).toEqual([
+      "register_cb_a",
+      "register_cb_b",
+      "register_cb_reentrant x 64",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
+  });
+
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("napi_get_named_property copies utf8 string data", async () => {
+    // Must spawn bun directly (not via checkSameOutput/main.js) because the
+    // bug only reproduces when global property names like "Response" haven't
+    // been pre-atomized. Loading through main.js → module.js pre-initializes
+    // globals, masking the use-after-free in the atom string table.
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "napitests.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const addon = require(${JSON.stringify(addonPath)}); addon.test_napi_get_named_property_copied_string(() => { Bun.gc(true); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toInclude("PASS");
+    expect(exitCode).toBe(0);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
   });
 
   it("NAPI finalizer iterator invalidation crash prevention", () => {
@@ -548,6 +667,31 @@ describe.concurrent("napi", () => {
     // Get initial count
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
+  });
+
+  it("napi_wrap finalizers run in LIFO order during env teardown", async () => {
+    // Mirrors sqlite3/duckdb crash: a child wrapped after its parent must be finalized
+    // first so its destructor can still touch the parent. Bun previously iterated an
+    // unordered_set here, so order was hash-dependent and the child could see a freed parent.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node"))});
+      globalThis.keep = addon.createParentAndChildren(32);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(
+      "finalize order: " +
+        Array.from({ length: 32 }, (_, i) => 32 - i)
+          .concat(0)
+          .join(" "),
+    );
+    expect(exitCode).toBe(0);
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
@@ -736,6 +880,42 @@ describe("cleanup hooks", () => {
       // This test explores edge cases with empty/invalid napi_values
       // Bun has special handling for isEmpty() that Node doesn't have
       expect(output).toContain("napi_typeof");
+    });
+
+    it("should return napi_function for AsyncContextFrame in threadsafe callback", async () => {
+      // Test for https://github.com/oven-sh/bun/issues/25933
+      // When a threadsafe function is created inside AsyncLocalStorage.run(),
+      // the callback gets wrapped in AsyncContextFrame. napi_typeof must
+      // report it as napi_function, not napi_object.
+      const output = await checkSameOutput("test_napi_typeof_async_context_frame", []);
+      expect(output).toContain("PASS: napi_typeof returned napi_function");
+    });
+
+    it("should handle AsyncContextFrame in napi_make_callback", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // as js_callback and passes it to napi_make_callback, it should succeed.
+      const output = await checkSameOutput("test_make_callback_with_async_context", []);
+      expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // and passes it to a second napi_create_threadsafe_function with
+      // call_js_cb=NULL, it should not reject with function_expected.
+      const output = await checkSameOutput("test_create_tsfn_with_async_context", []);
+      expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
+    });
+
+    it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/25351
+      // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))
+      // when it should return napi_object (matching JavaScript's typeof behavior)
+      const output = await checkSameOutput("test_napi_typeof_boxed_primitives", []);
+      expect(output).toContain("PASS: primitive string returns napi_string");
+      expect(output).toContain("PASS: String object returns napi_object");
+      expect(output).toContain("PASS: Number object returns napi_object");
+      expect(output).toContain("PASS: Boolean object returns napi_object");
+      expect(output).toContain("All boxed primitive tests passed!");
     });
   });
 

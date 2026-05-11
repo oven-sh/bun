@@ -46,6 +46,9 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
+    const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
+    var dc = DeclCollector{ .allocator = allocator };
+
     const result = c.generateCodeForFileInChunkJS(
         &buffer_writer,
         chunk.renamer,
@@ -57,18 +60,34 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
         &worker.stmt_list,
         worker.allocator,
         arena.allocator(),
+        if (collect_decls) &dc else null,
     );
+
+    // Update bytesInOutput for this source in the chunk (for metafile)
+    // Use atomic operation since multiple threads may update the same counter
+    const code_len = switch (result) {
+        .result => |r| r.code.len,
+        else => 0,
+    };
+    if (code_len > 0 and !part_range.source_index.isRuntime()) {
+        if (chunk.files_with_parts_in_chunk.getPtr(part_range.source_index.get())) |bytes_ptr| {
+            _ = @atomicRmw(usize, bytes_ptr, .Add, code_len, .monotonic);
+        }
+    }
 
     return .{
         .javascript = .{
             .source_index = part_range.source_index.get(),
             .result = result,
+            .decls = if (collect_decls) dc.decls.items else &.{},
         },
     };
 }
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const DeclCollector = @import("./generateCodeForFileInChunkJS.zig").DeclCollector;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

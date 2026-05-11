@@ -295,4 +295,34 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test("bun init --minimal only creates package.json and tsconfig.json", async () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/26050
+    // --minimal should not create .cursor/, CLAUDE.md, .gitignore, or README.md
+    const temp = tempDirWithFiles("bun-init-minimal", {});
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "--minimal", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: {
+        ...bunEnv,
+        // Simulate Cursor being installed via CURSOR_TRACE_ID env var
+        CURSOR_TRACE_ID: "test-trace-id",
+      },
+    });
+
+    expect(await exited).toBe(0);
+
+    // Should create package.json and tsconfig.json
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+
+    // Should NOT create these extra files with --minimal
+    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(false);
+    expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
+    expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
+    expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+  });
 });

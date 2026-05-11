@@ -1,7 +1,18 @@
-pub const jsc = @import("./bun.js/jsc.zig");
-pub const webcore = @import("./bun.js/webcore.zig");
-pub const api = @import("./bun.js/api.zig");
-pub const bindgen = @import("./bun.js/bindgen.zig");
+pub const jsc = @import("./jsc/jsc.zig");
+pub const webcore = @import("./runtime/webcore.zig");
+pub const api = @import("./runtime/api.zig");
+pub const bindgen = @import("./jsc/bindgen.zig");
+
+pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
+    b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
+    b.options.env.behavior = if (graph.flags.disable_default_env_files)
+        .disable
+    else
+        .load_all_without_inlining;
+
+    b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
+    b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
+}
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -13,20 +24,18 @@ pub const Run = struct {
 
     var run: Run = undefined;
 
-    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
+    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph_ptr: *bun.StandaloneModuleGraph) !void {
         jsc.markBinding(@src());
         bun.jsc.initialize(false);
         bun.analytics.Features.standalone_executable += 1;
-
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
-        graph_ptr.* = graph;
-        graph_ptr.set();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
-        if (!ctx.debug.loaded_bunfig) {
+        // Load bunfig.toml unless disabled by compile flags
+        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -37,6 +46,9 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
+                .smol = ctx.runtime_options.smol,
+                .debugger = ctx.runtime_options.debugger,
+                .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -81,7 +93,7 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .load_all_without_inlining;
+        applyStandaloneRuntimeFlags(b, graph_ptr);
 
         b.configureDefines() catch {
             failWithBuildError(vm);
@@ -93,6 +105,8 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -107,17 +121,17 @@ pub const Run = struct {
             const url = bun.URL.parse(url_str);
 
             if (!url.isHTTP() and !url.isHTTPS()) {
-                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (url.hostname.len == 0) {
-                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a hostname: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (!url.hasValidPort()) {
-                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a valid port: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
@@ -132,10 +146,10 @@ pub const Run = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("./jsc/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
         const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
@@ -196,6 +210,38 @@ pub const Run = struct {
             if (ctx.runtime_options.eval.eval_and_print) {
                 b.options.dead_code_elimination = false;
             }
+        } else if (ctx.runtime_options.cron_title.len > 0 and ctx.runtime_options.cron_period.len > 0) {
+            // Cron execution mode: wrap the entry point in a script that imports the
+            // module and calls default.scheduled(controller)
+            // Escape path for embedding in JS string literal (handle backslashes on Windows)
+            const escaped_path = try escapeForJSString(bun.default_allocator, entry_path);
+            defer bun.default_allocator.free(escaped_path);
+            const escaped_period = try escapeForJSString(bun.default_allocator, ctx.runtime_options.cron_period);
+            defer bun.default_allocator.free(escaped_period);
+            const cron_script = try std.fmt.allocPrint(bun.default_allocator,
+                \\const mod = await import("{s}");
+                \\const scheduled = (mod.default || mod).scheduled;
+                \\if (typeof scheduled !== "function") throw new Error("Module does not export default.scheduled()");
+                \\const controller = {{ cron: "{s}", type: "scheduled", scheduledTime: Date.now() }};
+                \\await scheduled(controller);
+            , .{ escaped_path, escaped_period });
+            // entry_path must end with /[eval] for the transpiler to use eval_source
+            const trigger = bun.pathLiteral("/[eval]");
+            var cwd_buf: bun.PathBuffer = undefined;
+            const cwd_slice = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |cwd| cwd,
+                .err => return error.SystemResources,
+            };
+            var eval_path_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            @memcpy(eval_path_buf[0..cwd_slice.len], cwd_slice);
+            @memcpy(eval_path_buf[cwd_slice.len..][0..trigger.len], trigger);
+            const eval_entry_path = eval_path_buf[0 .. cwd_slice.len + trigger.len];
+            // Heap-allocate the path so it outlives this stack frame
+            const heap_entry_path = try bun.default_allocator.dupe(u8, eval_entry_path);
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(heap_entry_path, cron_script);
+            vm.module_loader.eval_source = script_source;
+            run.entry_path = heap_entry_path;
         }
 
         b.options.install = ctx.install;
@@ -246,6 +292,8 @@ pub const Run = struct {
 
         vm.transpiler.env.loadTracy();
 
+        bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
+        bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
@@ -263,6 +311,34 @@ pub const Run = struct {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        // Start CPU profiler if enabled
+        if (this.ctx.runtime_options.cpu_prof.enabled) {
+            const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
+
+            vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
+                .name = cpu_prof_opts.name,
+                .dir = cpu_prof_opts.dir,
+                .md_format = cpu_prof_opts.md_format,
+                .json_format = cpu_prof_opts.json_format,
+                .interval = cpu_prof_opts.interval,
+            };
+            CPUProfiler.setSamplingInterval(cpu_prof_opts.interval);
+            CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            bun.analytics.Features.cpu_profile += 1;
+        }
+
+        // Set up heap profiler config if enabled (actual profiling happens on exit)
+        if (this.ctx.runtime_options.heap_prof.enabled) {
+            const heap_prof_opts = this.ctx.runtime_options.heap_prof;
+
+            vm.heap_profiler_config = HeapProfiler.HeapProfilerConfig{
+                .name = heap_prof_opts.name,
+                .dir = heap_prof_opts.dir,
+                .text_format = heap_prof_opts.text_format,
+            };
+            bun.analytics.Features.heap_snapshot += 1;
+        }
 
         this.addConditionalGlobals();
         do_redis_preconnect: {
@@ -323,9 +399,10 @@ pub const Run = struct {
         var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .rejected) {
+            if (promise.status() == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
-                promise.setHandled(vm.global.vm());
+                promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();
@@ -388,6 +465,15 @@ pub const Run = struct {
             vm.tick();
         }
 
+        // Initial synchronous evaluation of the entrypoint is done (TLA may
+        // still be pending and will resolve in the loop below); the embedded
+        // source pages are off the hot path now. No-op unless this is a
+        // compiled standalone binary, and skip under --watch/--hot since those
+        // re-read source on every reload.
+        if (!this.vm.isWatcherEnabled()) {
+            bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
+        }
+
         {
             if (this.vm.isWatcherEnabled()) {
                 vm.reportExceptionInHotReloadedModuleIfNeeded();
@@ -418,7 +504,7 @@ pub const Run = struct {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
-                            switch (promise.status(vm.jsc_vm)) {
+                            switch (promise.status()) {
                                 .pending => {
                                     result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 
@@ -469,7 +555,7 @@ pub const Run = struct {
         bun.api.napi.fixDeadCodeElimination();
         bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
-        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
+        @import("./jsc/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -507,13 +593,8 @@ noinline fn dumpBuildError(vm: *jsc.VirtualMachine) void {
 
     Output.flush();
 
-    const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
-    defer {
-        buffered_writer.flush() catch {};
-    }
-
-    const writer = buffered_writer.writer();
+    const writer = Output.errorWriterBuffered();
+    defer Output.flush();
 
     vm.log.print(writer) catch {};
 }
@@ -529,10 +610,38 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
-const options = @import("./options.zig");
+/// Escape a string for safe embedding in a JS double-quoted string literal.
+/// Escapes backslashes, double quotes, newlines, etc.
+fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (input) |c| {
+        if (c == '\\' or c == '"' or c == '\n' or c == '\r' or c == '\t') {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (!needs_escape) return allocator.dupe(u8, input);
+
+    var result = try std.array_list.Managed(u8).initCapacity(allocator, input.len + 16);
+    for (input) |c| {
+        switch (c) {
+            '\\' => try result.appendSlice("\\\\"),
+            '"' => try result.appendSlice("\\\""),
+            '\n' => try result.appendSlice("\\n"),
+            '\r' => try result.appendSlice("\\r"),
+            '\t' => try result.appendSlice("\\t"),
+            else => try result.append(c),
+        }
+    }
+    return result.toOwnedSlice();
+}
+
+const CPUProfiler = @import("./jsc/BunCPUProfiler.zig");
+const HeapProfiler = @import("./jsc/BunHeapProfiler.zig");
+const options = @import("./bundler/options.zig");
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const which = @import("./which.zig").which;
+const Command = @import("./cli/cli.zig").Command;
+const which = @import("./which/which.zig").which;
 
 const bun = @import("bun");
 const Global = bun.Global;

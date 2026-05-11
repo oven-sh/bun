@@ -148,6 +148,9 @@ _bun_completions() {
         upgrade)
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return;;
+        repl)
+            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
+            return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );

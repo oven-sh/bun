@@ -1,5 +1,17 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  getMaxFD,
+  isBroken,
+  isIntelMacOS,
+  isPosix,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -51,6 +63,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -78,16 +91,37 @@ function tmpdirTestMkdir(): string {
   return tempdir;
 }
 
-it("fs.writeFile(1, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
+it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(2, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"]).toRun();
+it.concurrent("fs.writeFile(2, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(/dev/null, data) should work", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull]).toRun();
+it.concurrent("fs.writeFile(/dev/null, data) should work", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), os.devNull],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
 it("fs.openAsBlob", async () => {
@@ -414,12 +448,13 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
-it("await readdir #3931", async () => {
-  const { exitCode } = spawnSync({
+it.concurrent("await readdir #3931", async () => {
+  await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
     cwd: import.meta.dir,
   });
+  const exitCode = await proc.exited;
   expect(exitCode).toBe(0);
 });
 
@@ -1143,6 +1178,58 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// The error cleanup path previously called MarkedArrayBuffer.destroy() on
+// structs stored by-value inside the entries ArrayList, which passed interior
+// ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
+// then freeing it again in entries.deinit()). A self-referential symlink makes
+// the recursive walk fail with ELOOP after entries have been collected, exercising
+// that cleanup path.
+it.skipIf(isWindows)(
+  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
+  async () => {
+    using dir = tempDir("readdir-buffer-error", {
+      "a.txt": "a",
+      "b.txt": "b",
+      "c.txt": "c",
+    });
+    fs.symlinkSync("loop", join(String(dir), "loop"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          let code;
+          for (let i = 0; i < 2; i++) {
+            try {
+              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+              throw new Error("expected readdirSync to throw");
+            } catch (e) {
+              code = e.code;
+            }
+          }
+          console.log(code);
+        `,
+      ],
+      // Disable symbolization so an ASAN abort exits promptly instead of spending
+      // seconds in llvm-symbolizer against the large debug binary.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+  },
+);
+
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
@@ -1540,6 +1627,29 @@ it("symlink", () => {
   expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
+  const path = join(tmpdirSync(), "test-fs-fifo-block.fifo");
+  mkfifo(path, 0o666);
+  realpathSync(path);
+  unlinkSync(path);
+});
+
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  expect(realpathSync("/")).toBe("/");
+
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -1549,6 +1659,38 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+// On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
+// and POSIX readlink() may return exactly buf.len (truncated). Bun used to
+// write the NUL terminator at buf[rc] which would be one past the end of the
+// stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
+// normal filesystem, but we can exercise the longest-possible target to make
+// sure the bounds check in sys.readlink doesn't fire early.
+it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+  const dir = tmpdirSync();
+  // Find the longest target the local filesystem will accept for symlink(2).
+  // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
+  // replaces the target with "" when it is exactly MAX_PATH_BYTES long (and
+  // Darwin accepts symlink("", link)), so start just below that boundary on
+  // each platform rather than probing through it.
+  let len = process.platform === "darwin" ? 1023 : 4095;
+  let link: string;
+  let target: string;
+  while (true) {
+    link = join(dir, "l" + len);
+    target = Buffer.alloc(len, "x").toString();
+    try {
+      symlinkSync(target, link);
+      break;
+    } catch {
+      if (len <= 1) throw new Error("could not create any symlink");
+      len--;
+    }
+  }
+  // readlinkSync must return the exact target, not error and not truncate.
+  expect(readlinkSync(link).length).toBe(len);
+  expect(readlinkSync(link)).toBe(target);
 });
 
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
@@ -2044,10 +2186,8 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      Bun.sleep(1000).then(() => {
-        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-        done();
-      });
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
     });
   });
 
@@ -2365,150 +2505,166 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it("readdir(path, {recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { recursive: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { recursive: true }).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { recursive: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { recursive: true }).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun).toEqual(node as string[]);
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun).toEqual(node as string[]);
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = readdirSync(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = readdirSync(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
   for (let withFileTypes of [false, true] as const) {
     const iterCount = 200;
@@ -3282,10 +3438,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {
@@ -3625,25 +3782,27 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   ];
 
   for (const [name, code] of nonExistTests) {
-    it(`${name} (not existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (not existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir1,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
   for (const [name, code] of existTests) {
-    it(`${name} (existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir2,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
 });
@@ -3660,4 +3819,152 @@ it("overflowing mode doesn't crash", () => {
       path: "./a.txt",
     }),
   );
+});
+
+describe("numeric flags produce same result as string flags", () => {
+  it("numeric O_CREAT|O_TRUNC|O_WRONLY is equivalent to 'w'", () => {
+    const { O_CREAT, O_TRUNC, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_TRUNC | O_WRONLY;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "w", 0o666);
+    writeSync(fd1, "hello");
+    closeSync(fd1);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "hello");
+    closeSync(fd2);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+  });
+
+  it("numeric O_CREAT|O_WRONLY|O_APPEND is equivalent to 'a'", () => {
+    const { O_APPEND, O_CREAT, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_WRONLY | O_APPEND;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "a", 0o666);
+    writeSync(fd1, "first");
+    closeSync(fd1);
+    const fd1b = openSync(fileStr, "a", 0o666);
+    writeSync(fd1b, "second");
+    closeSync(fd1b);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "first");
+    closeSync(fd2);
+    const fd2b = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2b, "second");
+    closeSync(fd2b);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+    expect(readFileSync(fileNum, "utf8")).toBe("firstsecond");
+  });
+
+  it("numeric O_CREAT|O_RDWR|O_TRUNC is equivalent to 'w+'", () => {
+    const { O_CREAT, O_RDWR, O_TRUNC } = constants;
+    const numericFlag = O_CREAT | O_RDWR | O_TRUNC;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readwrite.txt");
+
+    const fd = openSync(file, numericFlag, 0o666);
+    writeSync(fd, "read-write");
+
+    // Read back from the same fd to verify O_RDWR actually grants read access.
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("read-write");
+  });
+
+  it("numeric O_RDONLY reads existing file", () => {
+    const { O_RDONLY } = constants;
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readonly.txt");
+
+    writeFileSync(file, "existing content");
+
+    const fd = openSync(file, O_RDONLY);
+    const buf = Buffer.alloc(50);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("existing content");
+  });
+
+  it("numeric O_CREAT|O_EXCL|O_RDWR fails on existing file", () => {
+    const { O_CREAT, O_EXCL, O_RDWR } = constants;
+    const numericFlag = O_CREAT | O_EXCL | O_RDWR;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "excl.txt");
+
+    // First open should succeed (creates the file).
+    const fd = openSync(file, numericFlag, 0o666);
+    closeSync(fd);
+
+    // Second open with O_EXCL should fail (file already exists).
+    expect(() => openSync(file, numericFlag, 0o666)).toThrow();
+  });
+});
+
+describe("synchronous I/O string flags", () => {
+  it("'rs' opens existing file for reading", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "sync content",
+    });
+
+    const fd = openSync(join(String(dir), "existing.txt"), "rs");
+    const buf = Buffer.alloc(20);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("sync content");
+  });
+
+  it("'rs+' opens existing file for read-write", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "original",
+    });
+    const file = join(String(dir), "existing.txt");
+
+    const fd = openSync(file, "rs+");
+    writeSync(fd, "replaced");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("replaced");
+  });
+
+  it("'as' creates and appends to file", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended.txt");
+
+    const fd = openSync(file, "as");
+    writeSync(fd, "sync-append");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("sync-append");
+  });
+
+  it("'as+' creates and appends with read access", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended-rw.txt");
+
+    const fd = openSync(file, "as+");
+    writeSync(fd, "hello");
+
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
 });

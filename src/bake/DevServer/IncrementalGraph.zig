@@ -733,7 +733,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             const log = bun.Output.scoped(.processChunkDependencies, .visible);
             const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
                 @panic("unresolved index"); // do not process for failed chunks
-            log("index id={d} {}:", .{
+            log("index id={d} {f}:", .{
                 file_index.get(),
                 bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
             });
@@ -832,7 +832,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             const edge = &g.edges.items[edge_index.get()];
             const imported = edge.imported.get();
             const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, .hidden);
-            log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
+            log("detach edge={d} | id={d} {f} -> id={d} {f} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
                 bun.fmt.quote(g.bundled_files.keys()[edge.dependency.get()]),
@@ -925,7 +925,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
             // There is still a case where deduplication must happen.
-            if (import_record.is_unused) return .stop;
+            if (import_record.flags.is_unused) return .stop;
             if (import_record.source_index.isRuntime()) return .stop;
 
             const key = import_record.path.keyForIncrementalGraph();
@@ -1014,7 +1014,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     .seen = true,
                 };
 
-                log("attach edge={d} | id={d} {} -> id={d} {}", .{
+                log("attach edge={d} | id={d} {f} -> id={d} {f}", .{
                     edge.get(),
                     file_index.get(),
                     bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
@@ -1044,7 +1044,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 // When an import record is duplicated, it gets marked unused.
                 // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
                 // There is still a case where deduplication must happen.
-                if (import_record.is_unused) continue;
+                if (import_record.flags.is_unused) continue;
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     // TODO: move this block into a function
@@ -1100,7 +1100,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             .seen = true,
                         };
 
-                        log("attach edge={d} | id={d} {} -> id={d} {}", .{
+                        log("attach edge={d} | id={d} {f} -> id={d} {f}", .{
                             edge.get(),
                             file_index.get(),
                             bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
@@ -1127,7 +1127,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             g.owner().graph_safety_lock.assertLocked();
 
             if (Environment.enable_logs) {
-                igLog("traceDependencies(.{s}, {}{s})", .{
+                igLog("traceDependencies(.{s}, {f}{s})", .{
                     @tagName(side),
                     bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
                     if (gts.bits(side).isSet(file_index.get())) " [already visited]" else "",
@@ -1145,7 +1145,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     const dev = g.owner();
                     if (file.is_route) {
                         const route_index = dev.route_lookup.get(file_index) orelse
-                            Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
+                            Output.panic("Route not in lookup index: {d} {f}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
                         igLog("\\<- Route", .{});
 
                         try dev.incremental_result.framework_routes_affected.append(dev.allocator(), route_index);
@@ -1159,7 +1159,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     if (file.is_hmr_root) {
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
-                            Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
+                            Output.panic("Server Incremental Graph is missing component for {f}", .{bun.fmt.quote(key)});
                         try dev.server_graph.traceDependencies(index, gts, goal, index);
                     } else if (file.html_route_bundle_index) |route_bundle_index| {
                         // If the HTML file itself was modified, or an asset was
@@ -1207,7 +1207,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             g.owner().graph_safety_lock.assertLocked();
 
             if (Environment.enable_logs) {
-                igLog("traceImports(.{s}, .{s}, {}{s})", .{
+                igLog("traceImports(.{s}, .{s}, {f}{s})", .{
                     @tagName(side),
                     @tagName(goal),
                     bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
@@ -1227,7 +1227,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         const dev = g.owner();
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.client_graph.getFileIndex(key) orelse
-                            Output.panic("Client Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
+                            Output.panic("Client Incremental Graph is missing component for {f}", .{bun.fmt.quote(key)});
                         try dev.client_graph.traceImports(index, gts, goal);
 
                         if (Environment.isDebug and file.kind == .css) {
@@ -1597,13 +1597,18 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     // retrieve the list of files and add them as stale.
                     continue;
                 };
+                // Store the graph-owned key, not the incoming `path`. `path`
+                // may be a slice into `HotReloadEvent.extra_files`, which is
+                // reset (and may be reallocated by the watcher thread) before
+                // `entry_points` is consumed by startAsyncBundle/TestingBatch.
+                const owned_path = keys[index];
                 g.stale_files.set(index);
                 const data = values[index].unpack();
                 switch (side) {
                     .client => switch (data.content) {
                         .css_root, .css_child => {
                             if (data.content == .css_root) {
-                                try entry_points.appendCss(alloc, path);
+                                try entry_points.appendCss(alloc, owned_path);
                             }
 
                             var it = g.first_dep.items[index].unwrap();
@@ -1646,20 +1651,20 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 it = entry.next_dependency.unwrap();
                             }
 
-                            try entry_points.appendJs(alloc, path, .client);
+                            try entry_points.appendJs(alloc, owned_path, .client);
                         },
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
                         .js, .unknown => if (!data.is_hmr_root) {
-                            try entry_points.appendJs(alloc, path, .client);
+                            try entry_points.appendJs(alloc, owned_path, .client);
                         },
                     },
                     .server => {
                         if (data.is_rsc)
-                            try entry_points.appendJs(alloc, path, .server);
+                            try entry_points.appendJs(alloc, owned_path, .server);
                         if (data.is_ssr and !data.is_client_component_boundary)
-                            try entry_points.appendJs(alloc, path, .ssr);
+                            try entry_points.appendJs(alloc, owned_path, .ssr);
                     },
                 }
             }
@@ -1699,7 +1704,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             g: *Self,
             options: *const TakeJSBundleOptions,
         ) ![]u8 {
-            var chunk = std.ArrayList(u8).init(g.allocator());
+            var chunk = std.array_list.Managed(u8).init(g.allocator());
             try g.takeJSBundleToList(&chunk, options);
             bun.assert(chunk.items.len == chunk.capacity);
             return chunk.items;
@@ -1707,7 +1712,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
         pub fn takeJSBundleToList(
             g: *Self,
-            list: *std.ArrayList(u8),
+            list: *std.array_list.Managed(u8),
             options: *const TakeJSBundleOptions,
         ) !void {
             const kind = options.kind;
@@ -1729,7 +1734,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // exact upper bound of this can be calculated, but is not to
             // avoid worrying about windows paths.
             var end_sfa = std.heap.stackFallback(65536, g.allocator());
-            var end_list = std.ArrayList(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
+            var end_list = std.array_list.Managed(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
             defer end_list.deinit();
             const end = end: {
                 const w = end_list.writer();
@@ -1753,7 +1758,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
                         try w.writeAll(",\n  generation: \"");
                         const generation: u32 = @intCast(options.script_id.get() >> 32);
-                        try w.print("{s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation))});
+                        try w.print("{x}", .{std.mem.asBytes(&generation)});
                         try w.writeAll("\",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
 
@@ -1805,7 +1810,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             for (g.current_chunk_parts.items) |entry| {
                 list.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
-                    .client => files[entry.get()].unpack().jsCode().?,
+                    // will return null if the chunk is a non-js (like css)
+                    .client => files[entry.get()].unpack().jsCode() orelse continue,
                     // entry is the '[]const u8' itself
                     .server => entry.get(),
                 });
@@ -1923,8 +1929,13 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             }
 
             const keys = g.bundled_files.keys();
+            const key = keys[file_index.get()];
 
-            g.allocator().free(keys[file_index.get()]);
+            // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
+            // any such dependencies before freeing it so they do not dangle.
+            g.owner().directory_watchers.removeDependenciesForFile(g.allocator(), key);
+
+            g.allocator().free(key);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
 
             assert_eql(g.first_dep.items[file_index.get()], .none);
@@ -2034,6 +2045,9 @@ const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const useAllFields = bun.meta.useAllFields;
 
+const SourceMap = bun.SourceMap;
+const VLQ = SourceMap.VLQ;
+
 const DevServer = bake.DevServer;
 const ChunkKind = DevServer.ChunkKind;
 const DevAllocator = DevServer.DevAllocator;
@@ -2058,9 +2072,6 @@ const Chunk = bun.bundle_v2.Chunk;
 
 const Owned = bun.ptr.Owned;
 const Shared = bun.ptr.Shared;
-
-const SourceMap = bun.sourcemap;
-const VLQ = SourceMap.VLQ;
 
 const std = @import("std");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;

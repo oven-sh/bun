@@ -223,7 +223,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     std.debug.assert(buf.len == options.encodedLength());
     std.debug.assert(options.bin_path[0] != '/');
 
-    var wbuf = @as([*]u16, @alignCast(@ptrCast(&buf[0])))[0 .. buf.len / 2];
+    var wbuf = @as([*]u16, @ptrCast(@alignCast(&buf[0])))[0 .. buf.len / 2];
 
     @memcpy(wbuf[0..options.bin_path.len], options.bin_path);
     wbuf = wbuf[options.bin_path.len..];

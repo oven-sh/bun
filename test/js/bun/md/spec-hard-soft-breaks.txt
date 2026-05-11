@@ -1,0 +1,28 @@
+
+# Hard Soft Breaks
+
+With the flag `MD_FLAG_HARD_SOFT_BREAKS`, MD4C treats all newline characters as
+hard breaks.
+
+```````````````````````````````` example
+foo
+baz
+.
+<p>foo<br>
+baz</p>
+.
+--fhard-soft-breaks
+````````````````````````````````
+
+```````````````````````````````` example
+A quote from the CommonMark Spec below:
+
+A renderer may also provide an option to 
+render soft line breaks as hard line breaks.
+.
+<p>A quote from the CommonMark Spec below:</p>
+<p>A renderer may also provide an option to<br>
+render soft line breaks as hard line breaks.</p>
+.
+--fhard-soft-breaks
+````````````````````````````````

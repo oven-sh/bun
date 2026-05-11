@@ -114,3 +114,19 @@ describe("onTestFinished with all hooks", () => {
     expect(output).toEqual(["test", "inner afterAll", "afterEach", "onTestFinished"]);
   });
 });
+
+// Test that a failing test still runs the onTestFinished hook
+describe("onTestFinished with failing test", () => {
+  const output: string[] = [];
+
+  test.failing("failing test", () => {
+    onTestFinished(() => {
+      output.push("onTestFinished");
+    });
+    output.push("test");
+    throw new Error("fail");
+  });
+  test("verify order", () => {
+    expect(output).toEqual(["test", "onTestFinished"]);
+  });
+});

@@ -14,25 +14,9 @@ const fs = std.fs;
 const Version = std.SemanticVersion;
 const Arch = std.Target.Cpu.Arch;
 
-const OperatingSystem = @import("src/env.zig").OperatingSystem;
+const OperatingSystem = @import("src/bun_core/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
-
-/// When updating this, make sure to adjust SetupZig.cmake
-const recommended_zig_version = "0.14.0";
-
-// comptime {
-//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-//         @compileError(
-//             "" ++
-//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-//                 "comment this error out.",
-//         );
-//     }
-// }
 
 const zero_sha = "0000000000000000000000000000000000000000";
 
@@ -48,7 +32,9 @@ const BunBuildOptions = struct {
     /// enable debug logs in release builds
     enable_logs: bool = false,
     enable_asan: bool,
+    enable_fuzzilli: bool,
     enable_valgrind: bool,
+    enable_tinycc: bool,
     use_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
@@ -57,7 +43,7 @@ const BunBuildOptions = struct {
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
     /// - src/bake/runtime.ts (bundled)
-    /// - src/bun.js/api/FFI.h
+    /// - src/runtime/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
     codegen_embed: bool = false,
@@ -65,7 +51,10 @@ const BunBuildOptions = struct {
     /// `./build/codegen` or equivalent
     codegen_path: []const u8,
     no_llvm: bool,
+    lto: bool,
     override_no_export_cpp_apis: bool,
+    android_ndk_sysroot: ?[]const u8 = null,
+    freebsd_sysroot: ?[]const u8 = null,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -97,9 +86,11 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
+        opts.addOption(bool, "enable_fuzzilli", this.enable_fuzzilli);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
+        opts.addOption(bool, "enable_tinycc", this.enable_tinycc);
         opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
-        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
 
@@ -110,7 +101,7 @@ const BunBuildOptions = struct {
 
     pub fn windowsShim(this: *BunBuildOptions, b: *Build) WindowsShim {
         return this.windows_shim orelse {
-            this.windows_shim = WindowsShim.create(b);
+            this.windows_shim = WindowsShim.create(b, this.arch);
             return this.windows_shim.?;
         };
     }
@@ -120,6 +111,12 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
     return switch (os) {
         .mac => .{
             .semver = .{ .major = 13, .minor = 0, .patch = 0 },
+        },
+
+        // FreeBSD 14.0 is the oldest supported major. 14.x guarantees forward
+        // ABI compat, and 13.x is EOL by the time this lands.
+        .freebsd => .{
+            .semver = .{ .major = 14, .minor = 0, .patch = 0 },
         },
 
         // Windows 10 1809 is the minimum supported version
@@ -134,8 +131,8 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
 
 pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
     return switch (os) {
-        // Compiling with a newer glibc than this will break certain cloud environments.
-        .linux => .{ .major = 2, .minor = 27, .patch = 0 },
+        // Compiling with a newer glibc than this will break certain cloud environments. See symbols.test.ts.
+        .linux => .{ .major = 2, .minor = 17, .patch = 0 },
 
         else => null,
     };
@@ -176,6 +173,7 @@ pub fn build(b: *Build) !void {
         else switch (temp_resolved.result.os.tag) {
             .macos => .mac,
             .linux => .linux,
+            .freebsd => .freebsd,
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
@@ -213,7 +211,25 @@ pub fn build(b: *Build) !void {
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const lto = b.option(bool, "lto", "Emit LLVM bitcode for full LTO instead of a native object") orelse false;
     const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
+    // Zig does not bundle bionic headers, so translate-c needs the NDK
+    // sysroot include paths explicitly. The obj's linkLibC() gets bionic
+    // via `zig build --libc <file>` (b.libc_file), which the build script
+    // also passes when targeting Android.
+    const android_ndk_sysroot = b.option([]const u8, "android_ndk_sysroot", "Android NDK sysroot for translate-c headers");
+    if (abi.isAndroid() and android_ndk_sysroot == null) {
+        std.debug.panic("-Dandroid_ndk_sysroot is required when targeting Android (zig does not bundle bionic headers)", .{});
+    }
+    // Same story for FreeBSD: zig bundles only Linux/macOS/Windows libc
+    // headers, so translate-c needs the FreeBSD sysroot. The obj's
+    // linkLibC() gets FreeBSD libc via `zig build --libc <file>`. On a
+    // native FreeBSD host the system root is the sysroot.
+    const freebsd_sysroot = b.option([]const u8, "freebsd_sysroot", "FreeBSD sysroot (extracted base.txz) for translate-c headers") orelse
+        if (os == .freebsd and builtin.os.tag == .freebsd) "/" else null;
+    if (os == .freebsd and freebsd_sysroot == null) {
+        std.debug.panic("-Dfreebsd_sysroot is required when cross-compiling to FreeBSD (zig does not bundle FreeBSD libc headers)", .{});
+    }
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -223,6 +239,7 @@ pub fn build(b: *Build) !void {
         .codegen_path = codegen_path,
         .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
+        .lto = lto,
         .override_no_export_cpp_apis = override_no_export_cpp_apis,
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -271,9 +288,13 @@ pub fn build(b: *Build) !void {
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .enable_fuzzilli = b.option(bool, "enable_fuzzilli", "Enable fuzzilli instrumentation") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .enable_tinycc = b.option(bool, "enable_tinycc", "Enable TinyCC for FFI JIT compilation") orelse true,
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
+        .android_ndk_sysroot = android_ndk_sysroot,
+        .freebsd_sysroot = freebsd_sysroot,
     };
 
     // zig build obj
@@ -290,14 +311,16 @@ pub fn build(b: *Build) !void {
         var o = build_options;
         var unit_tests = b.addTest(.{
             .name = "bun-test",
-            .optimize = build_options.optimize,
-            .root_source_file = b.path("src/unit_test.zig"),
             .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
-            .target = build_options.target,
+            .root_module = b.createModule(.{
+                .optimize = build_options.optimize,
+                .root_source_file = b.path("src/unit_test.zig"),
+                .target = build_options.target,
+                .omit_frame_pointer = false,
+                .strip = false,
+            }),
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-            .omit_frame_pointer = false,
-            .strip = false,
         });
         configureObj(b, &o, unit_tests);
         // Setting `linker_allow_shlib_undefined` causes the linker to ignore
@@ -331,6 +354,7 @@ pub fn build(b: *Build) !void {
         var step = b.step("check", "Check for semantic analysis errors");
         var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
+        // bun_check_obj.use_llvm = false;
         step.dependOn(&bun_check_obj.step);
 
         // The default install step will run zig build check. This is so ZLS
@@ -352,6 +376,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
         }, &.{.Debug});
@@ -362,6 +387,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -376,6 +402,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -390,12 +417,14 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{.Debug});
     }
     {
@@ -426,12 +455,53 @@ pub fn build(b: *Build) !void {
             .{ .os = .linux, .arch = .aarch64 },
         }, &.{.Debug});
     }
+    // check-android needs the NDK sysroot for translate-c (zig doesn't
+    // bundle bionic headers). Skip step creation entirely when none was
+    // passed, so plain `zig build check` doesn't try to construct a
+    // translate-c step that would panic.
+    if (android_ndk_sysroot != null) {
+        {
+            const step = b.step("check-android", "Check for semantic analysis errors on Android");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .linux, .arch = .x86_64, .android = true },
+                .{ .os = .linux, .arch = .aarch64, .android = true },
+            }, &.{ .Debug, .ReleaseFast });
+        }
+        {
+            const step = b.step("check-android-debug", "Check for semantic analysis errors on Android");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .linux, .arch = .x86_64, .android = true },
+                .{ .os = .linux, .arch = .aarch64, .android = true },
+            }, &.{.Debug});
+        }
+    }
+    // check-freebsd needs the sysroot for translate-c (zig doesn't bundle
+    // FreeBSD libc headers). Skip step creation entirely when none was
+    // passed, so plain `zig build check` doesn't try to construct a
+    // translate-c step that would panic.
+    if (freebsd_sysroot != null) {
+        {
+            const step = b.step("check-freebsd", "Check for semantic analysis errors on FreeBSD");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .freebsd, .arch = .x86_64 },
+                .{ .os = .freebsd, .arch = .aarch64 },
+            }, &.{ .Debug, .ReleaseFast });
+        }
+        {
+            const step = b.step("check-freebsd-debug", "Check for semantic analysis errors on FreeBSD");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .freebsd, .arch = .x86_64 },
+                .{ .os = .freebsd, .arch = .aarch64 },
+            }, &.{.Debug});
+        }
+    }
 
     // zig build translate-c-headers
     {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
         for ([_]TargetDescription{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -441,7 +511,7 @@ pub fn build(b: *Build) !void {
         }) |t| {
             const resolved = t.resolveTarget(b);
             step.dependOn(
-                &b.addInstallFile(getTranslateC(b, resolved, .Debug), b.fmt("translated-c-headers/{s}.zig", .{
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug, null, null), b.fmt("translated-c-headers/{s}.zig", .{
                     resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
                 })).step,
             );
@@ -460,12 +530,153 @@ pub fn build(b: *Build) !void {
         // const run = b.addRunArtifact(exe);
         // step.dependOn(&run.step);
     }
+
+    // zig build generate-grapheme-tables
+    // Regenerates src/string/immutable/grapheme_tables.zig from the vendored uucode.
+    // Run this when updating src/unicode/uucode_lib. Normal builds use the committed file.
+    {
+        const step = b.step("generate-grapheme-tables", "Regenerate grapheme property tables from vendored uucode");
+
+        // --- Phase 1: Build uucode tables (separate module graph, no tables dependency) ---
+        const bt_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/config.zig"),
+            .target = b.graph.host,
+        });
+        const bt_types_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/types.zig"),
+            .target = b.graph.host,
+        });
+        bt_types_mod.addImport("config.zig", bt_config_mod);
+        bt_config_mod.addImport("types.zig", bt_types_mod);
+
+        const bt_config_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/config.x.zig"),
+            .target = b.graph.host,
+        });
+        const bt_types_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/types.x.zig"),
+            .target = b.graph.host,
+        });
+        bt_types_x_mod.addImport("config.x.zig", bt_config_x_mod);
+        bt_config_x_mod.addImport("types.x.zig", bt_types_x_mod);
+        bt_config_x_mod.addImport("types.zig", bt_types_mod);
+        bt_config_x_mod.addImport("config.zig", bt_config_mod);
+
+        const bt_build_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode/uucode_config.zig"),
+            .target = b.graph.host,
+        });
+        bt_build_config_mod.addImport("types.zig", bt_types_mod);
+        bt_build_config_mod.addImport("config.zig", bt_config_mod);
+        bt_build_config_mod.addImport("types.x.zig", bt_types_x_mod);
+        bt_build_config_mod.addImport("config.x.zig", bt_config_x_mod);
+
+        const build_tables_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/build/tables.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        build_tables_mod.addImport("config.zig", bt_config_mod);
+        build_tables_mod.addImport("build_config", bt_build_config_mod);
+        build_tables_mod.addImport("types.zig", bt_types_mod);
+
+        const build_tables_exe = b.addExecutable(.{
+            .name = "uucode_build_tables",
+            .root_module = build_tables_mod,
+            .use_llvm = true,
+        });
+        const run_build_tables = b.addRunArtifact(build_tables_exe);
+        run_build_tables.setCwd(b.path("src/unicode/uucode_lib"));
+        const tables_path = run_build_tables.addOutputFileArg("tables.zig");
+
+        // --- Phase 2: Build grapheme-gen with full uucode (separate module graph) ---
+        const rt_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/config.zig"),
+            .target = b.graph.host,
+        });
+        const rt_types_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/types.zig"),
+            .target = b.graph.host,
+        });
+        rt_types_mod.addImport("config.zig", rt_config_mod);
+        rt_config_mod.addImport("types.zig", rt_types_mod);
+
+        const rt_config_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/config.x.zig"),
+            .target = b.graph.host,
+        });
+        const rt_types_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/x/types.x.zig"),
+            .target = b.graph.host,
+        });
+        rt_types_x_mod.addImport("config.x.zig", rt_config_x_mod);
+        rt_config_x_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_config_x_mod.addImport("types.zig", rt_types_mod);
+        rt_config_x_mod.addImport("config.zig", rt_config_mod);
+
+        const rt_build_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode/uucode_config.zig"),
+            .target = b.graph.host,
+        });
+        rt_build_config_mod.addImport("types.zig", rt_types_mod);
+        rt_build_config_mod.addImport("config.zig", rt_config_mod);
+        rt_build_config_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_build_config_mod.addImport("config.x.zig", rt_config_x_mod);
+
+        const rt_tables_mod = b.createModule(.{
+            .root_source_file = tables_path,
+            .target = b.graph.host,
+        });
+        rt_tables_mod.addImport("types.zig", rt_types_mod);
+        rt_tables_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_tables_mod.addImport("config.zig", rt_config_mod);
+        rt_tables_mod.addImport("build_config", rt_build_config_mod);
+
+        const rt_get_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/get.zig"),
+            .target = b.graph.host,
+        });
+        rt_get_mod.addImport("types.zig", rt_types_mod);
+        rt_get_mod.addImport("tables", rt_tables_mod);
+        rt_types_mod.addImport("get.zig", rt_get_mod);
+
+        const uucode_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode_lib/src/root.zig"),
+            .target = b.graph.host,
+        });
+        uucode_mod.addImport("types.zig", rt_types_mod);
+        uucode_mod.addImport("config.zig", rt_config_mod);
+        uucode_mod.addImport("types.x.zig", rt_types_x_mod);
+        uucode_mod.addImport("tables", rt_tables_mod);
+        uucode_mod.addImport("get.zig", rt_get_mod);
+
+        // grapheme_gen executable
+        const gen_exe = b.addExecutable(.{
+            .name = "grapheme-gen",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/unicode/uucode/grapheme_gen.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+                .imports = &.{
+                    .{ .name = "uucode", .module = uucode_mod },
+                },
+            }),
+            .use_llvm = true,
+        });
+
+        const run_gen = b.addRunArtifact(gen_exe);
+        const gen_output = run_gen.captureStdOut();
+
+        const install = b.addInstallFile(gen_output, "../src/string/immutable/grapheme_tables.zig");
+        step.dependOn(&install.step);
+    }
 }
 
 const TargetDescription = struct {
     os: OperatingSystem,
     arch: Arch,
     musl: bool = false,
+    android: bool = false,
 
     fn resolveTarget(desc: TargetDescription, b: *Build) std.Build.ResolvedTarget {
         return b.resolveTargetQuery(.{
@@ -473,7 +684,8 @@ const TargetDescription = struct {
             .cpu_arch = desc.arch,
             .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
             .os_version_min = getOSVersionMin(desc.os),
-            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+            .glibc_version = if (desc.musl or desc.android) null else getOSGlibCVersion(desc.os),
+            .abi = if (desc.android) .android else null,
         });
     }
 };
@@ -501,10 +713,15 @@ fn addMultiCheck(
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .lto = false,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .enable_tinycc = root_build_options.enable_tinycc,
+                .enable_fuzzilli = root_build_options.enable_fuzzilli,
                 .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
+                .android_ndk_sysroot = root_build_options.android_ndk_sysroot,
+                .freebsd_sysroot = root_build_options.freebsd_sysroot,
             };
 
             var obj = addBunObject(b, &options);
@@ -514,7 +731,7 @@ fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, android_ndk_sysroot: ?[]const u8, freebsd_sysroot: ?[]const u8) LazyPath {
     const target = b.resolveTargetQuery(q: {
         var query = initial_target.query;
         if (query.os_tag == .windows)
@@ -532,12 +749,31 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         .{ "POSIX", translate_c.target.result.os.tag != .windows },
         .{ "LINUX", translate_c.target.result.os.tag == .linux },
         .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+        .{ "FREEBSD", translate_c.target.result.os.tag == .freebsd },
     }) |entry| {
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
 
     translate_c.addIncludePath(b.path("vendor/zstd/lib"));
+
+    if (target.result.abi.isAndroid()) {
+        const sysroot = android_ndk_sysroot orelse
+            std.debug.panic("translate-c for Android requires -Dandroid_ndk_sysroot", .{});
+        const arch_triple = switch (target.result.cpu.arch) {
+            .aarch64 => "aarch64-linux-android",
+            .x86_64 => "x86_64-linux-android",
+            else => |a| std.debug.panic("unsupported Android arch: {s}", .{@tagName(a)}),
+        };
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ sysroot, arch_triple }) });
+    }
+
+    if (target.result.os.tag == .freebsd) {
+        const sysroot = freebsd_sysroot orelse
+            std.debug.panic("translate-c for FreeBSD requires -Dfreebsd_sysroot", .{});
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
+    }
 
     if (target.result.os.tag == .windows) {
         // translate-c is unable to translate the unsuffixed windows functions
@@ -610,21 +846,38 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;
-
-    if (opts.optimize == .Debug) {
-        if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
-            obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    if (opts.lto) {
+        obj.lto = .full;
+        obj.use_lld = true;
     }
 
-    obj.no_link_obj = true;
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
+        obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    // Skip zig's relocatable -r merge of the codegen shards: it's
+    // single-threaded and dominated wall time at high shard counts
+    // (~9min for 64 × ~8MB shards). With this set, shards are emitted
+    // directly as `{out}.{i}.o`; addInstallObjectFile installs them
+    // all and the bun link step (lld, parallel) consumes them. Only
+    // for the main object — `zig build test` reuses configureObj and
+    // its install path expects a single artifact.
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_no_merge_shards"))
+        obj.llvm_no_merge_shards = obj.kind == .obj and (opts.llvm_codegen_threads orelse 0) > 1;
+
+    obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
+            if (opts.enable_fuzzilli) {
+                obj.sanitize_coverage_trace_pc_guard = true;
+            }
             obj.root_module.sanitize_address = true;
         } else {
             const fail_step = b.addFail("asan is not supported on this platform");
             obj.step.dependOn(&fail_step.step);
         }
+    } else if (opts.enable_fuzzilli) {
+        const fail_step = b.addFail("fuzzilli requires asan");
+        obj.step.dependOn(&fail_step.step);
     }
     obj.bundle_compiler_rt = false;
     obj.bundle_ubsan_rt = false;
@@ -675,6 +928,34 @@ pub fn addInstallObjectFile(
 ) *Step {
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
+    if (out_mode == .obj and
+        @hasField(Compile, "llvm_no_merge_shards") and
+        @hasField(Compile, "llvm_codegen_threads") and
+        compile.llvm_no_merge_shards and
+        compile.llvm_codegen_threads > 1)
+    {
+        // Install every shard as `{name}.{i}.o`; scripts/build/zig.ts
+        // declares the matching outputs and the bun link step (lld)
+        // consumes them all. The merged `{name}.o` does not exist in
+        // this configuration. Shard `i` is at `{out_filename - ".o"}.{i}.o`
+        // in the emitted-bin directory (see Compilation.zig:3475).
+        const dir = compile.getEmittedBinDirectory();
+        const stem = if (std.mem.endsWith(u8, compile.out_filename, ".o"))
+            compile.out_filename[0 .. compile.out_filename.len - 2]
+        else
+            compile.out_filename;
+        // Group via shard 0's install step so we don't register a
+        // user-visible top-level `b.step()` for what is an internal
+        // fan-out. Ninja still parallelises the dependents.
+        var first: ?*Step = null;
+        var i: u32 = 0;
+        while (i < compile.llvm_codegen_threads) : (i += 1) {
+            const shard = dir.path(b, b.fmt("{s}.{d}.o", .{ stem, i }));
+            const inst = &b.addInstallFile(shard, b.fmt("{s}.{d}.o", .{ name, i })).step;
+            if (first) |f| f.dependOn(inst) else first = inst;
+        }
+        return first.?;
+    }
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
@@ -698,12 +979,12 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 
     mod.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    const translate_c = getTranslateC(b, opts.target, opts.optimize, opts.android_ndk_sysroot, opts.freebsd_sysroot);
     mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {
-        .windows => "src/deps/zlib.win32.zig",
-        .linux, .mac => "src/deps/zlib.posix.zig",
+        .windows => "src/zlib_sys/win32.zig",
+        .linux, .mac, .freebsd => "src/zlib_sys/posix.zig",
         else => null,
     };
     if (zlib_internal_path) |path| {
@@ -713,9 +994,9 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     }
 
     const async_path = switch (os) {
-        .linux, .mac => "src/async/posix_event_loop.zig",
-        .windows => "src/async/windows_event_loop.zig",
-        else => "src/async/stub_event_loop.zig",
+        .linux, .mac, .freebsd => "src/aio/posix_event_loop.zig",
+        .windows => "src/aio/windows_event_loop.zig",
+        else => "src/aio/stub_event_loop.zig",
     };
     mod.addAnonymousImport("async", .{
         .root_source_file = b.path(async_path),
@@ -779,6 +1060,13 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         mod.addImport("cpp", cppImport);
         cppImport.addImport("bun", mod);
     }
+    {
+        const ciInfoImport = b.createModule(.{
+            .root_source_file = (std.Build.LazyPath{ .cwd_relative = opts.codegen_path }).path(b, "ci_info.zig"),
+        });
+        mod.addImport("ci_info", ciInfoImport);
+        ciInfoImport.addImport("bun", mod);
+    }
     inline for (.{
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
@@ -804,7 +1092,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 fn propagateImports(source_mod: *Module) !void {
     var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
     defer seen.deinit();
-    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    var queue = std.array_list.Managed(*Module).init(source_mod.owner.graph.arena);
     defer queue.deinit();
     try queue.appendSlice(source_mod.import_table.values());
     while (queue.pop()) |mod| {
@@ -831,10 +1119,16 @@ const WindowsShim = struct {
     exe: *Compile,
     dbg: *Compile,
 
-    fn create(b: *Build) WindowsShim {
+    fn create(b: *Build, arch: Arch) WindowsShim {
         const target = b.resolveTargetQuery(.{
-            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
-            .cpu_arch = .x86_64,
+            .cpu_model = switch (arch) {
+                .aarch64 => .baseline,
+                else => .{ .explicit = &std.Target.x86.cpu.nehalem },
+            },
+            .cpu_arch = switch (arch) {
+                .aarch64 => .aarch64,
+                else => .x86_64,
+            },
             .os_tag = .windows,
             .os_version_min = getOSVersionMin(.windows),
         });

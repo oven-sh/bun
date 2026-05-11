@@ -101,6 +101,8 @@ fn unlink(ctx: Command.Context) !void {
             defer node_modules_path.deinit();
 
             var bin_linker = Bin.Linker{
+                .target_node_modules_path = &node_modules_path,
+                .target_package_name = strings.StringOrTinyString.init(name),
                 .bin = package.bin,
                 .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,

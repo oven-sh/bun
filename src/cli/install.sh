@@ -5,7 +5,7 @@ platform=$(uname -ms)
 
 if [[ ${OS:-} = Windows_NT ]]; then
   if [[ $platform != MINGW64* ]]; then
-    powershell -c "irm bun.com/install.ps1|iex"
+    powershell -c "irm bun.sh/install.ps1|iex"
     exit $?
   fi
 fi
@@ -69,6 +69,9 @@ case $platform in
     ;;
 'Linux aarch64' | 'Linux arm64')
     target=linux-aarch64
+    ;;
+'MINGW64'*'ARM64'* | 'MINGW64'*'aarch64'*)
+    target=windows-aarch64
     ;;
 'MINGW64'*)
     target=windows-x64

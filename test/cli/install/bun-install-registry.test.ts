@@ -52,7 +52,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } }));
+  ({ packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
+  }));
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -1284,7 +1286,7 @@ describe("optionalDependencies", () => {
     );
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -2612,7 +2614,7 @@ describe("binaries", () => {
     ]);
 
     let { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "i", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "uses-what-bin"],
+      cmd: [bunExe(), "i", "--linker=hoisted", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "uses-what-bin"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -2628,7 +2630,7 @@ describe("binaries", () => {
     expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeFalse();
 
     ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "i", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "what-bin"],
+      cmd: [bunExe(), "i", "--linker=hoisted", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "what-bin"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -2679,6 +2681,7 @@ describe("binaries", () => {
       const args = [
         bunExe(),
         "install",
+        "--linker=hoisted",
         ...(global ? ["-g"] : []),
         ...(global ? [`--config=${join(packageDir, "bunfig.toml")}`] : []),
         "dep-with-file-bin",
@@ -3020,7 +3023,7 @@ describe("binaries", () => {
   async function runBin(binName: string, expected: string, global: boolean) {
     const args = global ? [`./global-bin-dir/${binName}`] : [bunExe(), binName];
     const result = Bun.spawn({
-      cmd: args,
+      cmd: [...args, "--linker=hoisted"],
       stdout: "pipe",
       stderr: "pipe",
       cwd: packageDir,
@@ -6506,6 +6509,7 @@ test("doesn't error when the migration is out of sync", async () => {
     "package-lock.json": JSON.stringify({
       "name": "reproo",
       "lockfileVersion": 3,
+      "configVersion": 1,
       "requires": true,
       "packages": {
         "": {

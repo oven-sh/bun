@@ -239,7 +239,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
+    var out: std.array_list.Managed(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 
@@ -368,8 +368,8 @@ fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime
 
         // Decode it
         if (has_extra_escapes) {
-            var bytes: std.ArrayList(u8) = try .initCapacity(arena, encoded_line.len);
-            try l.decodeEscapeSequences(0, encoded_line, false, std.ArrayList(u8), &bytes);
+            var bytes: std.array_list.Managed(u8) = try .initCapacity(arena, encoded_line.len);
+            try l.decodeEscapeSequences(0, encoded_line, false, std.array_list.Managed(u8), &bytes);
             decoded_line.* = bytes.items;
         } else {
             decoded_line.* = encoded_line;

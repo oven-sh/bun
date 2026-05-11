@@ -50,6 +50,11 @@ pub const PublishCommand = struct {
                 };
 
                 var maybe_package_json_contents: ?[]const u8 = null;
+                var maybe_readme: ?ReadmeInfo = null;
+                errdefer if (maybe_readme) |r| {
+                    ctx.allocator.free(r.filename);
+                    ctx.allocator.free(r.contents);
+                };
 
                 var iter = switch (Archive.Iterator.init(tarball_bytes)) {
                     .err => |err| {
@@ -90,7 +95,7 @@ pub const PublishCommand = struct {
                         const stripped = pathname[slash + 1 ..];
                         if (stripped.len == 0) continue;
 
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(stripped, .{}),
                         });
@@ -110,10 +115,24 @@ pub const PublishCommand = struct {
                                     },
                                     .result => |bytes| bytes,
                                 };
+                            } else if (maybe_readme == null and isReadmeOSPath(filename)) {
+                                // First matching README wins — libarchive iteration is one-shot.
+                                const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                    .err => |err| {
+                                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                        Global.crash();
+                                    },
+                                    .result => |bytes| bytes,
+                                };
+                                const filename_utf8 = if (comptime bun.OSPathChar == u8)
+                                    try ctx.allocator.dupe(u8, filename)
+                                else
+                                    try strings.toUTF8Alloc(ctx.allocator, filename);
+                                maybe_readme = .{ .filename = filename_utf8, .contents = bytes };
                             }
                         }
                     } else {
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(pathname, .{}),
                         });
@@ -204,6 +223,7 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
+                    maybe_readme,
                 );
 
                 Pack.Context.printSummary(
@@ -457,13 +477,13 @@ pub const PublishCommand = struct {
         version: string,
         registry: *const Npm.Registry.Scope,
     ) bool {
-        var url_buf = std.ArrayList(u8).init(allocator);
+        var url_buf = std.array_list.Managed(u8).init(allocator);
         defer url_buf.deinit();
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
 
         // Try to get package metadata to check if version exists
-        url_buf.writer().print("{s}/{s}", .{ registry_url, encoded_name }) catch return false;
+        url_buf.writer().print("{s}/{f}", .{ registry_url, encoded_name }) catch return false;
 
         const package_url = URL.parse(url_buf.items);
 
@@ -473,7 +493,7 @@ pub const PublishCommand = struct {
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
 
-        var auth_buf = std.ArrayList(u8).init(allocator);
+        var auth_buf = std.array_list.Managed(u8).init(allocator);
         defer auth_buf.deinit();
 
         if (registry.token.len > 0) {
@@ -587,7 +607,7 @@ pub const PublishCommand = struct {
 
         var response_buf = try MutableString.init(ctx.allocator, 1024);
 
-        try print_writer.print("{s}/{s}", .{
+        try print_writer.print("{s}/{f}", .{
             strings.withoutTrailingSlash(registry.url.href),
             bun.fmt.dependencyUrl(ctx.package_name),
         });
@@ -779,12 +799,12 @@ pub const PublishCommand = struct {
             const offset = 0;
             const padding = 1;
 
-            const horizontal = if (Output.enable_ansi_colors) "─" else "-";
-            const vertical = if (Output.enable_ansi_colors) "│" else "|";
-            const top_left = if (Output.enable_ansi_colors) "┌" else "|";
-            const top_right = if (Output.enable_ansi_colors) "┐" else "|";
-            const bottom_left = if (Output.enable_ansi_colors) "└" else "|";
-            const bottom_right = if (Output.enable_ansi_colors) "┘" else "|";
+            const horizontal = if (Output.enable_ansi_colors_stdout) "─" else "-";
+            const vertical = if (Output.enable_ansi_colors_stdout) "│" else "|";
+            const top_left = if (Output.enable_ansi_colors_stdout) "┌" else "|";
+            const top_right = if (Output.enable_ansi_colors_stdout) "┐" else "|";
+            const bottom_left = if (Output.enable_ansi_colors_stdout) "└" else "|";
+            const bottom_right = if (Output.enable_ansi_colors_stdout) "┘" else "|";
 
             const width = (padding * 2) + auth_url_str.len;
 
@@ -861,7 +881,7 @@ pub const PublishCommand = struct {
                             break :nanoseconds 500 * std.time.ns_per_ms;
                         };
 
-                        std.time.sleep(nanoseconds);
+                        std.Thread.sleep(nanoseconds);
                         continue;
                     },
                     200 => {
@@ -919,6 +939,11 @@ pub const PublishCommand = struct {
         };
     }
 
+    pub const ReadmeInfo = struct {
+        filename: string,
+        contents: string,
+    };
+
     pub fn normalizedPackage(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -928,6 +953,7 @@ pub const PublishCommand = struct {
         json_source: *const logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
+        readme: ?ReadmeInfo,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -935,7 +961,7 @@ pub const PublishCommand = struct {
 
         const version_without_build_tag = Dependency.withoutBuildTag(package_version);
 
-        const integrity_fmt = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)});
+        const integrity_fmt = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)});
 
         try json.setString(allocator, "_id", try std.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
         try json.setString(allocator, "_integrity", integrity_fmt);
@@ -944,6 +970,16 @@ pub const PublishCommand = struct {
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
         try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
+
+        // Include README contents in the registry payload so `npm view <pkg>
+        // readme` shows something, matching `npm publish`. User-provided
+        // `readme` in package.json wins.
+        if (readme) |r| {
+            if (json.get("readme") == null) {
+                try json.setString(allocator, "readme", r.contents);
+                try json.setString(allocator, "readmeFilename", r.filename);
+            }
+        }
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -954,7 +990,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
+                .{ .data = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -979,7 +1015,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{f}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
@@ -1042,17 +1078,64 @@ pub const PublishCommand = struct {
         return writer.ctx.writtenWithoutTrailingZero();
     }
 
+    /// Matches npm's `{README,README.*}` glob case-insensitively. Generic
+    /// over char type so it works for both UTF-8 readdir entries and UTF-16
+    /// tar entry names on Windows.
+    fn isReadmeFilenameT(comptime T: type, name: []const T) bool {
+        const README = "README";
+        if (name.len < README.len) return false;
+        if (!strings.eqlCaseInsensitiveT(T, name[0..README.len], README)) return false;
+        return name.len == README.len or name[README.len] == '.';
+    }
+
+    fn isReadmeFilename(name: []const u8) bool {
+        return isReadmeFilenameT(u8, name);
+    }
+
+    fn isReadmeOSPath(name: []const bun.OSPathChar) bool {
+        return isReadmeFilenameT(bun.OSPathChar, name);
+    }
+
+    /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns
+    /// the first match from `readdir` (same ordering npm's glob walks, in practice),
+    /// or null if none is present.
+    pub fn findWorkspaceReadme(
+        allocator: std.mem.Allocator,
+        abs_workspace_path: string,
+    ) OOM!?ReadmeInfo {
+        var workspace_dir = std.fs.openDirAbsolute(abs_workspace_path, .{ .iterate = true }) catch return null;
+        defer workspace_dir.close();
+
+        var iter = bun.DirIterator.iterate(.fromStdDir(workspace_dir), .u8);
+        while (iter.next().unwrap() catch null) |entry| {
+            if (entry.kind == .directory) continue;
+            const name = entry.name.slice();
+            if (!isReadmeFilename(name)) continue;
+
+            const name_dup = try allocator.dupe(u8, name);
+            const contents = switch (bun.sys.File.readFrom(bun.FD.fromStdDir(workspace_dir), name_dup, allocator)) {
+                .result => |bytes| bytes,
+                .err => {
+                    allocator.free(name_dup);
+                    return null;
+                },
+            };
+            return .{ .filename = name_dup, .contents = contents };
+        }
+        return null;
+    }
+
     fn normalizeBin(
         allocator: std.mem.Allocator,
         json: *Expr,
         package_name: string,
-        workspace_root: bun.FileDescriptor,
+        workspace_root: bun.FD,
     ) OOM!void {
         var path_buf: bun.PathBuffer = undefined;
         if (json.asProperty("bin")) |bin_query| {
             switch (bin_query.expr.data) {
                 .e_string => |bin_str| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     const normalized = strings.withoutPrefixComptimeZ(
                         path.normalizeBufZ(
                             try bin_str.string(allocator),
@@ -1087,7 +1170,7 @@ pub const PublishCommand = struct {
                     );
                 },
                 .e_object => |bin_obj| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     for (bin_obj.properties.slice()) |bin_prop| {
                         const key = key: {
                             if (bin_prop.key) |key| {
@@ -1168,7 +1251,7 @@ pub const PublishCommand = struct {
                 const bin_dir_str = bin_query.expr.asString(allocator) orelse {
                     return;
                 };
-                var bin_props = std.ArrayList(G.Property).init(allocator);
+                var bin_props = std.array_list.Managed(G.Property).init(allocator);
                 const normalized_bin_dir = try allocator.dupeZ(
                     u8,
                     strings.withoutTrailingSlash(
@@ -1210,12 +1293,12 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                            const join = try std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
                                 strings.withoutTrailingSlash(name),
-                            });
+                            }, 0);
 
                             break :name_and_subpath .{ join[join.len - name.len ..][0..name.len :0], join };
                         };
@@ -1272,7 +1355,7 @@ pub const PublishCommand = struct {
             if (auth_type) |auth| @tagName(auth) else "web"
         else
             "legacy";
-        const ci_name = bun.detectCI();
+        const ci_name = bun.ci.detectCIName();
 
         {
             headers.count("accept", "*/*");
@@ -1299,14 +1382,7 @@ pub const PublishCommand = struct {
             }
             headers.count("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
@@ -1348,14 +1424,7 @@ pub const PublishCommand = struct {
             }
             headers.append("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
@@ -1420,7 +1489,7 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+            try writer.print(",\"_attachments\":{{\"{f}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
                 Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });
@@ -1442,7 +1511,7 @@ pub const PublishCommand = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Open = @import("../open.zig");
+const Open = @import("./open.zig");
 const std = @import("std");
 
 const bun = @import("bun");

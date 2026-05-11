@@ -480,6 +480,25 @@ if (isDockerEnabled()) {
           expect(b).toEqual({ b: 2 });
         });
 
+        test("Binary", async () => {
+          const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
+          const values = [
+            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          const results = await sql`select * from ${sql(random_name)}`;
+          // return buffers
+          expect(results[0].a).toEqual(Buffer.from([1]));
+          expect(results[0].b).toEqual(Buffer.from([2]));
+          expect(results[0].c).toEqual(Buffer.from([3]));
+          // text protocol should behave the same
+          const results2 = await sql`select * from ${sql(random_name)}`.simple();
+          expect(results2[0].a).toEqual(Buffer.from([1]));
+          expect(results2[0].b).toEqual(Buffer.from([2]));
+          expect(results2[0].c).toEqual(Buffer.from([3]));
+        })
+
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create temporary table test_users (name text, age int)`;
@@ -595,6 +614,41 @@ if (isDockerEnabled()) {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const err = await sql`wat 1`.catch(x => x);
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
+        });
+
+        // Regression: the error_message stored on a cached failed prepared statement
+        // was a .temporary slice into the socket read buffer. Re-running the same
+        // failing query after other queries overwrote the buffer would read garbage
+        // (or crash under ASAN) when constructing the error from the cached statement.
+        test("Cached failed prepared statement returns stable error message", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // Need a parameter so it goes through the prepared-statement cache path.
+          const err1 = await sql`wat ${1}`.catch(x => x);
+          expect(err1.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
+          expect(typeof err1.message).toBe("string");
+          expect(err1.message.length).toBeGreaterThan(0);
+
+          // Run several successful queries on the same connection to overwrite the
+          // socket read buffer that the dangling error_message slice pointed into.
+          const filler = Buffer.alloc(1024, "Z").toString();
+          for (let i = 0; i < 8; i++) {
+            const rows = await sql`select ${filler} as x`;
+            expect(rows[0].x).toBe(filler);
+          }
+
+          // Hitting the cached .failed statement must reproduce the same error.
+          const err2 = await sql`wat ${1}`.catch(x => x);
+          expect({
+            code: err2.code,
+            errno: err2.errno,
+            sqlState: err2.sqlState,
+            message: err2.message,
+          }).toEqual({
+            code: err1.code,
+            errno: err1.errno,
+            sqlState: err1.sqlState,
+            message: err1.message,
+          });
         });
 
         // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.

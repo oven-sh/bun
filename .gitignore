@@ -2,6 +2,7 @@
 .claude/commands/speckit*.md
 .specify
 .temp
+.direnv
 .DS_Store
 .env
 .envrc
@@ -12,6 +13,7 @@
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc
@@ -63,7 +65,8 @@
 /test.ts
 /test.zig
 /testdir
-build
+/build/
+cmake/sources
 build.ninja
 bun-binary
 bun-mimalloc
@@ -124,9 +127,9 @@ sign.*.json
 sign.json
 src/bake/generated.ts
 src/generated_enum_extractor.zig
-src/bun.js/bindings-obj
-src/bun.js/bindings/GeneratedJS2Native.zig
-src/bun.js/bindings/GeneratedBindings.zig
+src/jsc/bindings-obj
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
@@ -193,5 +196,5 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 scripts/lldb-inline
 
-# We regenerate these in all the build scripts
-cmake/sources/*.txt
+test/integration/bun-types/fixture/bun.lock
+.claude/scheduled_tasks.lock

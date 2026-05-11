@@ -108,6 +108,15 @@ pub const Store = struct {
 
         peer_hash: PeerHash,
 
+        /// Content hash of (package + sorted resolved dependency global-store keys),
+        /// used to key the global virtual store at `<cache>/links/<storepath>-<entry_hash>/`.
+        /// Two projects that resolve the same package to the same dependency closure
+        /// share one global-store entry; if a transitive dep version differs, the
+        /// hash differs and a new global-store entry is created. Computed after the
+        /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
+        /// (root, workspace, folder, symlink, patched).
+        entry_hash: u64 = 0,
+
         scripts: ?*Package.Scripts.List = null,
 
         pub const PeerHash = enum(u64) {
@@ -128,7 +137,7 @@ pub const Store = struct {
             store: *const Store,
             lockfile: *const Lockfile,
 
-            pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const store = this.store;
                 const entries = store.entries.slice();
                 const entry_peer_hashes = entries.items(.peer_hash);
@@ -152,19 +161,19 @@ pub const Store = struct {
                         if (pkg_name.isEmpty()) {
                             try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
                         } else {
-                            try writer.print("{}@root", .{
+                            try writer.print("{f}@root", .{
                                 pkg_name.fmtStorePath(string_buf),
                             });
                         }
                     },
                     .folder => {
-                        try writer.print("{}@file+{}", .{
+                        try writer.print("{f}@file+{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.value.folder.fmtStorePath(string_buf),
                         });
                     },
                     else => {
-                        try writer.print("{}@{}", .{
+                        try writer.print("{f}@{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.fmtStorePath(string_buf),
                         });
@@ -172,7 +181,7 @@ pub const Store = struct {
                 }
 
                 if (peer_hash != .none) {
-                    try writer.print("+{}", .{
+                    try writer.print("+{f}", .{
                         bun.fmt.hexIntLower(peer_hash.cast()),
                     });
                 }
@@ -181,6 +190,26 @@ pub const Store = struct {
 
         pub fn fmtStorePath(entry_id: Id, store: *const Store, lockfile: *const Lockfile) StorePathFormatter {
             return .{ .entry_id = entry_id, .store = store, .lockfile = lockfile };
+        }
+
+        const GlobalStorePathFormatter = struct {
+            inner: StorePathFormatter,
+            entry_hash: u64,
+
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+                try this.inner.format(writer);
+                try writer.print("-{f}", .{bun.fmt.hexIntLower(this.entry_hash)});
+            }
+        };
+
+        /// Like `fmtStorePath` but suffixes the entry's content hash so the
+        /// resulting name is safe to use as a key in the shared global virtual
+        /// store (different dependency closures get different directory names).
+        pub fn fmtGlobalStorePath(entry_id: Id, store: *const Store, lockfile: *const Lockfile) GlobalStorePathFormatter {
+            return .{
+                .inner = fmtStorePath(entry_id, store, lockfile),
+                .entry_hash = store.entries.items(.entry_hash)[entry_id.get()],
+            };
         }
 
         pub fn debugGatherAllParents(entry_id: Id, store: *const Store) []const Id {

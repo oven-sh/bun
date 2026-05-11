@@ -34,6 +34,99 @@ wow = 'hi'
     });
   });
   describe("env vars", () => {
+    // Tests translated from npm's workspaces/config/test/env-replace.js
+    envVarTest({
+      name: "replaces multiple defined variables",
+      ini: "hi = ${FOO}${BAR}",
+      env: { FOO: "bar", BAR: "baz" },
+      expected: { hi: "barbaz" },
+    });
+
+    envVarTest({
+      name: "replaces mixed defined/undefined variables with ? modifier",
+      ini: "hi = ${FOO?}${BAZ?}",
+      env: { FOO: "bar" },
+      expected: { hi: "bar" },
+    });
+
+    envVarTest({
+      name: "escapes normal variable",
+      ini: "hi = \\${FOO}",
+      env: { FOO: "bar" },
+      expected: { hi: "${FOO}" },
+    });
+
+    envVarTest({
+      name: "double escape allows replacement",
+      ini: "hi = \\\\${FOO}",
+      env: { FOO: "bar" },
+      expected: { hi: "\\bar" },
+    });
+
+    envVarTest({
+      name: "triple escape prevents replacement",
+      ini: "hi = \\\\\\${FOO}",
+      env: { FOO: "bar" },
+      expected: { hi: "\\${FOO}" },
+    });
+
+    envVarTest({
+      name: "leaves undefined variable unreplaced",
+      ini: "hi = ${BAZ}",
+      env: { FOO: "bar" },
+      expected: { hi: "${BAZ}" },
+    });
+
+    envVarTest({
+      name: "escapes undefined variable",
+      ini: "hi = \\${BAZ}",
+      env: { FOO: "bar" },
+      expected: { hi: "${BAZ}" },
+    });
+
+    envVarTest({
+      name: "double escape with undefined variable",
+      ini: "hi = \\\\${BAZ}",
+      env: { FOO: "bar" },
+      expected: { hi: "\\${BAZ}" },
+    });
+
+    envVarTest({
+      name: "escapes optional variable",
+      ini: "hi = \\${FOO?}",
+      env: { FOO: "bar" },
+      expected: { hi: "${FOO?}" },
+    });
+
+    envVarTest({
+      name: "double escape allows optional replacement",
+      ini: "hi = \\\\${FOO?}",
+      env: { FOO: "bar" },
+      expected: { hi: "\\bar" },
+    });
+
+    envVarTest({
+      name: "replaces undefined variable with empty string when using ? modifier",
+      ini: "hi = ${BAZ?}",
+      env: { FOO: "bar" },
+      expected: { hi: "" },
+    });
+
+    envVarTest({
+      name: "escapes undefined optional variable",
+      ini: "hi = \\${BAZ?}",
+      env: { FOO: "bar" },
+      expected: { hi: "${BAZ?}" },
+    });
+
+    envVarTest({
+      name: "double escape with undefined optional variable results in empty replacement",
+      ini: "hi = \\\\${BAZ?}",
+      env: { FOO: "bar" },
+      expected: { hi: "\\" },
+    });
+
+    // Original bun tests
     envVarTest({
       name: "escaped",
       ini: "hi = \\${NODE_ENV}",
@@ -107,6 +200,117 @@ hello = greeting: \${LOL
       `,
       env: { LOL: "hi" },
       expected: { hello: "greeting: ${LOL" },
+    });
+
+    envVarTest({
+      name: "double quoted env var",
+      ini: /* ini */ `
+hello = "\${LOL}"
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "single quoted env var",
+      ini: /* ini */ `
+hello = '\${LOL}'
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "double quoted env var with prefix",
+      ini: /* ini */ `
+hello = "Bearer \${TOKEN}"
+      `,
+      env: { TOKEN: "secret123" },
+      expected: { hello: "Bearer secret123" },
+    });
+
+    envVarTest({
+      name: "double quoted env var not found leaves as-is",
+      ini: /* ini */ `
+hello = "\${NOTFOUND}"
+      `,
+      env: {},
+      expected: { hello: "${NOTFOUND}" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = \${NOTFOUND?}
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var expands to value when found",
+      ini: /* ini */ `
+hello = \${TOKEN?}
+      `,
+      env: { TOKEN: "secret" },
+      expected: { hello: "secret" },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = "\${NOTFOUND?}"
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var expands to value when found",
+      ini: /* ini */ `
+hello = "\${TOKEN?}"
+      `,
+      env: { TOKEN: "secret" },
+      expected: { hello: "secret" },
+    });
+
+    envVarTest({
+      name: "single quoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = '\${NOTFOUND?}'
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var with prefix",
+      ini: /* ini */ `
+hello = Bearer \${TOKEN?}
+      `,
+      env: {},
+      expected: { hello: "Bearer " },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var with prefix",
+      ini: /* ini */ `
+hello = "Bearer \${TOKEN?}"
+      `,
+      env: {},
+      expected: { hello: "Bearer " },
+    });
+
+    // Note: In JSON strings, \$ is just $ (backslash doesn't escape $)
+    // So "\\${LOL}" in .npmrc becomes "\${LOL}" after JSON parsing, which expands to "\hi"
+    // This matches npm behavior where escaping env vars in quoted strings requires \\$
+    envVarTest({
+      name: "double quoted with backslash before env var",
+      ini: /* ini */ `
+hello = "\\\\$\{LOL}"
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "\\hi" },
     });
 
     function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
@@ -283,6 +487,61 @@ brr = 3
         "x.y.z": "xyz",
       },
       "zr": ["deedee"],
+    });
+  });
+
+  describe("truncated/invalid utf-8", () => {
+    test("bare continuation byte (0x80) should not crash", () => {
+      // 0x80 is a continuation byte without a leading byte
+      // utf8ByteSequenceLength returns 0, which must not hit unreachable
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0x80])]).toString("latin1");
+      // Should not crash - just parse gracefully
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 2-byte sequence at end of value", () => {
+      // 0xC0 is a 2-byte lead byte, but there's no continuation byte following
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xc0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 3-byte sequence at end of value", () => {
+      // 0xE0 is a 3-byte lead byte, but only 0 continuation bytes follow
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xe0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 3-byte sequence with 1 continuation byte at end", () => {
+      // 0xE0 is a 3-byte lead byte, but only 1 continuation byte follows
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xe0, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence at end of value", () => {
+      // 0xF0 is a 4-byte lead byte, but only 0 continuation bytes follow
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence with 1 continuation byte at end", () => {
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence with 2 continuation bytes at end", () => {
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0, 0x80, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 2-byte sequence in escaped context", () => {
+      // Backslash followed by a 2-byte lead byte at end of value
+      const ini = Buffer.concat([Buffer.from("key = \\"), Buffer.from([0xc0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("bare continuation byte in escaped context", () => {
+      const ini = Buffer.concat([Buffer.from("key = \\"), Buffer.from([0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
     });
   });
 });

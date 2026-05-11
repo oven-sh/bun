@@ -5,11 +5,10 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
-import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import nodefs, { unlinkSync } from "node:fs";
+import nodefs from "node:fs";
 import http, {
   Agent,
   createServer,
@@ -832,7 +831,12 @@ describe("node:http", () => {
 
     it("should correctly stream a multi-chunk response #5320", async done => {
       runTest(done, (server, serverPort, done) => {
-        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+        const req = request({
+          host: "localhost",
+          port: `${serverPort}`,
+          path: "/multi-chunk-response",
+          method: "GET",
+        });
 
         req.on("error", err => done(err));
 
@@ -863,7 +867,7 @@ describe("node:http", () => {
 
   describe("https.request with custom tls options", () => {
     it("supports custom tls args", async () => {
-      using httpsServer = exampleSite();
+      await using httpsServer = exampleSite();
 
       const { promise, resolve, reject } = Promise.withResolvers();
       const options: https.RequestOptions = {
@@ -1046,9 +1050,10 @@ describe("node:http", () => {
     });
   });
 
-  test("test unix socket server", done => {
+  test("test unix socket server", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
-    const server = createServer((req, res) => {
+    await using server = createServer((req, res) => {
       expect(req.method).toStrictEqual("GET");
       expect(req.url).toStrictEqual("/bun?a=1");
       res.writeHead(200, {
@@ -1059,24 +1064,36 @@ describe("node:http", () => {
       res.end();
     });
 
-    server.listen(socketPath, () => {
-      // TODO: unix socket is not implemented in fetch.
-      const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
+    server.listen(socketPath, async () => {
       try {
-        expect(output.stdout.toString()).toStrictEqual("Bun\n");
-        done();
+        const response = await fetch(`http://localhost/bun?a=1`, {
+          unix: socketPath,
+        });
+        const text = await response.text();
+        expect(text).toBe("Bun\n");
+        resolve();
       } catch (err) {
-        done(err);
-      } finally {
-        server.close();
+        reject(err);
       }
     });
+
+    await promise;
   });
 
   test("should not decompress gzip, issue#4397", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch() {
+        const body = Bun.gzipSync(Buffer.from("<html>Hello</html>"));
+        return new Response(body, {
+          headers: { "content-encoding": "gzip" },
+        });
+      },
+    });
     const { promise, resolve } = Promise.withResolvers();
     https
-      .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      .request(server.url, { ca: tlsCert.cert, headers: { "accept-encoding": "gzip" } }, res => {
         res.on("data", function cb(chunk) {
           resolve(chunk);
           res.off("data", cb);
@@ -1236,7 +1253,6 @@ describe("server.address should be valid IP", () => {
         done(err);
       } finally {
         server.close();
-        unlinkSync(socketPath);
       }
     });
   });
@@ -1284,26 +1300,26 @@ describe("server.address should be valid IP", () => {
 });
 
 it("should propagate exception in sync data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 
 it("should propagate exception in async data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.2.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 
@@ -1622,6 +1638,75 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).toInclude("400 Bad Request");
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Response Splitting Protection", () => {
+    test("rejects CRLF in statusMessage set via property assignment followed by res.end()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nSet-Cookie: admin=true";
+        try {
+          res.end("body");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      // The injected Set-Cookie header must NOT appear in the response
+      expect(response).not.toInclude("Set-Cookie: admin=true");
+    });
+
+    test("rejects CRLF in statusMessage set via property assignment followed by res.write()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nX-Injected: evil";
+        try {
+          res.write("chunk");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(response).not.toInclude("X-Injected: evil");
+    });
+
+    test("rejects CRLF in statusMessage passed to writeHead()", async () => {
+      server.on("request", (req, res) => {
+        expect(() => {
+          res.writeHead(200, "OK\r\nX-Injected: evil");
+        }).toThrow(/Invalid character in statusMessage/);
+        res.writeHead(200, "OK");
+        res.end("safe");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).not.toInclude("X-Injected");
+      expect(response).toInclude("safe");
+    });
+
+    test("allows valid statusMessage without control characters", async () => {
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "Everything Is Fine";
+        res.end("ok");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).toInclude("200 Everything Is Fine");
+      expect(response).toInclude("ok");
     });
   });
 

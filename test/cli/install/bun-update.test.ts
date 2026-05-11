@@ -44,7 +44,6 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       },
       latest: "0.0.3",
     };
-    console.log({ package_dir });
     setHandler(dummyRegistry(urls, registry));
     await writeFile(
       join(package_dir, "package.json"),
@@ -60,7 +59,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       stderr: stderr1,
       exited: exited1,
     } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -104,7 +103,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       stderr: stderr2,
       exited: exited2,
     } = spawn({
-      cmd: [bunExe(), "update", "baz"],
+      cmd: [bunExe(), "update", "baz", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -181,7 +180,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       stderr: stderr1,
       exited: exited1,
     } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -232,7 +231,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       stderr: stderr2,
       exited: exited2,
     } = spawn({
-      cmd: [bunExe(), "update"],
+      cmd: [bunExe(), "update", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -319,7 +318,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",

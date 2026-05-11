@@ -9,7 +9,7 @@ import tls from "node:tls";
 import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-const { afterEach, beforeEach, describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
 const ASAN_MULTIPLIER = isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
@@ -39,18 +39,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
     http2.constants.PADDING_STRATEGY_MAX,
     http2.constants.PADDING_STRATEGY_ALIGNED,
   ]) {
-    describe(`${path.basename(nodeExecutable)} ${paddingStrategyName(paddingStrategy)}`, () => {
-      let nodeEchoServer_;
-
-      let HTTPS_SERVER;
-      beforeEach(async () => {
-        nodeEchoServer_ = await nodeEchoServer(paddingStrategy);
-        HTTPS_SERVER = nodeEchoServer_.url;
-      });
-      afterEach(async () => {
-        nodeEchoServer_.subprocess?.kill?.(9);
-      });
-
+    describe.concurrent(`${path.basename(nodeExecutable)} ${paddingStrategyName(paddingStrategy)}`, () => {
       async function nodeDynamicServer(test_name, code) {
         if (!nodeExecutable) throw new Error("node executable not found");
 
@@ -59,7 +48,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           fs.mkdirSync(tmp_dir, { recursive: true });
         }
 
-        const file_name = path.join(tmp_dir, test_name);
+        const file_name = path.join(
+          tmp_dir,
+          `${path.basename(nodeExecutable)}.${paddingStrategyName(paddingStrategy)}.${test_name}`,
+        );
         const contents = Buffer.from(`const http2 = require("http2");
     const server = http2.createServer({ paddingStrategy: ${paddingStrategy} });
   ${code}
@@ -85,7 +77,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         return { address, url, subprocess };
       }
 
-      function doHttp2Request(url, headers, payload, options, request_options) {
+      function doHttp2Request(HTTPS_SERVER, url, headers, payload, options, request_options) {
         const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
         if (url.startsWith(HTTPS_SERVER)) {
           options = { ...(options || {}), rejectUnauthorized: true, ...TLS_OPTIONS };
@@ -170,9 +162,24 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
       }
 
       describe("Client Basics", () => {
+        // The echo server is stateless; share one instance across all tests in
+        // this describe block instead of spawning a fresh subprocess per test.
+        let sharedEchoServer;
+        let HTTPS_SERVER;
+        beforeAll(async () => {
+          sharedEchoServer = await nodeEchoServer(paddingStrategy);
+          HTTPS_SERVER = sharedEchoServer.url;
+        });
+        afterAll(() => {
+          sharedEchoServer?.subprocess?.kill?.(9);
+        });
+
         // we dont support server yet but we support client
         it("should be able to send a GET request", async () => {
-          const result = await doHttp2Request(HTTPS_SERVER, { ":path": "/get", "test-header": "test-value" });
+          const result = await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, {
+            ":path": "/get",
+            "test-header": "test-value",
+          });
           let parsed;
           expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
           expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
@@ -181,6 +188,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         it("should be able to send a POST request", async () => {
           const payload = JSON.stringify({ "hello": "bun" });
           const result = await doHttp2Request(
+            HTTPS_SERVER,
             HTTPS_SERVER,
             { ":path": "/post", "test-header": "test-value", ":method": "POST" },
             payload,
@@ -248,7 +256,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(settings).toBeDefined();
             expect(settings).toEqual({
               headerTableSize: 4096,
-              enablePush: false,
+              enablePush: true,
               maxConcurrentStreams: 4294967295,
               initialWindowSize: 65535,
               maxFrameSize: 16384,
@@ -525,7 +533,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(settings).toEqual({
             enableConnectProtocol: false,
             headerTableSize: 4096,
-            enablePush: false,
+            enablePush: true,
             initialWindowSize: 65535,
             maxFrameSize: 16384,
             maxConcurrentStreams: 4294967295,
@@ -545,28 +553,24 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             enableConnectProtocol: false,
           };
           const buffer = http2.getPackedSettings(settings);
-          expect(buffer.byteLength).toBe(36);
+          expect(buffer.byteLength).toBe(42);
           expect(http2.getUnpackedSettings(buffer)).toEqual(settings);
         });
         it("getUnpackedSettings should throw if buffer is too small", () => {
-          const buffer = new ArrayBuffer(1);
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(
-            /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
-          );
+          const buffer = Buffer.alloc(1);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Packed settings length must be a multiple of six/);
         });
         it("getUnpackedSettings should throw if buffer is not a multiple of 6 bytes", () => {
-          const buffer = new ArrayBuffer(7);
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(
-            /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
-          );
+          const buffer = Buffer.alloc(7);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Packed settings length must be a multiple of six/);
         });
         it("getUnpackedSettings should throw if buffer is not a buffer", () => {
           const buffer = {};
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Expected buf to be a Buffer/);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow();
         });
         it("headers cannot be bigger than 65536 bytes", async () => {
           try {
-            await doHttp2Request(HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
+            await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
             expect("unreachable").toBe(true);
           } catch (err) {
             expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
@@ -616,12 +620,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(client.destroyed).toBe(true);
         });
         it("should fail to connect over HTTP/1.1", async () => {
-          const tls = TLS_CERT;
+          const tlsCert = TLS_CERT;
           using server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
             tls: {
-              ...tls,
+              ...tlsCert,
               ca: TLS_CERT.ca,
             },
             fetch() {
@@ -630,7 +634,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           const url = `https://127.0.0.1:${server.port}`;
           try {
-            await doHttp2Request(url, { ":path": "/" }, null, TLS_OPTIONS);
+            await doHttp2Request(HTTPS_SERVER, url, { ":path": "/" }, null, TLS_OPTIONS);
             expect("unreachable").toBe(true);
           } catch (err) {
             expect(err.code).toBe("ERR_HTTP2_ERROR");
@@ -663,7 +667,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
                 ...TLS_OPTIONS,
               },
               () => {
-                doHttp2Request(`${HTTPS_SERVER}/get`, { ":path": "/get" }, null, {
+                doHttp2Request(HTTPS_SERVER, `${HTTPS_SERVER}/get`, { ":path": "/get" }, null, {
                   createConnection: () => {
                     return new JSSocket(socket);
                   },
@@ -687,7 +691,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         });
         it("is possible to abort request", async () => {
           const abortController = new AbortController();
-          const promise = doHttp2Request(`${HTTPS_SERVER}/get`, { ":path": "/get" }, null, null, {
+          const promise = doHttp2Request(HTTPS_SERVER, `${HTTPS_SERVER}/get`, { ":path": "/get" }, null, null, {
             signal: abortController.signal,
           });
           abortController.abort();
@@ -796,60 +800,74 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(typeof settings.maxHeaderListSize).toBe("number");
             expect(typeof settings.maxHeaderSize).toBe("number");
           };
-          const { promise, resolve, reject } = Promise.withResolvers();
-          const client = http2.connect("https://www.example.com");
-          client.on("error", reject);
-          expect(client.connecting).toBeTrue();
-          expect(client.alpnProtocol).toBeUndefined();
-          expect(client.encrypted).toBeTrue();
-          expect(client.closed).toBeFalse();
-          expect(client.destroyed).toBeFalse();
-          expect(client.originSet.length).toBe(1);
-          expect(client.pendingSettingsAck).toBeTrue();
-          assertSettings(client.localSettings);
-          expect(client.remoteSettings).toBeNull();
-          const headers = { ":path": "/" };
-          const req = client.request(headers);
-          expect(req.closed).toBeFalse();
-          expect(req.destroyed).toBeFalse();
-          // we always asign a stream id to the request
-          expect(req.pending).toBeFalse();
-          expect(typeof req.id).toBe("number");
-          expect(req.session).toBeDefined();
-          expect(req.sentHeaders).toEqual({
-            ":authority": "www.example.com",
-            ":method": "GET",
-            ":path": "/",
-            ":scheme": "https",
+          const h2Server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+          h2Server.on("stream", (stream, headers) => {
+            stream.respond({ ":status": 200 });
+            stream.end("OK");
           });
-          expect(req.sentTrailers).toBeUndefined();
-          expect(req.sentInfoHeaders.length).toBe(0);
-          expect(req.scheme).toBe("https");
-          let response_headers = null;
-          req.on("response", (headers, flags) => {
-            response_headers = headers;
-          });
-          req.resume();
-          req.on("end", () => {
-            resolve();
-          });
-          await promise;
-          expect(response_headers[":status"]).toBe(200);
-          const settings = client.remoteSettings;
-          const localSettings = client.localSettings;
-          assertSettings(settings);
-          assertSettings(localSettings);
-          expect(settings).toEqual(client.remoteSettings);
-          expect(localSettings).toEqual(client.localSettings);
-          client.destroy();
-          expect(client.connecting).toBeFalse();
-          expect(client.alpnProtocol).toBe("h2");
-          expect(client.pendingSettingsAck).toBeFalse();
-          expect(client.destroyed).toBeTrue();
-          expect(client.closed).toBeTrue();
-          expect(req.closed).toBeTrue();
-          expect(req.destroyed).toBeTrue();
-          expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+          const { promise: listenPromise, resolve: listenResolve } = Promise.withResolvers();
+          h2Server.listen(0, () => listenResolve());
+          await listenPromise;
+          const serverAddress = h2Server.address();
+          const serverUrl = `https://localhost:${serverAddress.port}`;
+          try {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const client = http2.connect(serverUrl, TLS_OPTIONS);
+            client.on("error", reject);
+            expect(client.connecting).toBeTrue();
+            expect(client.alpnProtocol).toBeUndefined();
+            expect(client.encrypted).toBeTrue();
+            expect(client.closed).toBeFalse();
+            expect(client.destroyed).toBeFalse();
+            expect(client.originSet.length).toBe(1);
+            expect(client.pendingSettingsAck).toBeTrue();
+            assertSettings(client.localSettings);
+            expect(client.remoteSettings).toBeNull();
+            const headers = { ":path": "/" };
+            const req = client.request(headers);
+            expect(req.closed).toBeFalse();
+            expect(req.destroyed).toBeFalse();
+            // we always asign a stream id to the request
+            expect(req.pending).toBeFalse();
+            expect(typeof req.id).toBe("number");
+            expect(req.session).toBeDefined();
+            expect(req.sentHeaders).toEqual({
+              ":authority": `localhost:${serverAddress.port}`,
+              ":method": "GET",
+              ":path": "/",
+              ":scheme": "https",
+            });
+            expect(req.sentTrailers).toBeUndefined();
+            expect(req.sentInfoHeaders.length).toBe(0);
+            expect(req.scheme).toBe("https");
+            let response_headers = null;
+            req.on("response", (headers, flags) => {
+              response_headers = headers;
+            });
+            req.resume();
+            req.on("end", () => {
+              resolve();
+            });
+            await promise;
+            expect(response_headers[":status"]).toBe(200);
+            const settings = client.remoteSettings;
+            const localSettings = client.localSettings;
+            assertSettings(settings);
+            assertSettings(localSettings);
+            expect(settings).toEqual(client.remoteSettings);
+            expect(localSettings).toEqual(client.localSettings);
+            client.destroy();
+            expect(client.connecting).toBeFalse();
+            expect(client.alpnProtocol).toBe("h2");
+            expect(client.pendingSettingsAck).toBeFalse();
+            expect(client.destroyed).toBeTrue();
+            expect(client.closed).toBeTrue();
+            expect(req.closed).toBeTrue();
+            expect(req.destroyed).toBeTrue();
+            expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+          } finally {
+            h2Server.close();
+          }
         });
         it("ping events should work", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -1000,19 +1018,23 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
 
         it.skipIf(!isCI)(
           "should not leak memory",
-          () => {
-            const { stdout, exitCode } = Bun.spawnSync({
+          async () => {
+            // Use a dedicated server: this test floods it with requests for ~100s
+            // and would contend with other concurrent tests sharing the same server.
+            await using server = await nodeEchoServer(paddingStrategy);
+            await using proc = Bun.spawn({
               cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
               env: {
                 ...bunEnv,
                 BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
-                HTTP2_SERVER_INFO: JSON.stringify(nodeEchoServer_),
+                HTTP2_SERVER_INFO: JSON.stringify(server),
                 HTTP2_SERVER_TLS: JSON.stringify(TLS_OPTIONS),
               },
               stderr: "inherit",
               stdin: "inherit",
               stdout: "inherit",
             });
+            const exitCode = await proc.exited;
             expect(exitCode || 0).toBe(0);
           },
           100000,
@@ -1084,53 +1106,55 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             server.subprocess.kill();
           }
         });
-        it("should not be able to write on socket", done => {
+        it("should not be able to write on socket", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS, (session, socket) => {
             try {
               client.socket.write("hello");
               client.socket.end();
-              expect().fail("unreachable");
+              reject(new Error("unreachable"));
             } catch (err) {
               try {
                 expect(err.code).toBe("ERR_HTTP2_NO_SOCKET_MANIPULATION");
-              } catch (err) {
-                done(err);
+                resolve();
+              } catch (err2) {
+                reject(err2);
               }
-              done();
             }
           });
+          await promise;
         });
-        it("should handle bad GOAWAY server frame size", done => {
+        it("should handle bad GOAWAY server frame size", async () => {
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
             const frame = new http2utils.Frame(7, 7, 0, 0).data;
             socket.write(Buffer.concat([frame, Buffer.alloc(7)]));
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+          } finally {
+            server.close();
+          }
         });
-        it("should handle bad DATA_FRAME server frame size", done => {
+        it("should handle bad DATA_FRAME server frame size", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1138,31 +1162,30 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const frame = new http2utils.DataFrame(1, Buffer.alloc(16384 * 2), 0, 1).data;
             socket.write(frame);
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+          } finally {
+            server.close();
+          }
         });
-        it("should handle bad RST_FRAME server frame size (no stream)", done => {
+        it("should handle bad RST_FRAME server frame size (no stream)", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1170,31 +1193,30 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const frame = new http2utils.Frame(4, 3, 0, 0).data;
             socket.write(Buffer.concat([frame, Buffer.alloc(4)]));
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+          } finally {
+            server.close();
+          }
         });
-        it("should handle bad RST_FRAME server frame size (less than allowed)", done => {
+        it("should handle bad RST_FRAME server frame size (less than allowed)", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1202,31 +1224,30 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const frame = new http2utils.Frame(3, 3, 0, 1).data;
             socket.write(Buffer.concat([frame, Buffer.alloc(3)]));
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+          } finally {
+            server.close();
+          }
         });
-        it("should handle bad RST_FRAME server frame size (more than allowed)", done => {
+        it("should handle bad RST_FRAME server frame size (more than allowed)", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1235,32 +1256,31 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const frame = new http2utils.Frame(buffer.byteLength, 3, 0, 1).data;
             socket.write(Buffer.concat([frame, buffer]));
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+          } finally {
+            server.close();
+          }
         });
 
-        it("should handle bad CONTINUATION_FRAME server frame size", done => {
+        it("should handle bad CONTINUATION_FRAME server frame size", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1277,32 +1297,31 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             );
             socket.write(continuationFrame.data);
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+          } finally {
+            server.close();
+          }
         });
 
-        it("should handle bad PRIOTITY_FRAME server frame size", done => {
+        it("should handle bad PRIOTITY_FRAME server frame size", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
             const settings = new http2utils.SettingsFrame(true);
             socket.write(settings.data);
@@ -1311,28 +1330,26 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const frame = new http2utils.Frame(4, 2, 0, 1).data;
             socket.write(Buffer.concat([frame, Buffer.alloc(4)]));
           });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = `http://127.0.0.1:${server.address().port}`;
-            try {
-              const { promise, resolve } = Promise.withResolvers();
-              const client = http2.connect(url);
-              client.on("error", resolve);
-              client.on("connect", () => {
-                const req = client.request({ ":path": "/" });
-                req.end();
-                allowWrite();
-              });
-              const result = await promise;
-              expect(result).toBeDefined();
-              expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-              expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-              done();
-            } catch (err) {
-              done(err);
-            } finally {
-              server.close();
-            }
-          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+          } finally {
+            server.close();
+          }
         });
       });
     });

@@ -21,6 +21,7 @@
 
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN no 'ab' installed
 const assert = require('assert');
 // This test requires the program 'ab'
 const http = require('http');
@@ -29,10 +30,6 @@ const exec = require('child_process').exec;
 const bodyLength = 12345;
 
 const body = 'c'.repeat(bodyLength);
-
-if (typeof Bun !== "undefined" && !Bun.which("ab")) {
-  common.skip("ab not found");
-}
 
 const server = http.createServer(function(req, res) {
   res.writeHead(200, {

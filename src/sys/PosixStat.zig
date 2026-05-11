@@ -1,16 +1,17 @@
-/// POSIX-like stat structure with birthtime support for node:fs
-/// This extends the standard POSIX stat with birthtime (creation time)
+/// POSIX-like stat structure with birthtime support for node:fs.
+/// Mirrors libuv's `uv_stat_t` (all `uint64_t` fields) so the native → JS
+/// conversion matches Node.js exactly.
 pub const PosixStat = extern struct {
-    dev: @FieldType(bun.Stat, "dev"),
-    ino: @FieldType(bun.Stat, "ino"),
-    mode: @FieldType(bun.Stat, "mode"),
-    nlink: @FieldType(bun.Stat, "nlink"),
-    uid: @FieldType(bun.Stat, "uid"),
-    gid: @FieldType(bun.Stat, "gid"),
-    rdev: @FieldType(bun.Stat, "rdev"),
-    size: @FieldType(bun.Stat, "size"),
-    blksize: @FieldType(bun.Stat, "blksize"),
-    blocks: @FieldType(bun.Stat, "blocks"),
+    dev: u64,
+    ino: u64,
+    mode: u64,
+    nlink: u64,
+    uid: u64,
+    gid: u64,
+    rdev: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
 
     /// Access time
     atim: bun.timespec,
@@ -21,58 +22,41 @@ pub const PosixStat = extern struct {
     /// Birth time (creation time) - may be zero if not supported
     birthtim: bun.timespec,
 
+    /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
+    /// when copying platform `struct stat` fields into `uv_stat_t`.
+    fn toU64(value: anytype) u64 {
+        return switch (@typeInfo(@TypeOf(value)).int.signedness) {
+            .signed => @bitCast(@as(i64, value)),
+            .unsigned => value,
+        };
+    }
+
     /// Convert platform-specific bun.Stat to PosixStat
     pub fn init(stat_: *const bun.Stat) PosixStat {
-        if (Environment.isWindows) {
-            // Windows: all fields need casting
-            const atime_val = stat_.atime();
-            const mtime_val = stat_.mtime();
-            const ctime_val = stat_.ctime();
-            const birthtime_val = stat_.birthtime();
+        const atime_val = stat_.atime();
+        const mtime_val = stat_.mtime();
+        const ctime_val = stat_.ctime();
+        const birthtime_val = if (Environment.isLinux)
+            bun.timespec.epoch
+        else
+            stat_.birthtime();
 
-            return PosixStat{
-                .dev = @intCast(stat_.dev),
-                .ino = @intCast(stat_.ino),
-                .mode = @intCast(stat_.mode),
-                .nlink = @intCast(stat_.nlink),
-                .uid = @intCast(stat_.uid),
-                .gid = @intCast(stat_.gid),
-                .rdev = @intCast(stat_.rdev),
-                .size = @intCast(stat_.size),
-                .blksize = @intCast(stat_.blksize),
-                .blocks = @intCast(stat_.blocks),
-                .atim = .{ .sec = atime_val.sec, .nsec = atime_val.nsec },
-                .mtim = .{ .sec = mtime_val.sec, .nsec = mtime_val.nsec },
-                .ctim = .{ .sec = ctime_val.sec, .nsec = ctime_val.nsec },
-                .birthtim = .{ .sec = birthtime_val.sec, .nsec = birthtime_val.nsec },
-            };
-        } else {
-            // POSIX (Linux/macOS): use accessor methods and cast types
-            const atime_val = stat_.atime();
-            const mtime_val = stat_.mtime();
-            const ctime_val = stat_.ctime();
-            const birthtime_val = if (Environment.isLinux)
-                bun.timespec.epoch
-            else
-                stat_.birthtime();
-
-            return PosixStat{
-                .dev = @intCast(stat_.dev),
-                .ino = @intCast(stat_.ino),
-                .mode = @intCast(stat_.mode),
-                .nlink = @intCast(stat_.nlink),
-                .uid = @intCast(stat_.uid),
-                .gid = @intCast(stat_.gid),
-                .rdev = @intCast(stat_.rdev),
-                .size = @intCast(stat_.size),
-                .blksize = @intCast(stat_.blksize),
-                .blocks = @intCast(stat_.blocks),
-                .atim = .{ .sec = atime_val.sec, .nsec = atime_val.nsec },
-                .mtim = .{ .sec = mtime_val.sec, .nsec = mtime_val.nsec },
-                .ctim = .{ .sec = ctime_val.sec, .nsec = ctime_val.nsec },
-                .birthtim = .{ .sec = birthtime_val.sec, .nsec = birthtime_val.nsec },
-            };
-        }
+        return PosixStat{
+            .dev = toU64(stat_.dev),
+            .ino = toU64(stat_.ino),
+            .mode = toU64(stat_.mode),
+            .nlink = toU64(stat_.nlink),
+            .uid = toU64(stat_.uid),
+            .gid = toU64(stat_.gid),
+            .rdev = toU64(stat_.rdev),
+            .size = toU64(stat_.size),
+            .blksize = toU64(stat_.blksize),
+            .blocks = toU64(stat_.blocks),
+            .atim = .{ .sec = atime_val.sec, .nsec = atime_val.nsec },
+            .mtim = .{ .sec = mtime_val.sec, .nsec = mtime_val.nsec },
+            .ctim = .{ .sec = ctime_val.sec, .nsec = ctime_val.nsec },
+            .birthtim = .{ .sec = birthtime_val.sec, .nsec = birthtime_val.nsec },
+        };
     }
 
     pub fn atime(self: *const PosixStat) bun.timespec {

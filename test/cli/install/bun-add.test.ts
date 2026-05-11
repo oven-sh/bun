@@ -34,7 +34,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   add_dir = tmpdirSync();
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(async () => {
   await dummyAfterEach();
@@ -111,8 +111,8 @@ it("should reject missing package", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occurred while resolving file:${add_path}`);
+  expect(err).toContain(`error: Could not find package.json for "file:${add_path}" dependency`);
+  expect(err).toContain("failed to resolve");
 
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun add v1."));
@@ -340,6 +340,40 @@ it.each(["fileblah://"])("should reject invalid path without segfault: %s", asyn
   );
   const add_path = relative(package_dir, add_dir).replace(/\\/g, "\\\\");
   const dep = `${protocolPrefix}${add_path}`;
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", dep],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
+
+  const out = await stdout.text();
+  expect(out).toEqual(expect.stringContaining("bun add v1."));
+  expect(await exited).toBe(1);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
+});
+
+it("should reject positionals longer than 2048 bytes without stack overflow", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
+  // Previously the spec normalizer wrote the full positional into a 2048-byte
+  // stack buffer with no bounds check, smashing the stack in ReleaseFast and
+  // tripping ASAN in debug builds.
+  const dep = Buffer.alloc(8000, "a").toString();
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
@@ -1078,7 +1112,7 @@ it("should add dependency alongside workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz"],
+    cmd: [bunExe(), "add", "baz", "--linker=isolated"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -2105,7 +2139,7 @@ it("should add dependencies to workspaces directly", async () => {
   const add_path = relative(join(package_dir, "moo"), add_dir);
   const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", dep],
+    cmd: [bunExe(), "add", dep, "--linker=isolated"],
     cwd: join(package_dir, "moo"),
     stdout: "pipe",
     stdin: "pipe",
@@ -2409,7 +2443,7 @@ it("should install tarball with tarball dependencies", async () => {
   setHandler(dummyRegistry(urls));
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
+    cmd: [bunExe(), "add", `${server_url}/parent.tgz`, "--linker=hoisted"],
     cwd: add_dir,
     stdout: "pipe",
     stdin: "pipe",

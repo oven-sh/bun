@@ -1,7 +1,9 @@
-threadlocal var final_path_buf: bun.PathBuffer = undefined;
-threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
-threadlocal var folder_name_buf: bun.PathBuffer = undefined;
-threadlocal var json_path_buf: bun.PathBuffer = undefined;
+const tl_bufs = bun.ThreadlocalBuffers(struct {
+    final_path_buf: bun.PathBuffer = undefined,
+    ssh_path_buf: bun.PathBuffer = undefined,
+    folder_name_buf: bun.PathBuffer = undefined,
+    json_path_buf: bun.PathBuffer = undefined,
+});
 
 const SloppyGlobalGitConfig = struct {
     has_askpass: bool = false,
@@ -263,9 +265,9 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
-        return try formatter.format(layout, opts, writer);
+        return try formatter.format(writer);
     }
 
     pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
@@ -281,11 +283,11 @@ pub const Repository = extern struct {
         label: string,
         string_buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+        pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("{f}", .{Install.fmtStorePath(this.label)});
 
             if (!this.repo.owner.isEmpty()) {
-                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.owner.fmtStorePath(this.string_buf)});
                 // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
@@ -293,7 +295,7 @@ pub const Repository = extern struct {
                 try writer.writeAll("ssh++");
             }
 
-            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+            try writer.print("{f}", .{this.repo.repo.fmtStorePath(this.string_buf)});
 
             if (!this.repo.resolved.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
@@ -301,10 +303,10 @@ pub const Repository = extern struct {
                 if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
                 }
-                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+                try writer.print("{f}", .{Install.fmtStorePath(resolved)});
             } else if (!this.repo.committish.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
-                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.committish.fmtStorePath(this.string_buf)});
             }
         }
     };
@@ -321,7 +323,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(formatter: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
@@ -390,13 +392,39 @@ pub const Repository = extern struct {
     }
 
     pub fn trySSH(url: string) ?string {
+        const ssh_path_buf = &tl_bufs.get().ssh_path_buf;
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
             return null;
         }
 
-        if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
+        if (strings.hasPrefixComptime(url, "git@")) {
             return url;
+        }
+
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
+            // here is that we should integrate hosted_git_info more thoroughly into the codebase
+            // to avoid the allocation and copy here. For now, the thread-local buffer is a good
+            // enough solution to avoid having to handle init/deinit.
+
+            // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
+            // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
+            var pair = hosted_git_info.UrlProtocolPair{
+                .url = .{ .unmanaged = url },
+                .protocol = .{ .well_formed = .git_plus_ssh },
+            };
+
+            var corrected = hosted_git_info.correctUrl(&pair, bun.default_allocator) catch {
+                return url; // If correction fails, return original
+            };
+            defer corrected.deinit();
+
+            // Copy corrected URL to thread-local buffer
+            const corrected_str = corrected.urlSlice();
+            const result = ssh_path_buf[0..corrected_str.len];
+            bun.copy(u8, result, corrected_str);
+            return result;
         }
 
         if (Dependency.isSCPLikePath(url)) {
@@ -427,6 +455,7 @@ pub const Repository = extern struct {
     }
 
     pub fn tryHTTPS(url: string) ?string {
+        const final_path_buf = &tl_bufs.get().final_path_buf;
         if (strings.hasPrefixComptime(url, "http")) {
             return url;
         }
@@ -475,7 +504,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
+        const folder_name = try std.fmt.bufPrintZ(&tl_bufs.get().folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
 
@@ -505,7 +534,8 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
-                "-c core.longpaths=true",
+                "-c",
+                "core.longpaths=true",
                 "--quiet",
                 "--bare",
                 url,
@@ -536,7 +566,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: Install.Task.Id,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&tl_bufs.get().folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
@@ -572,7 +602,8 @@ pub const Repository = extern struct {
         resolved: string,
     ) !ExtractData {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
+        const bufs = tl_bufs.get();
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&bufs.folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
@@ -582,10 +613,11 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
-                "-c core.longpaths=true",
+                "-c",
+                "core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
+                try bun.getFdPath(.fromStdDir(repo_dir), &bufs.final_path_buf),
                 target,
             }) catch |err| {
                 log.addErrorFmt(
@@ -646,7 +678,7 @@ pub const Repository = extern struct {
         defer json_file.close();
 
         const json_path = json_file.getPath(
-            &json_path_buf,
+            &bufs.json_path_buf,
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
@@ -673,10 +705,11 @@ pub const Repository = extern struct {
 const string = []const u8;
 
 const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const Environment = @import("../bun_core/env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
-const FileSystem = @import("../fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
 
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;

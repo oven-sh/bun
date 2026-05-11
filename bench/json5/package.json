@@ -1,0 +1,7 @@
+{
+  "name": "json5-benchmark",
+  "version": "1.0.0",
+  "dependencies": {
+    "json5": "^2.2.3"
+  }
+}

@@ -112,6 +112,7 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
 
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
+        if (this.state.exec.err) |prev| prev.deref();
         this.state.exec.err = e;
         output_task.start(error_string).run();
         return;
@@ -129,8 +130,8 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 
 const ShellMkdirOutputTaskVTable = struct {
     pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -142,8 +143,8 @@ const ShellMkdirOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);
@@ -189,9 +190,7 @@ pub const ShellMkdirTask = struct {
         return out;
     }
 
-    pub fn format(this: *const ShellMkdirTask, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_; // autofix
-        _ = options_; // autofix
+    pub fn format(this: *const ShellMkdirTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellMkdirTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 
@@ -216,12 +215,12 @@ pub const ShellMkdirTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        debug("{} schedule", .{this});
+        debug("{f} schedule", .{this});
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        debug("{} runFromJS", .{this});
+        debug("{f} runFromJS", .{this});
         this.mkdir.onShellMkdirTaskDone(this);
     }
 
@@ -231,7 +230,7 @@ pub const ShellMkdirTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellMkdirTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path to our mkdir
         // implementation for it to work with cwd
@@ -258,7 +257,7 @@ pub const ShellMkdirTask = struct {
             switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                 .result => {},
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -276,7 +275,7 @@ pub const ShellMkdirTask = struct {
                     }
                 },
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -376,6 +375,9 @@ const debug = bun.Output.scoped(.ShellMkdir, .hidden);
 
 const log = debug;
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -396,6 +398,3 @@ const WorkPool = bun.jsc.WorkPool;
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
 const Yield = bun.shell.Yield;
-
-const std = @import("std");
-const ArrayList = std.ArrayList;

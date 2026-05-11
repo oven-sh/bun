@@ -121,7 +121,7 @@ pub const Source = union(enum) {
             _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
         }
 
-        fn onCloseComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onCloseComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = File.fromFS(fs);
             bun.assert(file.state == .closing);
             fs.deinit();
@@ -160,7 +160,7 @@ pub const Source = union(enum) {
         };
     }
 
-    pub fn getFd(this: Source) bun.FileDescriptor {
+    pub fn getFd(this: Source) bun.FD {
         return switch (this) {
             .pipe => |pipe| pipe.fd(),
             .tty => |tty| tty.fd(),
@@ -208,13 +208,13 @@ pub const Source = union(enum) {
         };
     }
 
-    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Pipe) {
-        log("openPipe (fd = {})", .{fd});
-        const pipe = bun.default_allocator.create(Source.Pipe) catch |err| bun.handleOom(err);
+    pub fn openPipe(loop: *uv.Loop, fd: bun.FD) bun.sys.Maybe(*Source.Pipe) {
+        log("openPipe (fd = {f})", .{fd});
+        const pipe = bun.new(Source.Pipe, std.mem.zeroes(Source.Pipe));
         // we should never init using IPC here see ipc.zig
         switch (pipe.init(loop, false)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                bun.destroy(pipe);
                 return .{ .err = err };
             },
             else => {},
@@ -222,7 +222,7 @@ pub const Source = union(enum) {
 
         switch (pipe.open(fd)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                pipe.closeAndDestroy();
                 return .{
                     .err = err,
                 };
@@ -259,8 +259,8 @@ pub const Source = union(enum) {
         }
     };
 
-    pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Tty) {
-        log("openTTY (fd = {})", .{fd});
+    pub fn openTty(loop: *uv.Loop, fd: bun.FD) bun.sys.Maybe(*Source.Tty) {
+        log("openTTY (fd = {f})", .{fd});
 
         const uv_fd = fd.uv();
 
@@ -280,9 +280,9 @@ pub const Source = union(enum) {
         return .{ .result = tty };
     }
 
-    pub fn openFile(fd: bun.FileDescriptor) *Source.File {
+    pub fn openFile(fd: bun.FD) *Source.File {
         bun.assert(fd.isValid() and fd.uv() != -1);
-        log("openFile (fd = {})", .{fd});
+        log("openFile (fd = {f})", .{fd});
         const file = bun.handleOom(bun.default_allocator.create(Source.File));
 
         file.* = std.mem.zeroes(Source.File);
@@ -290,9 +290,9 @@ pub const Source = union(enum) {
         return file;
     }
 
-    pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(Source) {
+    pub fn open(loop: *uv.Loop, fd: bun.FD) bun.sys.Maybe(Source) {
         const rc = bun.windows.libuv.uv_guess_handle(fd.uv());
-        log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
+        log("open(fd: {f}, type: {s})", .{ fd, @tagName(rc) });
 
         switch (rc) {
             .named_pipe => {

@@ -61,8 +61,8 @@ const EventIterator = struct {
     pub fn next(this: *EventIterator) ?FileEvent {
         if (!this.hasNext) return null;
         const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
-        const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.watcher.buf[this.offset..].ptr));
-        const name_ptr: [*]u16 = @alignCast(@ptrCast(this.watcher.buf[this.offset + info_size ..]));
+        const info: *w.FILE_NOTIFY_INFORMATION = @ptrCast(@alignCast(this.watcher.buf[this.offset..].ptr));
+        const name_ptr: [*]u16 = @ptrCast(@alignCast(this.watcher.buf[this.offset + info_size ..]));
         const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
         const action: Action = @enumFromInt(info.Action);

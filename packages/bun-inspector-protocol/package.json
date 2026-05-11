@@ -5,7 +5,7 @@
     "build": "bun build --target=node --outfile=index.js --minify-syntax ./index.ts --external=ws"
   },
   "dependencies": {
-    "ws": "^8.13.0"
+    "ws": "^8.18.3"
   },
   "main": "./index.js",
   "type": "module",

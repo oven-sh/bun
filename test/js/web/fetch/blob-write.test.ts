@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { expectMaxObjectTypeCount, tempDirWithFiles } from "harness";
 import path from "path";
 
 test("blob.write() throws for data-backed blob", () => {
@@ -51,13 +51,24 @@ test("blob.writer() throws for data-backed blob", () => {
 });
 
 test("Bun.file(path).writer() does not throw", async () => {
-  const dir = tempDirWithFiles("bun-writer", {});
-  const file = Bun.file(path.join(dir, "test.txt"));
-  const writer = file.writer();
-  expect(writer).toBeDefined();
-  writer.write("New content");
-  await writer.end();
-  expect(await file.text()).toBe("New content");
+  async function iterate() {
+    const dir = tempDirWithFiles("bun-writer", {});
+    const file = Bun.file(path.join(dir, "test.txt"));
+    const writer = file.writer();
+    expect(writer).toBeDefined();
+    writer.write("New content");
+    await writer.end();
+    expect(await file.text()).toBe("New content");
+  }
+  await iterate();
+  // Force GC before capturing baseline to ensure first iteration's FileSink is collected
+  Bun.gc(true);
+  const initialObjectTypeCount = require("bun:jsc").heapStats().objectTypeCounts.FileSink || 0;
+  for (let i = 0; i < 5; i++) {
+    await iterate();
+  }
+  Bun.gc(true);
+  await expectMaxObjectTypeCount(expect, "FileSink", initialObjectTypeCount);
 });
 
 test("blob.stat() returns undefined for data-backed blob", async () => {

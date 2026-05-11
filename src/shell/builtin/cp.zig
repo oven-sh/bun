@@ -25,7 +25,7 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Cp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Cp, writer: *std.Io.Writer) !void {
     try writer.print("Cp(0x{x})", .{@intFromPtr(this)});
 }
 
@@ -137,7 +137,8 @@ pub fn next(this: *Cp) Yield {
                         }
                         if (comptime bun.Environment.isWindows) {
                             if (exec.ebusy.tasks.items.len > 0) {
-                                this.state = .{ .ebusy = .{ .state = this.state.exec.ebusy, .main_exit_code = exit_code } };
+                                const ebusy = this.state.exec.ebusy;
+                                this.state = .{ .ebusy = .{ .state = ebusy, .main_exit_code = exit_code } };
                                 continue;
                             }
                             exec.ebusy.deinit();
@@ -218,18 +219,20 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                 (task.src_absolute != null and
                     err.sys.path.eqlUTF8(task.src_absolute.?)))
             {
-                log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
+                log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));
                 this.next().run();
                 return;
             }
         } else {
-            const tgt_absolute = task.tgt_absolute;
-            task.tgt_absolute = null;
-            if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch |err| bun.handleOom(err);
-            const src_absolute = task.src_absolute;
-            task.src_absolute = null;
-            if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch |err| bun.handleOom(err);
+            if (bun.take(&task.tgt_absolute)) |tgt| {
+                const gop = bun.handleOom(this.state.exec.ebusy.absolute_targets.getOrPut(bun.default_allocator, tgt));
+                if (gop.found_existing) bun.default_allocator.free(tgt);
+            }
+            if (bun.take(&task.src_absolute)) |src| {
+                const gop = bun.handleOom(this.state.exec.ebusy.absolute_srcs.getOrPut(bun.default_allocator, src));
+                if (gop.found_existing) bun.default_allocator.free(src);
+            }
         }
     }
 
@@ -248,8 +251,14 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
         .state = .waiting_write_err,
     });
     if (bun.take(&task.err)) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
+        const error_string = this.bltn().taskErrorToString(.cp, err);
+        if (this.state == .exec) {
+            if (this.state.exec.err) |*prev| prev.deinit(bun.default_allocator);
+            this.state.exec.err = err;
+        } else {
+            var e = err;
+            e.deinit(bun.default_allocator);
+        }
         return output_task.start(error_string);
     }
     return output_task.start(null);
@@ -265,8 +274,8 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 
 const ShellCpOutputTaskVTable = struct {
     pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) ?Yield {
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -274,12 +283,12 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteErr(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) ?Yield {
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, output.slice());
@@ -287,7 +296,7 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteOut(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn onDone(this: *Cp) Yield {
@@ -731,6 +740,9 @@ const Opts = packed struct(u16) {
 // --
 const log = bun.Output.scoped(.cp, .hidden);
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -757,6 +769,3 @@ const Yield = shell.Yield;
 
 const Syscall = bun.sys;
 const Maybe = bun.sys.Maybe;
-
-const std = @import("std");
-const ArrayList = std.ArrayList;

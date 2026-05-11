@@ -41,6 +41,7 @@ pub const TSConfigJSON = struct {
     preserve_imports_not_used_as_values: ?bool = false,
 
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
 
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
@@ -174,6 +175,13 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("emitDecoratorMetadata")) |emit_decorator_metadata_prop| {
                 if (emit_decorator_metadata_prop.expr.asBool()) |val| {
                     result.emit_decorator_metadata = val;
+                }
+            }
+
+            // Parse "experimentalDecorators"
+            if (compiler_opts.expr.asProperty("experimentalDecorators")) |experimental_decorators_prop| {
+                if (experimental_decorators_prop.expr.asBool()) |val| {
+                    result.experimental_decorators = val;
                 }
             }
 
@@ -340,10 +348,22 @@ pub const TSConfigJSON = struct {
                                             }
                                         }
                                         if (count > 0) {
+                                            // Invalid patterns are filtered out above, so count <= array.len.
+                                            // Shrink the allocation so the slice stored in the map is exactly
+                                            // what was allocated — callers that later free these values (the
+                                            // extends-merge in resolver.zig) pass the stored slice to
+                                            // Allocator.free, which requires the original length.
+                                            if (count < values.len) {
+                                                values = allocator.realloc(values, count) catch values;
+                                            }
                                             result.paths.put(
                                                 key,
                                                 values[0..count],
                                             ) catch unreachable;
+                                        } else {
+                                            // Every entry was invalid; nothing to store. Free the buffer
+                                            // instead of leaking it.
+                                            allocator.free(values);
                                         }
                                     }
                                 },
@@ -397,7 +417,7 @@ pub const TSConfigJSON = struct {
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
         const parts_count = std.mem.count(u8, text, ".") + @as(usize, @intFromBool(text[text.len - 1] != '.'));
-        var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
+        var parts = std.array_list.Managed(string).initCapacity(allocator, parts_count) catch unreachable;
 
         if (parts_count == 1) {
             if (!js_lexer.isIdentifier(text)) {
@@ -489,8 +509,8 @@ pub const TSConfigJSON = struct {
 
 const string = []const u8;
 
-const cache = @import("../cache.zig");
-const options = @import("../options.zig");
+const cache = @import("../bundler/cache.zig");
+const options = @import("../bundler/options.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -8,7 +8,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-fd: bun.FileDescriptor,
+fd: bun.FD,
 reader: ReaderImpl,
 buf: std.ArrayListUnmanaged(u8) = .{},
 readers: Readers = .{ .inlined = .{} },
@@ -19,6 +19,7 @@ evtloop: jsc.EventLoopHandle,
 concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
+started: bool = false,
 
 pub const ChildPtr = IOReaderChildPtr;
 pub const ReaderImpl = bun.io.BufferedReader;
@@ -30,7 +31,7 @@ const InitFlags = packed struct(u8) {
     __unused: u5 = 0,
 };
 
-pub fn refSelf(this: *IOReader) *IOReader {
+pub fn dupeRef(this: *IOReader) *IOReader {
     this.ref();
     return this;
 }
@@ -46,11 +47,15 @@ pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
-pub fn loop(this: *IOReader) *bun.uws.Loop {
-    return this.evtloop.loop();
+pub fn loop(this: *IOReader) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
 }
 
-pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
+pub fn init(fd: bun.FD, evtloop: jsc.EventLoopHandle) *IOReader {
     const this = bun.new(IOReader, .{
         .ref_count = .init(),
         .fd = fd,
@@ -59,7 +64,7 @@ pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .async_deinit = .{},
     });
-    log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
+    log("IOReader(0x{x}, fd={f}) create", .{ @intFromPtr(this), fd });
 
     if (bun.Environment.isPosix) {
         this.reader.flags.close_handle = false;
@@ -75,6 +80,7 @@ pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
 
 /// Idempotent function to start the reading
 pub fn start(this: *IOReader) Yield {
+    this.started = true;
     if (bun.Environment.isPosix) {
         if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
             if (this.reader.start(this.fd, true).asErr()) |e| {
@@ -96,7 +102,7 @@ pub fn start(this: *IOReader) Yield {
 /// Only does things on windows
 pub inline fn setReading(this: *IOReader, reading: bool) void {
     if (bun.Environment.isWindows) {
-        log("IOReader(0x{x}) setReading({any})", .{ @intFromPtr(this), reading });
+        log("IOReader(0x{x}) setReading({})", .{ @intFromPtr(this), reading });
         this.is_reading = reading;
     }
 }
@@ -131,7 +137,7 @@ pub fn removeReader(this: *IOReader, reader_: anytype) void {
 
 pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
     var this: *IOReader = @ptrCast(@alignCast(ptr));
-    log("IOReader(0x{x}, fd={}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
+    log("IOReader(0x{x}, fd={f}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
     this.setReading(false);
 
     var i: usize = 0;
@@ -166,7 +172,7 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
 }
 
 pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
-    log("IOReader(0x{x}.onReaderError({err}) ", .{ @intFromPtr(this), err });
+    log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
     for (this.readers.slice()) |r| {
@@ -190,6 +196,13 @@ pub fn onReaderDone(this: *IOReader) void {
 
 fn asyncDeinit(this: *@This()) void {
     log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
+    // The async hop guards against being deref'd from inside a read callback while
+    // BufferedReader is still iterating. If we never started reading, no callback can be
+    // in flight, so close synchronously to avoid holding the fd until the next tick.
+    if (!this.started) {
+        this.asyncDeinitCallback();
+        return;
+    }
     this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
 }
 
@@ -201,10 +214,18 @@ fn asyncDeinitCallback(this: *@This()) void {
                 this.reader.closeImpl(false);
             }
         } else {
-            log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
+            // We set reader.flags.close_handle=false in init(), so reader.deinit() will not
+            // return the FilePoll to its pool. Do it explicitly (without closing the fd —
+            // we own that and close it ourselves below).
+            if (this.reader.handle == .poll) {
+                this.reader.handle.closeImpl(null, {}, false);
+            }
+            log("IOReader(0x{x}) __deinit fd={f}", .{ @intFromPtr(this), this.fd });
             this.fd.close();
         }
     }
+    if (this.err) |*e| e.deref();
+    this.readers.deinit();
     this.buf.deinit(bun.default_allocator);
     this.reader.disableKeepingProcessAlive({});
     this.reader.deinit();

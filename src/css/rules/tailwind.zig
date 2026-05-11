@@ -11,10 +11,10 @@ pub const TailwindAtRule = struct {
     /// The location of the rule in the source file.
     loc: css.Location,
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         try dest.writeStr("@tailwind");
         try dest.whitespace();
-        try this.style_name.toCss(W, dest);
+        try this.style_name.toCss(dest);
         try dest.writeChar(';');
     }
 
@@ -48,8 +48,8 @@ pub const TailwindStyleName = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 

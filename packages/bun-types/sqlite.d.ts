@@ -154,12 +154,6 @@ declare module "bun:sqlite" {
      * | `bigint`        | `INTEGER`              |
      * | `null`          | `NULL`                 |
      *
-     * @example
-     * ```ts
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * ```
-     *
      * Useful for queries like:
      * - `CREATE TABLE`
      * - `INSERT INTO`
@@ -180,8 +174,14 @@ declare module "bun:sqlite" {
      *
      * @param sql The SQL query to run
      * @param bindings Optional bindings for the query
+     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
      *
-     * @returns `Database` instance
+     * @example
+     * ```ts
+     * db.run("CREATE TABLE foo (bar TEXT)");
+     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+     * // => { changes: 1, lastInsertRowid: 1 }
+     * ```
      */
     run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 
@@ -670,18 +670,19 @@ declare module "bun:sqlite" {
      * Execute the prepared statement.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
      *
      * @example
      * ```ts
-     * const stmt = db.prepare("UPDATE foo SET bar = ?");
-     * stmt.run("baz");
-     * // => undefined
+     * const insert = db.prepare("INSERT INTO users (name) VALUES (?)");
+     * insert.run("Alice");
+     * // => { changes: 1, lastInsertRowid: 1 }
+     * insert.run("Bob");
+     * // => { changes: 1, lastInsertRowid: 2 }
      *
-     * stmt.run();
-     * // => undefined
-     *
-     * stmt.run("foo");
-     * // => undefined
+     * const update = db.prepare("UPDATE users SET name = ? WHERE id = ?");
+     * update.run("Charlie", 1);
+     * // => { changes: 1, lastInsertRowid: 2 }
      * ```
      *
      * The following types can be used when binding parameters:

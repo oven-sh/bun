@@ -25,15 +25,22 @@ describe("doesnt_crash", async () => {
       { target: "browser", minify: false },
       { target: "browser", minify: true },
     ];
+    let code = "";
+    async function getCode() {
+      if (code) return code;
+      code = await Bun.file(absolute).text();
+      return code;
+    }
 
     for (const { target, minify } of configs) {
-      test(`${file} - ${minify ? "minify" : "not minify"}`, async () => {
+      test(`${file} - ${minify ? "minify" : "not minify"} - ${target}`, async () => {
         const timeLog = `Transpiled ${file} - ${minify ? "minify" : "not minify"}`;
         console.time(timeLog);
         const { logs, outputs } = await Bun.build({
           entrypoints: [absolute],
           minify: minify,
           target,
+          files: { [absolute]: await getCode() },
         });
         console.timeEnd(timeLog);
 
@@ -43,6 +50,7 @@ describe("doesnt_crash", async () => {
 
         expect(outputs.length).toBe(1);
         const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
+        const content1 = await outputs[0].text();
 
         await Bun.write(outfile1, outputs[0]);
 
@@ -53,6 +61,7 @@ describe("doesnt_crash", async () => {
           const { logs, outputs } = await Bun.build({
             entrypoints: [outfile1],
             target,
+            files: { [outfile1]: content1 },
             minify: minify,
           });
 

@@ -101,6 +101,12 @@ describe("Bun.Transpiler", () => {
   hideFromStackTrace(ts.expectPrinted);
   hideFromStackTrace(ts.expectParseError);
 
+  it("handles errors when parsing macros", () => {
+    expect(() => {
+      new Bun.Transpiler({ macro: "hi" });
+    }).toThrow("Unexpected hi");
+  });
+
   it("normalizes \\r\\n", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });
@@ -1294,6 +1300,30 @@ export default <>hi</>
           logLevel: "poop",
         }),
     ).toThrow();
+  });
+
+  it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
+    // indexed by the property position instead of a dense counter, leaving garbage in the
+    // skipped slot that `stringHashMapFromArrays` then tried to hash. Run in a subprocess
+    // so a crash surfaces as a test failure instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({ define: { "": "1", FOO: '"bar"' } });
+          process.stdout.write(t.transformSync("console.log(FOO);", "js"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('console.log("bar");');
+    expect(exitCode).toBe(0);
   });
 
   it("JSX keys", () => {

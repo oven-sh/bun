@@ -13,7 +13,7 @@ export default function Hero() {
       </p>
       <div className="cta-buttons">
         <a
-          href="https://bun.sh"
+          href="https://bun.com"
           className={classNames("button", "primary")}
           target="_blank"
           rel="noopener noreferrer"

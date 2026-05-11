@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1059,11 +1059,45 @@ it("new Response(stream).blob() (direct)", async () => {
   expect(await blob.text()).toBe('{"hello":true}');
 });
 
+it("Blob.stream(undefined) does not crash", () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream(undefined);
+  expect(stream instanceof ReadableStream).toBeTrue();
+  stream = blob.stream(null);
+  expect(stream instanceof ReadableStream).toBeTrue();
+});
+
 it("Blob.stream() -> new Response(stream).text()", async () => {
   var blob = new Blob(["abdefgh"]);
   var stream = blob.stream();
   const text = await new Response(stream).text();
   expect(text).toBe("abdefgh");
+});
+
+it("Bun.file().stream() of a small file does not double-close the controller", async () => {
+  // When the first pull returns data + EOF synchronously, both the native onClose
+  // callback and the pull-result handler enqueue callClose for the same controller.
+  // The second callClose must be a no-op rather than throwing ERR_INVALID_STATE
+  // through reportError → process.on("uncaughtException").
+  using dir = tempDir("file-stream-double-close", { "x.txt": "x" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("uncaughtException", e => {
+         console.log(e?.code ?? e?.name, e?.message);
+         process.exitCode = 1;
+       });
+       Bun.file(process.argv[1]).stream().getReader().releaseLock();`,
+      join(String(dir), "x.txt"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("Bun.file().stream() read text from large file", async () => {
@@ -1182,4 +1216,18 @@ recursiveFunction();
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
+});
+
+it("handles exceptions during empty stream creation", () => {
+  expect(() => {
+    function foo() {
+      try {
+        foo();
+      } catch (e) {}
+      const v8 = new Blob();
+      v8.stream();
+    }
+    foo();
+    throw new Error("not stack overflow");
+  }).toThrow("not stack overflow");
 });

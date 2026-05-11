@@ -112,7 +112,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                     }
 
                     // Record external depednencies
-                    if (!record.is_internal) {
+                    if (!record.flags.is_internal) {
                         var all_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
                         var all_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
                         // If this import has conditions, append it to the list of overall
@@ -618,15 +618,14 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
         defer arena.deinit();
         for (order.slice(), 0..) |entry, i| {
             const conditions_str = if (entry.conditions.len > 0) conditions_str: {
-                var arrlist = std.ArrayListUnmanaged(u8){};
-                const writer = arrlist.writer(arena.allocator());
-                const W = @TypeOf(writer);
-                arrlist.appendSlice(arena.allocator(), "[") catch unreachable;
+                var arrlist = std.Io.Writer.Allocating.init(arena.allocator());
+                const writer = &arrlist.writer;
+                writer.writeAll("[") catch unreachable;
                 var symbols = Symbol.Map{};
                 for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                     const condition: *const bun.css.ImportConditions = condition_;
-                    const scratchbuf = std.ArrayList(u8).init(arena.allocator());
-                    var printer = bun.css.Printer(W).new(
+                    const scratchbuf = std.array_list.Managed(u8).init(arena.allocator());
+                    var printer = bun.css.Printer.new(
                         arena.allocator(),
                         scratchbuf,
                         writer,
@@ -640,16 +639,16 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
                         &symbols,
                     );
 
-                    condition.toCss(W, &printer) catch unreachable;
+                    condition.toCss(&printer) catch unreachable;
                     if (j != entry.conditions.len - 1) {
-                        arrlist.appendSlice(arena.allocator(), ", ") catch unreachable;
+                        writer.writeAll(", ") catch unreachable;
                     }
                 }
-                arrlist.appendSlice(arena.allocator(), " ]") catch unreachable;
-                break :conditions_str arrlist.items;
+                writer.writeAll(" ]") catch unreachable;
+                break :conditions_str arrlist.written();
             } else "[]";
 
-            debug("  {d}: {} {s}\n", .{ i, entry.fmt(this), conditions_str });
+            debug("  {d}: {f} {s}\n", .{ i, entry.fmt(this), conditions_str });
         }
     }
 }

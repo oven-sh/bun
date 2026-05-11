@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
+import { readdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -846,13 +846,15 @@ it("db.transaction()", () => {
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
-  const path = tmpbase + "bun-987.db";
-  if (!existsSync(path)) {
-    const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
-    writeFileSync(path, arrayBuffer);
-  }
-
-  const db = new Database(path);
+  const db = new Database(":memory:");
+  // Create schema matching the original regression test (media + logs tables)
+  db.exec(`
+    CREATE TABLE media (id INTEGER PRIMARY KEY, mid TEXT, name TEXT, url TEXT, duration INTEGER);
+    CREATE TABLE logs (mid INTEGER, duration INTEGER, start INTEGER, did TEXT, vid TEXT);
+    INSERT INTO media VALUES (1, 'm1', 'Test Media', 'http://test', 120);
+    INSERT INTO logs VALUES (1, 60, 1654100000, 'd1', 'v1');
+    INSERT INTO logs VALUES (1, 45, 1654200000, 'd2', 'v2');
+  `);
 
   const query = `SELECT
   media.mid,
@@ -1491,4 +1493,54 @@ it("#13082", async () => {
   }
 
   await Promise.allSettled(runs);
+});
+
+// The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
+// perform an off-by-one bounds check on the database handle (`>` instead of
+// `>=`), so a handle equal to databases().size() skipped the early-return and
+// indexed past the end of the WTF::Vector, crashing the process instead of
+// throwing a catchable error.
+it("internal SQL helpers reject out-of-range database handles", async () => {
+  const src = `
+    const { SQL } = require("bun:internal-for-testing");
+    const ctor = SQL[0];
+    const tuple = SQL[1];
+
+    // No databases have been opened, so databases().size() === 0 and handle 0
+    // is out of range. Each call must throw "Invalid database handle" rather
+    // than fall through to databases()[0] and crash.
+    const results = [];
+    for (const [name, fn] of [
+      ["isInTransaction", () => ctor.isInTransaction(0)],
+      ["prepare", () => ctor.prepare(0, "SELECT 1", undefined, 0, 0)],
+      ["run", () => ctor.run(0, 0, tuple, "SELECT 1")],
+    ]) {
+      try {
+        fn();
+        results.push(name + ": no throw");
+      } catch (e) {
+        results.push(name + ": " + e.message);
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([
+      "isInTransaction: Invalid database handle",
+      "prepare: Invalid database handle",
+      "run: Invalid database handle",
+    ]),
+    stderr: "",
+    exitCode: 0,
+  });
 });

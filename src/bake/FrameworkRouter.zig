@@ -423,8 +423,7 @@ pub const Part = union(enum(u3)) {
         };
     }
 
-    pub fn format(part: Part, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
+    pub fn format(part: Part, writer: *std.Io.Writer) !void {
         try writer.writeAll("Part \"");
         try part.toStringForInternalUse(writer);
         try writer.writeAll("\"");
@@ -840,7 +839,7 @@ pub const MatchedParams = struct {
             const value_str = bun.String.cloneUTF8(param.value);
             defer value_str.deref();
 
-            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global) catch unreachable) catch unreachable;
         }
         return obj;
     }
@@ -925,22 +924,22 @@ pub const TinyLog = struct {
             after[@min(log.cursor_len, after.len)..],
         });
         const w = bun.Output.errorWriterBuffered();
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         if (bun.Output.enable_ansi_colors_stderr) {
             const symbols = bun.fmt.TableSymbols.unicode;
             bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
             if (log.cursor_len > 1) {
-                w.writeBytesNTimes(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
+                w.splatBytesAll(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
             }
         } else {
             if (log.cursor_len <= 1) {
                 w.writeAll("|") catch return;
             } else {
-                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+                w.splatByteAll('-', log.cursor_len - 1) catch return;
             }
         }
         w.writeByte('\n') catch return;
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         w.writeAll(log.msg.slice()) catch return;
         bun.Output.prettyError("<r>\n", .{});
         bun.Output.flush();
@@ -959,16 +958,16 @@ pub const InsertionContext = struct {
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
             fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
             fn onRouterSyntaxError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterSyntaxError")) @panic("TODO: onRouterSyntaxError for " ++ @typeName(T));
                 return try cast_ctx.onRouterSyntaxError(rel_path, log);
             }
             fn onRouterCollisionError(opaque_ctx: *anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterCollisionError")) @panic("TODO: onRouterCollisionError for " ++ @typeName(T));
                 return try cast_ctx.onRouterCollisionError(rel_path, other_id, file_kind);
             }
@@ -1167,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn getBindings(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return (try jsc.JSObject.create(.{
-            .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
+            .parseRoutePattern = jsc.JSFunction.create(global, "parseRoutePattern", jsc.host_fn.toJSHostFn(parseRoutePattern), 1, .{}),
             .FrameworkRouter = js.getConstructor(global),
         }, global)).toJS();
     }
@@ -1220,7 +1219,7 @@ pub const JSFrameworkRouter = struct {
                 try arr.putIndex(
                     global,
                     @intCast(i),
-                    global.createErrorInstance("Invalid route {}: {s}", .{
+                    global.createErrorInstance("Invalid route {f}: {s}", .{
                         bun.fmt.quote(item.rel_path),
                         item.log.msg.slice(),
                     }),
@@ -1248,7 +1247,7 @@ pub const JSFrameworkRouter = struct {
                     for (params_out.params.slice()) |param| {
                         const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
-                        obj.put(global, param.key, value.toJS(global));
+                        obj.put(global, param.key, try value.toJS(global));
                     }
                     break :params obj;
                 } else .null,
@@ -1272,8 +1271,8 @@ pub const JSFrameworkRouter = struct {
         const route = jsfr.router.routePtr(route_index);
         return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
-            .page = jsfr.fileIdToJS(global, route.file_page),
-            .layout = jsfr.fileIdToJS(global, route.file_layout),
+            .page = try jsfr.fileIdToJS(global, route.file_page),
+            .layout = try jsfr.fileIdToJS(global, route.file_layout),
             // .notFound = jsfr.fileIdToJS(global, route.file_not_found),
             .children = brk: {
                 var len: usize = 0;
@@ -1296,8 +1295,8 @@ pub const JSFrameworkRouter = struct {
         const route = jsfr.router.routePtr(route_index);
         return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
-            .page = jsfr.fileIdToJS(global, route.file_page),
-            .layout = jsfr.fileIdToJS(global, route.file_layout),
+            .page = try jsfr.fileIdToJS(global, route.file_page),
+            .layout = try jsfr.fileIdToJS(global, route.file_layout),
             // .notFound = jsfr.fileIdToJS(global, route.file_not_found),
             .parent = if (route.parent.unwrap()) |parent|
                 try routeToJsonInverse(jsfr, global, parent, allocator)
@@ -1314,7 +1313,7 @@ pub const JSFrameworkRouter = struct {
         bun.destroy(this);
     }
 
-    pub fn parseRoutePattern(global: *JSGlobalObject, frame: *CallFrame) !JSValue {
+    pub fn parseRoutePattern(global: *JSGlobalObject, frame: *CallFrame) bun.JSError!JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
@@ -1337,31 +1336,31 @@ pub const JSFrameworkRouter = struct {
         } orelse
             return .null;
 
-        var rendered = try std.ArrayList(u8).initCapacity(alloc, filepath.slice().len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(alloc, filepath.slice().len);
         for (parsed.parts) |part| try part.toStringForInternalUse(rendered.writer());
 
         var out = bun.String.init(rendered.items);
         const obj = JSValue.createEmptyObject(global, 2);
-        obj.put(global, "kind", bun.String.static(@tagName(parsed.kind)).toJS(global));
-        obj.put(global, "pattern", out.transferToJS(global));
+        obj.put(global, "kind", try bun.String.static(@tagName(parsed.kind)).toJS(global));
+        obj.put(global, "pattern", try out.transferToJS(global));
         return obj;
     }
 
     fn encodedPatternToJS(global: *JSGlobalObject, pattern: EncodedPattern, temp_allocator: Allocator) !JSValue {
-        var rendered = try std.ArrayList(u8).initCapacity(temp_allocator, pattern.data.len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(temp_allocator, pattern.data.len);
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
-        var rendered = std.ArrayList(u8).init(temp_allocator);
+        var rendered = std.array_list.Managed(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
@@ -1378,7 +1377,7 @@ pub const JSFrameworkRouter = struct {
         });
     }
 
-    pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) JSValue {
+    pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) bun.JSError!JSValue {
         return jsfr.files.items[(id.unwrap() orelse return .null).get()].toJS(global);
     }
 };

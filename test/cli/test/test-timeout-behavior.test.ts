@@ -5,7 +5,7 @@ import path from "path";
 if (isFlaky && isLinux) {
   test.todo("processes get killed");
 } else {
-  test.each([true, false])(`processes get killed (sync: %p)`, async sync => {
+  test.concurrent.each([true, false])(`processes get killed (sync: %p)`, async sync => {
     const { exited, stdout, stderr } = Bun.spawn({
       cmd: [
         bunExe(),

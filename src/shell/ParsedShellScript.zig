@@ -7,7 +7,7 @@ pub const fromJSDirect = js.fromJSDirect;
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs
-jsobjs: std.ArrayList(JSValue),
+jsobjs: std.array_list.Managed(JSValue),
 export_env: ?EnvMap = null,
 quiet: bool = false,
 cwd: ?bun.String = null,
@@ -41,7 +41,7 @@ pub fn take(
     this: *ParsedShellScript,
     _: *jsc.JSGlobalObject,
     out_args: **ShellArgs,
-    out_jsobjs: *std.ArrayList(JSValue),
+    out_jsobjs: *std.array_list.Managed(JSValue),
     out_quiet: *bool,
     out_cwd: *?bun.String,
     out_export_env: *?EnvMap,
@@ -53,7 +53,7 @@ pub fn take(
     out_export_env.* = this.export_env;
 
     this.args = null;
-    this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
+    this.jsobjs = std.array_list.Managed(JSValue).init(bun.default_allocator);
     this.cwd = null;
     this.export_env = null;
 }
@@ -76,6 +76,7 @@ pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };
     const str = try bun.String.fromJS(str_js, globalThis);
+    if (this.cwd) |*prev| prev.deref();
     this.cwd = str;
     return .js_undefined;
 }
@@ -98,16 +99,18 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     defer object_iter.deinit();
 
     var env: EnvMap = EnvMap.init(bun.default_allocator);
+    errdefer env.deinit();
     env.ensureTotalCapacity(object_iter.len);
 
     // If the env object does not include a $PATH, it must disable path lookup for argv[0]
     // PATH = "";
 
     while (try object_iter.next()) |key| {
-        const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
+        const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
+        errdefer bun.default_allocator.free(keyslice);
         const value_str = try value.getZigString(globalThis);
         const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
         const keyref = EnvStr.initRefCounted(keyslice);
@@ -141,15 +144,15 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     var template_args = try template_args_js.arrayIterator(globalThis);
 
     var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-    var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+    var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
     defer {
         for (jsstrings.items[0..]) |bunstr| {
             bunstr.deref();
         }
         jsstrings.deinit();
     }
-    var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
-    var script = std.ArrayList(u8).init(shargs.arena_allocator());
+    var jsobjs = std.array_list.Managed(JSValue).init(shargs.arena_allocator());
+    var script = std.array_list.Managed(u8).init(shargs.arena_allocator());
     try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
     var parser: ?bun.shell.Parser = null;

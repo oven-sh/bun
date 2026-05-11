@@ -1,19 +1,22 @@
 import { test } from "bun:test";
+import { isASAN } from "harness";
 
-test("a file: loader file can be imported 10,000 times", async () => {
+// The internal `Loader.registry` JS object was removed when JSC's module loader
+// became pure C++; there's no public way to wipe the whole ESM registry from JS,
+// and per-iteration `delete require.cache[key]` would just exercise removeEntry
+// instead of the file-loader path this test was measuring.
+test.skip("a file: loader file can be imported 10,000 times", async () => {
   const prev = Bun.unsafe.gcAggressionLevel();
   Bun.unsafe.gcAggressionLevel(0);
   var baseline;
   Bun.gc(true);
   for (let i = 0; i < 1000; i++) {
     await import("./an-empty-file-with-a-strange-extension.weird?j" + i);
-    Loader.registry.clear();
   }
   baseline = process.memoryUsage.rss();
   Bun.gc(true);
-  for (let i = 0; i < 100_000; i++) {
+  for (let i = 0; i < (isASAN ? 25_000 : 100_000); i++) {
     await import("./an-empty-file-with-a-strange-extension.weird?i" + i);
-    Loader.registry.clear();
   }
 
   Bun.gc(true);

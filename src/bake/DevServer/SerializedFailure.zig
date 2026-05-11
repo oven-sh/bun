@@ -61,7 +61,7 @@ pub fn getOwner(failure: SerializedFailure) Owner {
 /// This is okay since SerializedFailure can contain more than one error.
 pub const ArrayHashContextViaOwner = struct {
     pub fn hash(_: ArrayHashContextViaOwner, k: SerializedFailure) u32 {
-        return std.hash.uint32(@bitCast(k.getOwner().encode()));
+        return std.hash.int(@as(u32, @bitCast(k.getOwner().encode())));
     }
 
     pub fn eql(_: ArrayHashContextViaOwner, a: SerializedFailure, b: SerializedFailure, _: usize) bool {
@@ -71,7 +71,7 @@ pub const ArrayHashContextViaOwner = struct {
 
 pub const ArrayHashAdapter = struct {
     pub fn hash(_: ArrayHashAdapter, own: Owner) u32 {
-        return std.hash.uint32(@bitCast(own.encode()));
+        return std.hash.int(@as(u32, @bitCast(own.encode())));
     }
 
     pub fn eql(_: ArrayHashAdapter, a: Owner, b: SerializedFailure, _: usize) bool {
@@ -104,29 +104,6 @@ pub const ErrorKind = enum(u8) {
     js_aggregate,
 };
 
-pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFailure {
-    {
-        _ = value;
-        @panic("TODO");
-    }
-    // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
-        unreachable; // enough space
-    const w = payload.writer();
-
-    try w.writeInt(u32, @bitCast(owner.encode()), .little);
-    // try writeJsValue(value);
-
-    // Avoid-recloning if it is was moved to the hap
-    const data = if (payload.items.ptr == &sfb.buffer)
-        try dev.allocator().dupe(u8, payload.items)
-    else
-        payload.items;
-
-    return .{ .data = data };
-}
-
 pub fn initFromLog(
     dev: *DevServer,
     owner: Owner,
@@ -138,7 +115,7 @@ pub fn initFromLog(
 
     // Avoid small re-allocations without requesting so much from the heap
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
 
@@ -163,7 +140,7 @@ pub fn initFromLog(
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts
 
-const Writer = std.ArrayList(u8).Writer;
+const Writer = std.array_list.Managed(u8).Writer;
 
 fn writeLogMsg(msg: *const bun.logger.Msg, w: Writer) !void {
     try w.writeByte(switch (msg.kind) {

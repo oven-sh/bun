@@ -88,6 +88,8 @@ cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
+config_version: ?bun.ConfigVersion = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -144,25 +146,7 @@ pub const LogLevel = enum {
     }
 };
 
-pub const NodeLinker = enum(u8) {
-    // If workspaces are used: isolated
-    // If not: hoisted
-    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
-    auto,
-
-    hoisted,
-    isolated,
-
-    pub fn fromStr(input: string) ?NodeLinker {
-        if (strings.eqlComptime(input, "hoisted")) {
-            return .hoisted;
-        }
-        if (strings.eqlComptime(input, "isolated")) {
-            return .isolated;
-        }
-        return null;
-    }
-};
+pub const NodeLinker = @import("../../install_types/NodeLinker.zig").NodeLinker;
 
 pub const Update = struct {
     development: bool = false,
@@ -289,6 +273,10 @@ pub fn load(
             this.node_linker = node_linker;
         }
 
+        if (config.global_store) |global_store| {
+            this.enable.global_virtual_store = global_store;
+        }
+
         if (config.security_scanner) |security_scanner| {
             this.security_scanner = security_scanner;
             this.do.prefetch_resolved_tarballs = false;
@@ -390,6 +378,10 @@ pub fn load(
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
+    }
+
+    if (env.get("BUN_INSTALL_GLOBAL_STORE")) |val| {
+        this.enable.global_virtual_store = !strings.eqlComptime(val, "0");
     }
 
     const default_disable_progress_bar: bool = brk: {
@@ -731,7 +723,12 @@ pub const Enable = packed struct(u16) {
 
     exact_versions: bool = false,
     only_missing: bool = false,
-    _: u7 = 0,
+    /// Isolated linker only: materialize package entries once into a shared
+    /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
+    /// it, instead of clonefiling every package into every project on every
+    /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
+    global_virtual_store: bool = true,
+    _: u6 = 0,
 };
 
 const string = []const u8;

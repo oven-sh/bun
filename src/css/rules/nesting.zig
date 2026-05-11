@@ -14,13 +14,13 @@ pub fn NestingRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // #[cfg(feature = "sourcemap")]
             // dest.add_mapping(self.loc);
             if (dest.context() == null) {
                 try dest.writeStr("@nest ");
             }
-            return try this.style.toCss(W, dest);
+            return try this.style.toCss(dest);
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

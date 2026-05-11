@@ -25,8 +25,8 @@ public:
         const TextPosition& startPosition,
         JSC::SourceProviderSourceType sourceType)
     {
-        auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = jsCast<::Zig::GlobalObject*>(globalObject);
+        auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
+        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
         provider->m_globalObject = zigGlobalObject;
         provider->m_specifier = specifier;
@@ -52,7 +52,7 @@ private:
               source,
               sourceOrigin,
               JSC::SourceTaintedOrigin::Untainted,
-              WTFMove(sourceURL),
+              WTF::move(sourceURL),
               startPosition,
               sourceType)
         , m_sourceMapJSON(sourceMapJSONPtr, sourceMapJSONLength)

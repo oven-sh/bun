@@ -69,7 +69,12 @@ pub fn NewWriterWrap(
         }
 
         pub fn short(this: @This(), value: anytype) !void {
-            try this.write(std.mem.asBytes(&@byteSwap(@as(u16, @intCast(value)))));
+            const T = @TypeOf(value);
+            const int_value = switch (@typeInfo(T)) {
+                .int, .comptime_int => value,
+                else => @compileError("short() requires an integer type"),
+            };
+            try this.write(std.mem.asBytes(&@byteSwap(std.math.cast(u16, int_value) orelse return error.TooManyParameters)));
         }
 
         pub fn string(this: @This(), value: []const u8) !void {

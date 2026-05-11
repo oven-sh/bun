@@ -1,12 +1,10 @@
 //! Error type that preserves useful information from the operating system
 const Error = @This();
 
-const retry_errno = if (Environment.isLinux)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-else if (Environment.isMac)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
+const retry_errno = if (Environment.isWindows)
+    @as(Int, @intCast(@intFromEnum(E.INTR)))
 else
-    @as(Int, @intCast(@intFromEnum(E.INTR)));
+    @as(Int, @intCast(@intFromEnum(E.AGAIN)));
 
 const todo_errno = std.math.maxInt(Int) - 1;
 
@@ -16,7 +14,7 @@ pub const Int = u16;
 pub const oom = fromCode(E.NOMEM, .read);
 
 errno: Int = todo_errno,
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 path: []const u8 = "",
 syscall: sys.Tag = sys.Tag.TODO,
@@ -43,7 +41,7 @@ pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
     };
 }
 
-pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(self: Error, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     // We want to reuse the code from SystemError for formatting.
     // But, we do not want to call String.createUTF8 on the path/dest strings
     // because we're intending to pass them to writer.print()
@@ -56,7 +54,7 @@ pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions
     bun.debugAssert(that.path.tag != .WTFStringImpl);
     bun.debugAssert(that.dest.tag != .WTFStringImpl);
 
-    return that.format(fmt, opts, writer);
+    return that.format(writer);
 }
 
 pub inline fn getErrno(this: Error) E {
@@ -155,7 +153,7 @@ pub fn name(this: *const Error) []const u8 {
             // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
             @setRuntimeSafety(false);
             if (this.from_libuv) {
-                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(-@as(c_int, this.errno)))));
             }
 
             break :brk @as(SystemErrno, @enumFromInt(this.errno));
@@ -322,17 +320,15 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
-    return this.toSystemError().toErrorInstance(ptr);
-}
+pub const toJS = @import("../sys_jsc/error_jsc.zig").toJS;
+pub const toJSWithAsyncStack = @import("../sys_jsc/error_jsc.zig").toJSWithAsyncStack;
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-
-const jsc = bun.jsc;
-const SystemError = jsc.SystemError;
+const SystemError = bun.jsc.SystemError;
 
 const sys = bun.sys;
 const E = sys.E;

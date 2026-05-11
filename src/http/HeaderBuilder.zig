@@ -55,7 +55,7 @@ pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {
 
 const string = []const u8;
 
-const HTTPClient = @import("../http.zig");
+const HTTPClient = @import("./http.zig");
 const std = @import("std");
 
 const bun = @import("bun");

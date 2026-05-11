@@ -773,7 +773,7 @@ pub const Lexer = struct {
                     lexer.start = start;
                     if (needs_slow_pass) {
                         const text = lexer.string_literal_slice;
-                        var array_list = try std.ArrayList(u8).initCapacity(lexer.allocator, text.len);
+                        var array_list = try std.array_list.Managed(u8).initCapacity(lexer.allocator, text.len);
                         if (is_multiline_string_literal) {
                             try lexer.decodeEscapeSequences(start, text, true, @TypeOf(array_list), &array_list);
                         } else {

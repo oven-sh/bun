@@ -80,6 +80,26 @@ export function getStdioWriteStream(
         });
       }
     };
+
+    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
+    stream._final = function (cb) {
+      try {
+        const sink = this[kFastPath];
+        if (sink && sink !== true) {
+          const result = sink.flush();
+          if ($isPromise(result)) {
+            result.then(
+              () => cb(null),
+              err => cb(err),
+            );
+            return;
+          }
+        }
+        cb(null);
+      } catch (err) {
+        cb(err);
+      }
+    };
   }
 
   stream._isStdio = true;
@@ -359,23 +379,6 @@ export function initializeNextTickQueue(
   }
 
   return nextTick;
-}
-
-$getter;
-export function mainModule() {
-  var existing = $getByIdDirectPrivate(this, "main");
-  // note: this doesn't handle "process.mainModule = undefined"
-  if (typeof existing !== "undefined") {
-    return existing;
-  }
-
-  return $requireMap.$get(Bun.main);
-}
-
-$overriddenName = "set mainModule";
-export function setMainModule(value) {
-  $putByIdDirectPrivate(this, "main", value);
-  return true;
 }
 
 type InternalEnvMap = Record<string, string>;

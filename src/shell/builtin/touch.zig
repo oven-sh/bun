@@ -17,14 +17,12 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt; // autofix
-    _ = opts; // autofix
+pub fn format(this: *const Touch, writer: *std.Io.Writer) !void {
     try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
 pub fn deinit(this: *Touch) void {
-    log("{} deinit", .{this});
+    log("{f} deinit", .{this});
 }
 
 pub fn start(this: *Touch) Yield {
@@ -60,6 +58,7 @@ pub fn next(this: *Touch) Yield {
             if (exec.started) {
                 if (this.state.exec.tasks_done >= this.state.exec.tasks_count and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+                    if (this.state.exec.err) |e| e.deref();
                     this.state = .done;
                     return this.bltn().done(exit_code);
                 }
@@ -82,11 +81,11 @@ pub fn next(this: *Touch) Yield {
 }
 
 pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?jsc.SystemError) Yield {
+    if (e) |err| err.deref();
+
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
     }
-
-    if (e) |err| err.deref();
 
     return this.next();
 }
@@ -103,7 +102,7 @@ pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Yie
 }
 
 pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
-    log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
+    log("{f} onShellTouchTaskDone {f} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
 
     defer bun.default_allocator.destroy(task);
     this.state.exec.tasks_done += 1;
@@ -116,6 +115,7 @@ pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
             .state = .waiting_write_err,
         });
         const error_string = this.bltn().taskErrorToString(.touch, e);
+        if (this.state.exec.err) |prev| prev.deref();
         this.state.exec.err = e;
         output_task.start(error_string).run();
         return;
@@ -134,8 +134,8 @@ pub const ShellTouchOutputTask = OutputTask(Touch, .{
 
 const ShellTouchOutputTaskVTable = struct {
     pub fn writeErr(this: *Touch, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -147,8 +147,8 @@ const ShellTouchOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Touch, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);
@@ -178,9 +178,7 @@ pub const ShellTouchTask = struct {
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
 
-    pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: *const ShellTouchTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 
@@ -205,12 +203,12 @@ pub const ShellTouchTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        debug("{} schedule", .{this});
+        debug("{f} schedule", .{this});
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        debug("{} runFromJS", .{this});
+        debug("{f} runFromJS", .{this});
         this.touch.onShellTouchTaskDone(this);
     }
 
@@ -220,7 +218,7 @@ pub const ShellTouchTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellTouchTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path
         const filepath: [:0]const u8 = brk: {
@@ -253,12 +251,12 @@ pub const ShellTouchTask = struct {
                         break :out;
                     },
                     .err => |e| {
-                        this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                        this.err = e.withPath(filepath).toShellSystemError();
                         break :out;
                     },
                 }
             }
-            this.err = err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+            this.err = err.withPath(filepath).toShellSystemError();
         }
 
         if (this.event_loop == .js) {

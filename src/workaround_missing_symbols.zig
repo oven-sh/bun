@@ -65,15 +65,15 @@ pub const darwin = struct {
     // The symbol name depends on the arch.
 
     pub const lstat = blk: {
-        const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
+        const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "lstat" else "lstat64" });
     };
     pub const fstat = blk: {
-        const T = *const fn (i32, ?*bun.Stat) callconv(.C) c_int;
+        const T = *const fn (i32, ?*bun.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "fstat" else "fstat64" });
     };
     pub const stat = blk: {
-        const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
+        const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
     };
 };
@@ -99,26 +99,37 @@ pub const windows = struct {
 
     /// lstat is implemented in workaround-missing-symbols.cpp
     pub const lstat = blk: {
-        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = "lstat64" });
     };
     /// fstat is implemented in workaround-missing-symbols.cpp
     pub const fstat = blk: {
-        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = "fstat64" });
     };
     /// stat is implemented in workaround-missing-symbols.cpp
     pub const stat = blk: {
-        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+        const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.c) c_int;
         break :blk @extern(T, .{ .name = "stat64" });
     };
+};
+
+pub const freebsd = struct {
+    pub const memmem = bun.c.memmem;
+    // FreeBSD has plain stat/fstat/lstat (no 64-suffix; off_t is always
+    // 64-bit). Zig's std.c only exports darwin's `stat$INODE64`, so bind
+    // them directly.
+    pub extern "c" fn lstat(noalias path: [*:0]const u8, noalias buf: *std.c.Stat) c_int;
+    pub extern "c" fn fstat(fd: c_int, buf: *std.c.Stat) c_int;
+    pub extern "c" fn stat(noalias path: [*:0]const u8, noalias buf: *std.c.Stat) c_int;
 };
 
 pub const current = switch (bun.Environment.os) {
     .linux => linux,
     .windows => windows,
     .mac => darwin,
-    else => struct {},
+    .freebsd => freebsd,
+    .wasm => struct {},
 };
 
 const bun = @import("bun");

@@ -1109,15 +1109,15 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         // Test all equality operators with typeof undefined
         console.log(typeof x !== 'undefined');
-        console.log(typeof x != 'undefined'); 
+        console.log(typeof x != 'undefined');
         console.log('undefined' !== typeof x);
         console.log('undefined' != typeof x);
-        
+
         console.log(typeof x === 'undefined');
         console.log(typeof x == 'undefined');
         console.log('undefined' === typeof x);
         console.log('undefined' == typeof x);
-        
+
         // These should not be optimized
         console.log(typeof x === 'string');
         console.log(x === 'undefined');
@@ -1133,6 +1133,63 @@ describe("bundler", () => {
       expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
         `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
       );
+    },
+  });
+
+  // https://github.com/oven-sh/bun/issues/26371
+  // Minified bundler output missing semicolon between statements when
+  // using both default and named imports from "bun" module
+  itBundled("minify/BunImportSemicolonInsertion", {
+    files: {
+      "/entry.js": /* js */ `
+        import bun, { embeddedFiles } from "bun"
+        console.log(typeof embeddedFiles)
+        console.log(typeof bun.argv)
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "object\nobject",
+    },
+  });
+
+  itBundled("minify/BunImportNamespaceAndNamed", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as bun from "bun"
+        import { embeddedFiles } from "bun"
+        console.log(typeof embeddedFiles)
+        console.log(typeof bun.argv)
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "object\nobject",
+    },
+  });
+
+  itBundled("minify/BunImportDefaultNamespaceAndNamed", {
+    files: {
+      "/entry.js": /* js */ `
+        import bun, * as bunNs from "bun"
+        import { embeddedFiles } from "bun"
+        console.log(typeof embeddedFiles)
+        console.log(typeof bun.argv)
+        console.log(typeof bunNs.argv)
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "object\nobject\nobject",
     },
   });
 });

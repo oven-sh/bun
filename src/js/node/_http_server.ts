@@ -1,8 +1,13 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
-const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
+const {
+  _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  validateHeaderName,
+  validateHeaderValue,
+} = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
@@ -28,7 +33,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -194,6 +198,19 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+// Node.js only requests a client certificate when `requestCert: true`.
+// The uSockets SSL context treats `ca` alone as "verify peer", so without
+// these two flags an `https.Server({ ca })` would reject every client that
+// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
+// to false and, when not requesting, force `rejectUnauthorized` to false so
+// the CA is loaded into the trust store without requiring a client cert.
+function normalizeServerTls(tls) {
+  const requestCert = !!tls.requestCert;
+  tls.requestCert = requestCert;
+  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  return tls;
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -248,14 +265,16 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
-      this[tlsSymbol] = {
+      this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
         cert,
         ca,
         passphrase,
         secureOptions,
-      };
+        requestCert: options.requestCert,
+        rejectUnauthorized: options.rejectUnauthorized,
+      });
     } else {
       this[tlsSymbol] = null;
     }
@@ -382,7 +401,7 @@ Server.prototype.listen = function () {
 
       const otherTLS = arguments[0].tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = otherTLS;
+        tls = normalizeServerTls({ ...otherTLS });
       }
     } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
       // (path[...][, cb])
@@ -520,6 +539,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isSocketNew,
         socket,
         isAncientHTTP: boolean,
+        connectHead?: Buffer,
       ) {
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
@@ -540,7 +560,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kEnableStreaming](true);
             const { promise, resolve } = $newPromiseCapability(Promise);
             socket.once("close", resolve);
-            server.emit("connect", http_req, socket, kEmptyBuffer);
+            // Pass the pipelined data (head buffer) if any was received with the CONNECT request
+            const head = connectHead ? connectHead : kEmptyBuffer;
+            server.emit("connect", http_req, socket, head);
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -1300,7 +1322,10 @@ ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
 
   for (const key of ObjectKeys(hints)) {
     if (key !== "link") {
-      head += key + ": " + hints[key] + "\r\n";
+      const value = hints[key];
+      validateHeaderName(key);
+      validateHeaderValue(key, value);
+      head += key + ": " + value + "\r\n";
     }
   }
 
@@ -1545,7 +1570,7 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 0) !== 0;
   },
 });
 

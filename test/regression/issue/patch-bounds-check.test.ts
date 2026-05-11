@@ -5,6 +5,7 @@ const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
   str = str.replaceAll("fstatat()", "stat()");
+  str = str.replace(/ \(v[\d.]+ available\)/g, "");
   return str;
 };
 
@@ -30,7 +31,7 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -72,7 +73,7 @@ test("patch application should handle deletion beyond file bounds", async () => 
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -111,7 +112,7 @@ test("patch application should work correctly with valid patches", async () => {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",

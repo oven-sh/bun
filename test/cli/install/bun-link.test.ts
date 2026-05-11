@@ -27,7 +27,7 @@ expect.extend({
 
 beforeEach(async () => {
   link_dir = tmpdirSync();
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(async () => {
   await dummyAfterEach();
@@ -81,7 +81,7 @@ it("should link and unlink workspace package", async () => {
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "link", "moo"],
+    cmd: [bunExe(), "link", "moo", "--linker=hoisted"],
     cwd: join(link_dir, "packages", "boba"),
     stdout: "pipe",
     stdin: "pipe",
@@ -134,7 +134,7 @@ it("should link and unlink workspace package", async () => {
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "link", "foo"],
+    cmd: [bunExe(), "link", "foo", "--linker=hoisted"],
     cwd: join(link_dir, "packages", "boba"),
     stdout: "pipe",
     stdin: "pipe",

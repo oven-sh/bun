@@ -50,7 +50,7 @@ describe("TextEncoder", () => {
 });
 ```
 
-If you are fixing a bug that was reported from a GitHub issue, remember to add a test in the `test/regression/` directory.
+When fixing a bug, add the test to the existing test file for that code (e.g. a fetch bug → `test/js/web/fetch/fetch.test.ts`). Only use `test/regression/` when the bug has a GitHub issue number **and** is a true regression — it worked in a previous release and then broke.
 
 ```ts
 // test/regression/issue/02005.test.ts

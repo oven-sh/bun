@@ -21,7 +21,22 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    pub fn deinit(this: *const Installer) void {
+    /// Absolute path to the global virtual store (`<cache_dir>/links`). When
+    /// non-null, npm/git/tarball entries are materialized once into this
+    /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
+    /// it, so warm installs are O(packages) symlinks instead of O(files)
+    /// clonefile work.
+    global_store_path: ?[:0]const u8,
+
+    /// Per-process suffix for staging global-store entries. Each entry is
+    /// built under `<cache>/links/<storepath>-<hash>.tmp-<this>/` (package
+    /// files, dep symlinks, bin links — all relative within the entry, so
+    /// they resolve identically after the rename) and renamed into place as
+    /// the final step. The directory existing at its final path is the only
+    /// completeness signal the warm-hit check needs.
+    global_store_tmp_suffix: u64,
+
+    pub fn deinit(this: *Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
@@ -85,6 +100,59 @@ pub const Installer = struct {
         }
     }
 
+    /// Called from main thread when a tarball download or extraction fails.
+    /// Without this, the upfront pending-task slot for each waiting entry is
+    /// never released and the install loop blocks forever on
+    /// `pendingTaskCount() == 0`.
+    pub fn onPackageDownloadError(
+        this: *Installer,
+        task_id: install.Task.Id,
+        name: []const u8,
+        resolution: *const Resolution,
+        err: anyerror,
+        url: []const u8,
+    ) void {
+        if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+            var callbacks = removed.value;
+            defer callbacks.deinit(this.manager.allocator);
+
+            const entry_steps = this.store.entries.items(.step);
+            for (callbacks.items) |install_ctx| {
+                const entry_id = install_ctx.isolated_package_install_context;
+                entry_steps[entry_id.get()].store(.done, .monotonic);
+                this.onTaskFail(entry_id, .{ .download = .{
+                    .err = err,
+                    .url = url,
+                } });
+            }
+        } else {
+            // No waiting entry — still surface the error so it isn't lost.
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+            Output.errGeneric("failed to download <b>{s}@{f}<r>: {s}\n  <d>{s}<r>", .{
+                name,
+                resolution.fmt(string_buf, .auto),
+                downloadErrorReason(err),
+                url,
+            });
+            Output.flush();
+        }
+    }
+
+    fn downloadErrorReason(e: anyerror) []const u8 {
+        return switch (e) {
+            error.TarballHTTP400 => "400 Bad Request",
+            error.TarballHTTP401 => "401 Unauthorized",
+            error.TarballHTTP402 => "402 Payment Required",
+            error.TarballHTTP403 => "403 Forbidden",
+            error.TarballHTTP404 => "404 Not Found",
+            error.TarballHTTP4xx => "HTTP 4xx",
+            error.TarballHTTP5xx => "HTTP 5xx",
+            error.TarballFailedToExtract => "failed to extract",
+            error.TarballFailedToDownload => "download failed",
+            else => @errorName(e),
+        };
+    }
+
     pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch, log: *bun.logger.Log) void {
         const store = this.store;
         const entry_node_ids = store.entries.items(.node_id);
@@ -127,27 +195,51 @@ pub const Installer = struct {
 
         switch (err) {
             .link_package => |link_err| {
-                Output.err(link_err, "failed to link package: {s}@{}", .{
+                Output.err(link_err, "failed to link package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
             },
             .symlink_dependencies => |symlink_err| {
-                Output.err(symlink_err, "failed to symlink dependencies for package: {s}@{}", .{
+                Output.err(symlink_err, "failed to symlink dependencies for package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
             },
             .patching => |patch_log| {
-                Output.errGeneric("failed to patch package: {s}@{}", .{
+                Output.errGeneric("failed to patch package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
                 patch_log.print(Output.errorWriter()) catch {};
             },
+            .binaries => |bin_err| {
+                Output.err(bin_err, "failed to link binaries for package: {s}@{f}", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                });
+            },
+            .download => |dl| {
+                Output.errGeneric("failed to download <b>{s}@{f}<r>: {s}\n  <d>{s}<r>", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                    downloadErrorReason(dl.err),
+                    dl.url,
+                });
+            },
             else => {},
         }
         Output.flush();
+
+        // Clean up the staging directory so a half-built global-store entry
+        // doesn't leak in the cache (it would never be reused — the suffix is
+        // random — but it's wasted disk).
+        if (this.entryUsesGlobalStore(entry_id)) {
+            var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+            defer staging.deinit();
+            this.appendGlobalStoreEntryPath(&staging, entry_id, .staging);
+            FD.cwd().deleteTree(staging.slice()) catch {};
+        }
 
         // attempt deleting the package so the next install will install it again
         switch (pkg_res.tag) {
@@ -171,7 +263,7 @@ pub const Installer = struct {
                 var store_path: bun.RelPath(.{ .sep = .auto }) = .init();
                 defer store_path.deinit();
 
-                store_path.appendFmt("node_modules/{}", .{
+                store_path.appendFmt("node_modules/{f}", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
 
@@ -353,6 +445,7 @@ pub const Installer = struct {
             run_scripts: anyerror,
             binaries: anyerror,
             patching: bun.logger.Log,
+            download: struct { err: anyerror, url: []const u8 },
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
@@ -361,6 +454,7 @@ pub const Installer = struct {
                     .binaries => |err| .{ .binaries = err },
                     .run_scripts => |err| .{ .run_scripts = err },
                     .patching => |log| .{ .patching = log },
+                    .download => |dl| .{ .download = dl },
                 };
             }
         };
@@ -435,6 +529,8 @@ pub const Installer = struct {
             const pkg_names = pkgs.items(.name);
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
+            const pkg_resolutions_lists = pkgs.items(.resolutions);
+            const pkg_metas: []const Lockfile.Package.Meta = pkgs.items(.meta);
             const pkg_bins = pkgs.items(.bin);
             const pkg_script_lists = pkgs.items(.scripts);
 
@@ -505,7 +601,7 @@ pub const Installer = struct {
                                     defer src.deinit();
                                     src.appendJoin(pkg_res.value.folder.slice(string_buf));
 
-                                    var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
+                                    var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
 
                                     installer.appendStorePath(&dest, this.entry_id);
@@ -528,9 +624,9 @@ pub const Installer = struct {
                                             if (PackageManager.verbose_install) {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to hardlink package folder
-                                                    \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\{f}
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -558,9 +654,11 @@ pub const Installer = struct {
                                             0,
                                         );
 
-                                        if (src_path_len == 0) {
-                                            const e = bun.windows.Win32Error.get();
-                                            const err = e.toSystemErrno() orelse .EUNKNOWN;
+                                        if (src_path_len == 0 or src_path_len >= src_path.buf().len) {
+                                            const err: bun.sys.SystemErrno = if (src_path_len == 0)
+                                                (bun.windows.Win32Error.get().toSystemErrno() orelse .EUNKNOWN)
+                                            else
+                                                .ENAMETOOLONG;
                                             return .failure(
                                                 .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
                                             );
@@ -569,7 +667,7 @@ pub const Installer = struct {
                                         src_path.setLength(src_path_len);
                                     }
 
-                                    var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
+                                    var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
                                     installer.appendStorePath(&dest, this.entry_id);
 
@@ -587,9 +685,9 @@ pub const Installer = struct {
                                             if (PackageManager.verbose_install) {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to copy package
-                                                    \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\{f}
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -616,9 +714,60 @@ pub const Installer = struct {
                     const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                     defer cache_dir_path.deinit();
 
-                    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .init();
+                    var dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }) = .init();
                     defer dest_subpath.deinit();
-                    installer.appendStorePath(&dest_subpath, this.entry_id);
+                    installer.appendRealStorePath(&dest_subpath, this.entry_id, .staging);
+
+                    const uses_global_store = installer.entryUsesGlobalStore(this.entry_id);
+
+                    if (!uses_global_store) {
+                        // An entry can lose global-store eligibility between
+                        // installs — newly patched, newly trusted, a dep that
+                        // became a workspace package. The previous install
+                        // left `node_modules/.bun/<storepath>` as a symlink
+                        // (or junction) into the shared `<cache>/links/`
+                        // directory. Writing the new project-local tree
+                        // *through* that link would mutate the shared entry
+                        // underneath every other consumer; on Windows the
+                        // `.expect_missing` dep-symlink rewrite then bakes a
+                        // project-absolute junction target into the shared
+                        // directory, which dangles after the next
+                        // `rm -rf node_modules`. Detach first so the build
+                        // lands in a real project-local directory.
+                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer local.deinit();
+                        installer.appendLocalStoreEntryPath(&local, this.entry_id);
+                        const is_stale_link = if (comptime Environment.isWindows)
+                            if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false
+                        else if (sys.lstat(local.sliceZ()).asValue()) |st|
+                            std.posix.S.ISLNK(@intCast(st.mode))
+                        else
+                            false;
+                        if (is_stale_link) {
+                            const remove_err: ?sys.Error = if (comptime Environment.isWindows) win: {
+                                if (sys.rmdir(local.sliceZ()).asErr()) |_| {
+                                    if (sys.unlink(local.sliceZ()).asErr()) |e| break :win e;
+                                }
+                                break :win null;
+                            } else sys.unlink(local.sliceZ()).asErr();
+                            if (remove_err) |e| if (e.getErrno() != .NOENT) {
+                                // Do NOT proceed: the backend below would
+                                // write *through* the still-live symlink
+                                // into the shared `<cache>/links/` entry.
+                                return .failure(.{ .link_package = e });
+                            };
+                        }
+                    }
+
+                    if (uses_global_store) {
+                        // Clear any leftover staging directory from a crashed
+                        // earlier run with the same suffix (vanishingly
+                        // unlikely with a 64-bit random suffix, but cheap).
+                        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+                        defer staging.deinit();
+                        installer.appendGlobalStoreEntryPath(&staging, this.entry_id, .staging);
+                        FD.cwd().deleteTree(staging.slice()) catch {};
+                    }
 
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
@@ -635,7 +784,7 @@ pub const Installer = struct {
 
                             if (installer.manager.options.log_level.isVerbose()) {
                                 bun.Output.prettyErrorln(
-                                    \\Cloning {} to {}
+                                    \\Cloning {f} to {f}
                                 ,
                                     .{
                                         bun.fmt.fmtOSPath(pkg_cache_dir_subpath.sliceZ(), .{ .path_sep = .auto }),
@@ -712,9 +861,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to hardlink package
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -740,9 +889,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -775,9 +924,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to copy package
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -806,7 +955,7 @@ pub const Installer = struct {
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
 
-                        installer.appendStoreNodeModulesPath(&dest, this.entry_id);
+                        installer.appendRealStoreNodeModulesPath(&dest, this.entry_id, .staging);
 
                         dest.append(dep_name);
 
@@ -822,7 +971,29 @@ pub const Installer = struct {
                         var dep_store_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dep_store_path.deinit();
 
-                        installer.appendStorePath(&dep_store_path, dep.entry_id);
+                        // When this entry lives in the global virtual store, its
+                        // dep symlinks must point at sibling *global* entries
+                        // (relative `../../<dep>-<hash>/...`) so the entry stays
+                        // valid for any project. Non-global parents (root,
+                        // workspace) keep pointing at the project-local
+                        // `.bun/<storepath>` indirection so `node_modules/<pkg>`
+                        // remains a relative link into `node_modules/.bun/`.
+                        if (installer.entryUsesGlobalStore(this.entry_id)) {
+                            // The eligibility DFS + fixed-point pass guarantee
+                            // every dep of a global entry is itself global; if
+                            // that ever regressed the failure mode is a
+                            // dangling symlink with no install-time error.
+                            bun.debugAssert(installer.entryUsesGlobalStore(dep.entry_id));
+                            // Target the dep's *final* path: the relative
+                            // `../../<dep>/...` link is computed against our
+                            // staging directory but resolves identically once
+                            // we're renamed (same parent), and the dep will
+                            // have been (or will be) renamed into that final
+                            // path by its own task.
+                            installer.appendRealStorePath(&dep_store_path, dep.entry_id, .final);
+                        } else {
+                            installer.appendStorePath(&dep_store_path, dep.entry_id);
+                        }
 
                         const target = target: {
                             var dest_save = dest.save();
@@ -845,6 +1016,9 @@ pub const Installer = struct {
                             // then create the symlink if necessary
                             .expect_existing
                         else
+                            // Global-store entries are built under a private
+                            // per-process staging directory, so nothing else
+                            // is touching this path.
                             .expect_missing;
 
                         switch (symlinker.ensureSymlink(link_strategy)) {
@@ -854,6 +1028,21 @@ pub const Installer = struct {
                             },
                         }
                     }
+
+                    if (installer.entryUsesGlobalStore(this.entry_id)) {
+                        // The entry now exists in the shared global virtual store.
+                        // Project-local `node_modules/.bun/<storepath>` becomes a
+                        // symlink into it so that the relative `../../<dep>` links
+                        // created above (which live inside the global entry) remain
+                        // reachable from the project's node_modules.
+                        switch (installer.linkProjectToGlobalStore(this.entry_id)) {
+                            .result => {},
+                            .err => |err| {
+                                return .failure(.{ .symlink_dependencies = err });
+                            },
+                        }
+                    }
+
                     continue :next_step this.nextStep(current_step);
                 },
                 inline .check_if_blocked => |current_step| {
@@ -905,6 +1094,18 @@ pub const Installer = struct {
                         continue :next_step this.nextStep(current_step);
                     }
 
+                    // The eligibility check excludes any package whose
+                    // lifecycle scripts are trusted to run, so a global-store
+                    // entry should never reach script enqueueing. Guard it
+                    // anyway: `meta.hasInstallScript` can be a false negative
+                    // (yarn-migrated lockfiles force it to `.false`), and a
+                    // script running with cwd inside a shared content-
+                    // addressed directory would mutate every other project's
+                    // copy.
+                    if (installer.entryUsesGlobalStore(this.entry_id)) {
+                        continue :next_step this.nextStep(current_step);
+                    }
+
                     const string_buf = installer.lockfile.buffers.string_bytes.items;
 
                     const dep = installer.lockfile.buffers.dependencies.items[dep_id];
@@ -914,7 +1115,7 @@ pub const Installer = struct {
                         if (installer.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) {
                             break :brk .{ true, true };
                         }
-                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf))) {
+                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), &pkg_res)) {
                             break :brk .{ true, false };
                         }
                         break :brk .{ false, false };
@@ -925,8 +1126,22 @@ pub const Installer = struct {
 
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
-                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) {
+                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueue_lifecycle_scripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
+                        if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                            .{
+                                .name_hash = pkg_name_hash,
+                                .version = if (pkg_res.tag == .npm) pkg_res.value.npm.version else null,
+                                .version_buf = lockfile.buffers.string_bytes.items,
+                            },
+                            installer.lockfile.buffers.resolutions.items,
+                            pkg_metas,
+                            manager.options.cpu,
+                            manager.options.os,
+                            null,
+                        )) {
+                            break :enqueue_lifecycle_scripts;
+                        }
 
                         var log = bun.logger.Log.init(bun.default_allocator);
                         defer log.deinit();
@@ -979,6 +1194,10 @@ pub const Installer = struct {
 
                     const bin = pkg_bins[pkg_id];
                     if (bin.tag == .none) {
+                        switch (installer.commitGlobalStoreEntry(this.entry_id)) {
+                            .result => {},
+                            .err => |e| return .failure(.{ .link_package = e }),
+                        }
                         continue :next_step this.nextStep(current_step);
                     }
 
@@ -999,16 +1218,39 @@ pub const Installer = struct {
 
                     var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
                     defer node_modules_path.deinit();
+                    installer.appendRealStoreNodeModulesPath(&node_modules_path, this.entry_id, .staging);
 
-                    installer.appendStoreNodeModulesPath(&node_modules_path, this.entry_id);
+                    var target_node_modules_path: ?bun.AbsPath(.{}) = null;
+                    defer if (target_node_modules_path) |*path| path.deinit();
+
+                    var target_package_name: strings.StringOrTinyString = strings.StringOrTinyString.init(dep_name);
+
+                    if (installer.maybeReplaceNodeModulesPath(
+                        entry_node_ids,
+                        node_pkg_ids,
+                        pkg_name_hashes,
+                        pkg_resolutions_lists,
+                        installer.lockfile.buffers.resolutions.items,
+                        installer.lockfile.packages.items(.meta),
+                        pkg_id,
+                    )) |replacement_entry_id| {
+                        target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
+                        installer.appendRealStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id, .final);
+
+                        const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
+                        const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
+                        target_package_name = strings.StringOrTinyString.init(installer.lockfile.str(&pkg_names[replacement_pkg_id]));
+                    }
 
                     var bin_linker: Bin.Linker = .{
                         .bin = bin,
                         .global_bin_path = installer.manager.options.bin_path,
                         .package_name = strings.StringOrTinyString.init(dep_name),
+                        .target_package_name = target_package_name,
                         .string_buf = string_buf,
                         .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
                         .seen = &seen,
+                        .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
                         .node_modules_path = &node_modules_path,
                         .abs_target_buf = abs_target_buf,
                         .abs_dest_buf = abs_dest_buf,
@@ -1017,8 +1259,30 @@ pub const Installer = struct {
 
                     bin_linker.link(false);
 
+                    if (target_node_modules_path != null and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                        target_node_modules_path.?.deinit();
+                        target_node_modules_path = null;
+
+                        bin_linker.target_node_modules_path = &node_modules_path;
+                        bin_linker.target_package_name = strings.StringOrTinyString.init(dep_name);
+
+                        if (this.installer.manager.options.log_level.isVerbose()) {
+                            Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                                dep_name,
+                                bin_linker.target_package_name.slice(),
+                            });
+                        }
+
+                        bin_linker.link(false);
+                    }
+
                     if (bin_linker.err) |err| {
                         return .failure(.{ .binaries = err });
+                    }
+
+                    switch (installer.commitGlobalStoreEntry(this.entry_id)) {
+                        .result => {},
+                        .err => |e| return .failure(.{ .link_package = e }),
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -1164,11 +1428,11 @@ pub const Installer = struct {
         switch (pkg_res.tag) {
             .workspace => {
                 if (this.lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
-                    try writer.print("{}", .{workspace_version.fmt(string_buf)});
+                    try writer.print("{f}", .{workspace_version.fmt(string_buf)});
                 }
             },
             else => {
-                try writer.print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                try writer.print("{f}", .{pkg_res.fmt(string_buf, .posix)});
             },
         }
 
@@ -1218,7 +1482,7 @@ pub const Installer = struct {
             target.append("..");
         }
 
-        target.appendFmt("{}/node_modules/{s}", .{
+        target.appendFmt("{f}/node_modules/{s}", .{
             Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
             pkg_name.slice(string_buf),
         });
@@ -1243,6 +1507,49 @@ pub const Installer = struct {
         _ = symlinker.ensureSymlink(link_strategy);
     }
 
+    fn maybeReplaceNodeModulesPath(
+        this: *const Installer,
+        entry_node_ids: []const Store.Node.Id,
+        node_pkg_ids: []const PackageID,
+        name_hashes: []const PackageNameHash,
+        pkg_resolutions_lists: []const Lockfile.PackageIDSlice,
+        pkg_resolutions_buffer: []const PackageID,
+        pkg_metas: []const Package.Meta,
+        pkg_id: PackageID,
+    ) ?Store.Entry.Id {
+        const postinstall_optimizer = &this.manager.postinstall_optimizer;
+        if (!postinstall_optimizer.isNativeBinlinkEnabled()) {
+            return null;
+        }
+        const name_hash = name_hashes[pkg_id];
+
+        if (postinstall_optimizer.get(.{ .name_hash = name_hash })) |optimizer| {
+            switch (optimizer) {
+                .native_binlink => {
+                    const manager = this.manager;
+                    const target_cpu = manager.options.cpu;
+                    const target_os = manager.options.os;
+                    if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
+                        pkg_resolutions_lists[pkg_id].get(pkg_resolutions_buffer),
+                        pkg_metas,
+                        target_cpu,
+                        target_os,
+                    )) |replacement_pkg_id| {
+                        for (entry_node_ids, 0..) |new_node_id, new_entry_id| {
+                            if (node_pkg_ids[new_node_id.get()] == replacement_pkg_id) {
+                                debug("native bin link {d} -> {d}", .{ pkg_id, replacement_pkg_id });
+                                return .from(@intCast(new_entry_id));
+                            }
+                        }
+                    }
+                },
+                .ignore => {},
+            }
+        }
+
+        return null;
+    }
+
     pub fn linkDependencyBins(this: *const Installer, parent_entry_id: Store.Entry.Id) !void {
         const lockfile = this.lockfile;
         const store = this.store;
@@ -1251,7 +1558,7 @@ pub const Installer = struct {
         const extern_string_buf = lockfile.buffers.extern_strings.items;
 
         const entries = store.entries.slice();
-        const entry_node_ids = entries.items(.node_id);
+        const entry_node_ids: []const Store.Node.Id = entries.items(.node_id);
         const entry_deps = entries.items(.dependencies);
 
         const nodes = store.nodes.slice();
@@ -1259,6 +1566,10 @@ pub const Installer = struct {
         const node_dep_ids = nodes.items(.dep_id);
 
         const pkgs = lockfile.packages.slice();
+        const pkg_name_hashes = pkgs.items(.name_hash);
+        const pkg_metas = pkgs.items(.meta);
+        const pkg_resolutions_lists = pkgs.items(.resolutions);
+        const pkg_resolutions_buffer = lockfile.buffers.resolutions.items;
         const pkg_bins = pkgs.items(.bin);
 
         const link_target_buf = bun.path_buffer_pool.get();
@@ -1274,7 +1585,7 @@ pub const Installer = struct {
         var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
         defer node_modules_path.deinit();
 
-        this.appendStoreNodeModulesPath(&node_modules_path, parent_entry_id);
+        this.appendRealStoreNodeModulesPath(&node_modules_path, parent_entry_id, .staging);
 
         for (entry_deps[parent_entry_id.get()].slice()) |dep| {
             const node_id = entry_node_ids[dep.entry_id.get()];
@@ -1284,17 +1595,42 @@ pub const Installer = struct {
             if (bin.tag == .none) {
                 continue;
             }
-
             const alias = lockfile.buffers.dependencies.items[dep_id].name;
+
+            var target_node_modules_path: ?bun.AbsPath(.{}) = null;
+            defer if (target_node_modules_path) |*path| path.deinit();
+            const package_name = strings.StringOrTinyString.init(alias.slice(string_buf));
+
+            var target_package_name = package_name;
+
+            if (this.maybeReplaceNodeModulesPath(
+                entry_node_ids,
+                node_pkg_ids,
+                pkg_name_hashes,
+                pkg_resolutions_lists,
+                pkg_resolutions_buffer,
+                pkg_metas,
+                pkg_id,
+            )) |replacement_entry_id| {
+                target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
+                this.appendRealStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id, .final);
+
+                const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
+                const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
+                const pkg_names = pkgs.items(.name);
+                target_package_name = strings.StringOrTinyString.init(this.lockfile.str(&pkg_names[replacement_pkg_id]));
+            }
 
             var bin_linker: Bin.Linker = .{
                 .bin = bin,
                 .global_bin_path = this.manager.options.bin_path,
-                .package_name = strings.StringOrTinyString.init(alias.slice(string_buf)),
+                .package_name = package_name,
                 .string_buf = string_buf,
                 .extern_string_buf = extern_string_buf,
                 .seen = &seen,
                 .node_modules_path = &node_modules_path,
+                .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
+                .target_package_name = if (target_node_modules_path != null) target_package_name else package_name,
                 .abs_target_buf = link_target_buf,
                 .abs_dest_buf = link_dest_buf,
                 .rel_buf = link_rel_buf,
@@ -1302,10 +1638,204 @@ pub const Installer = struct {
 
             bin_linker.link(false);
 
+            if (target_node_modules_path != null and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                target_node_modules_path.?.deinit();
+                target_node_modules_path = null;
+
+                bin_linker.target_node_modules_path = &node_modules_path;
+                bin_linker.target_package_name = package_name;
+
+                if (this.manager.options.log_level.isVerbose()) {
+                    Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                        package_name.slice(),
+                        target_package_name.slice(),
+                    });
+                }
+
+                bin_linker.link(false);
+            }
+
             if (bin_linker.err) |err| {
                 return err;
             }
         }
+    }
+
+    /// True when this entry should live in the shared global virtual store
+    /// instead of being materialized under the project's `node_modules/.bun/`.
+    /// Root, workspace, folder, symlink, and patched packages always stay
+    /// project-local because their contents are mutable / project-specific.
+    pub fn entryUsesGlobalStore(this: *const Installer, entry_id: Store.Entry.Id) bool {
+        if (this.global_store_path == null) return false;
+        return this.store.entries.items(.entry_hash)[entry_id.get()] != 0;
+    }
+
+    /// Absolute path to the global virtual-store directory for `entry_id`:
+    ///   <cache>/links/<storepath>-<entry_hash>
+    /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
+    /// temp sibling that the build steps write into; the final `binaries`
+    /// step renames staging → final.
+    pub fn appendGlobalStoreEntryPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        bun.debugAssert(this.entryUsesGlobalStore(entry_id));
+        buf.clear();
+        buf.append(this.global_store_path.?);
+        switch (which) {
+            .final => buf.appendFmt("{f}", .{
+                Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+            }),
+            .staging => buf.appendFmt("{f}.tmp-{x}", .{
+                Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+                this.global_store_tmp_suffix,
+            }),
+        }
+    }
+
+    /// Atomically publish a staged global-store entry by renaming
+    /// `<entry>.tmp-<suffix>/` → `<entry>/`. The package tree, dep symlinks,
+    /// dependency-bin links and own-bin links were all written under the
+    /// staging path; every link inside is relative to the entry directory, so
+    /// they resolve identically after the rename. The final directory
+    /// existing is the only completeness signal — no separate stamp file.
+    pub fn commitGlobalStoreEntry(this: *const Installer, entry_id: Store.Entry.Id) sys.Maybe(void) {
+        if (!this.entryUsesGlobalStore(entry_id)) return .success;
+        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer staging.deinit();
+        this.appendGlobalStoreEntryPath(&staging, entry_id, .staging);
+        var final: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer final.deinit();
+        this.appendGlobalStoreEntryPath(&final, entry_id, .final);
+
+        switch (sys.renameat(FD.cwd(), staging.sliceZ(), FD.cwd(), final.sliceZ())) {
+            .result => return .success,
+            .err => |err| {
+                if (!isRenameCollision(err)) {
+                    FD.cwd().deleteTree(staging.slice()) catch {};
+                    return .initErr(err);
+                }
+                // Under --force, the existing entry may be the corrupt one
+                // we were asked to replace. Swap it aside (atomic from a
+                // reader's POV: `final` is always either the old or the new
+                // tree, never missing), publish staging, then GC the old
+                // tree. Without --force, the existing entry came from a
+                // concurrent install and is content-identical — keep it and
+                // discard ours.
+                if (this.manager.options.enable.force_install) {
+                    var old: bun.AbsPath(.{ .sep = .auto }) = .init();
+                    defer old.deinit();
+                    old.append(this.global_store_path.?);
+                    old.appendFmt("{f}.old-{x}", .{
+                        Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+                        bun.fastRandom(),
+                    });
+                    if (sys.renameat(FD.cwd(), final.sliceZ(), FD.cwd(), old.sliceZ()).asErr()) |swap_err| {
+                        FD.cwd().deleteTree(staging.slice()) catch {};
+                        return .initErr(swap_err);
+                    }
+                    switch (sys.renameat(FD.cwd(), staging.sliceZ(), FD.cwd(), final.sliceZ())) {
+                        .result => {
+                            FD.cwd().deleteTree(old.slice()) catch {};
+                            return .success;
+                        },
+                        .err => |publish_err| {
+                            // Another --force install raced us in the window
+                            // between swap-out and publish. Theirs is fresh
+                            // too; clean up both temp trees.
+                            FD.cwd().deleteTree(staging.slice()) catch {};
+                            FD.cwd().deleteTree(old.slice()) catch {};
+                            return if (isRenameCollision(publish_err)) .success else .initErr(publish_err);
+                        },
+                    }
+                }
+                FD.cwd().deleteTree(staging.slice()) catch {};
+                // A concurrent install renamed first; both writers produced
+                // the same content-addressed bytes, so theirs is as good as
+                // ours.
+                return .success;
+            },
+        }
+    }
+
+    fn isRenameCollision(err: sys.Error) bool {
+        return switch (err.getErrno()) {
+            .EXIST, .NOTEMPTY => true,
+            // Windows maps a rename onto an in-use directory to
+            // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
+            // permission failures and must propagate.
+            .PERM, .ACCES => Environment.isWindows,
+            else => false,
+        };
+    }
+
+    /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
+    /// points at the global virtual-store entry). Relative to top-level dir.
+    pub fn appendLocalStoreEntryPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {
+        buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{f}", .{
+            Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
+        });
+    }
+
+    /// Create the project-level symlink `node_modules/.bun/<storepath>` →
+    /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
+    /// filesystem write for a warm global-store hit.
+    pub fn linkProjectToGlobalStore(this: *const Installer, entry_id: Store.Entry.Id) sys.Maybe(void) {
+        var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+        defer dest.deinit();
+        this.appendLocalStoreEntryPath(&dest, entry_id);
+
+        var target_abs: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer target_abs.deinit();
+        this.appendGlobalStoreEntryPath(&target_abs, entry_id, .final);
+
+        // Absolute target so the link is independent of where node_modules
+        // lives (project root may itself be behind a symlink). Symlinker's
+        // `target` field is RelPath-typed for the common in-tree case, so
+        // call sys.symlink/symlinkOrJunction directly here.
+        const do_symlink = struct {
+            fn call(d: [:0]const u8, t: [:0]const u8) sys.Maybe(void) {
+                if (comptime Environment.isWindows) {
+                    return sys.symlinkOrJunction(d, t, t);
+                }
+                return sys.symlink(t, d);
+            }
+        }.call;
+
+        switch (do_symlink(dest.sliceZ(), target_abs.sliceZ())) {
+            .result => return .success,
+            .err => |err| switch (err.getErrno()) {
+                .NOENT => {
+                    if (dest.dirname()) |parent| {
+                        FD.cwd().makePath(u8, parent) catch {};
+                    }
+                },
+                .EXIST => {
+                    // Existing entry from a previous install. If it's a
+                    // symlink, replace it (stale link from a different
+                    // hash). If it's a real directory, that's the
+                    // pre-global-store layout (`bun patch` detaches
+                    // `node_modules/<pkg>`, not this path).
+                    const is_symlink = if (comptime Environment.isWindows)
+                        if (sys.getFileAttributes(dest.sliceZ())) |a| a.is_reparse_point else true
+                    else if (sys.lstat(dest.sliceZ()).asValue()) |st|
+                        std.posix.S.ISLNK(@intCast(st.mode))
+                    else
+                        true;
+
+                    if (is_symlink) {
+                        if (comptime Environment.isWindows) {
+                            if (sys.rmdir(dest.sliceZ()).asErr()) |_| {
+                                _ = sys.unlink(dest.sliceZ());
+                            }
+                        } else {
+                            _ = sys.unlink(dest.sliceZ());
+                        }
+                    } else {
+                        FD.cwd().deleteTree(dest.slice()) catch {};
+                    }
+                },
+                else => return .initErr(err),
+            },
+        }
+        return do_symlink(dest.sliceZ(), target_abs.sliceZ());
     }
 
     pub fn appendStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {
@@ -1333,11 +1863,50 @@ pub const Installer = struct {
                 buf.append("node_modules");
             },
             else => {
-                buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{}/node_modules", .{
+                buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{f}/node_modules", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
             },
         }
+    }
+
+    pub const Which = enum {
+        /// The published location (`<cache>/links/<entry>`). Use for symlink
+        /// *targets* that point at other entries, and for the warm-hit check.
+        final,
+        /// The per-process temp sibling (`<entry>.tmp-<suffix>`) the build
+        /// steps write into. Use for *destinations* of clonefile/hardlink/
+        /// dep-symlink/bin-link when building this entry.
+        staging,
+    };
+
+    /// Like `appendStoreNodeModulesPath`, but resolves to the *physical*
+    /// location of the entry's `node_modules` directory: the global virtual
+    /// store for global-eligible entries, or the project-local `.bun/` path
+    /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
+    pub fn appendRealStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        if (this.entryUsesGlobalStore(entry_id)) {
+            this.appendGlobalStoreEntryPath(buf, entry_id, which);
+            buf.append("node_modules");
+            return;
+        }
+        this.appendStoreNodeModulesPath(buf, entry_id);
+    }
+
+    /// `appendStorePath` resolved to the entry's *physical* location. See
+    /// `Which` for when to pass `.staging` vs `.final`.
+    pub fn appendRealStorePath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        if (this.entryUsesGlobalStore(entry_id)) {
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+            const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+            const pkg_id = this.store.nodes.items(.pkg_id)[node_id.get()];
+            const pkg_name = this.lockfile.packages.items(.name)[pkg_id];
+            this.appendGlobalStoreEntryPath(buf, entry_id, which);
+            buf.append("node_modules");
+            buf.append(pkg_name.slice(string_buf));
+            return;
+        }
+        this.appendStorePath(buf, entry_id);
     }
 
     pub fn appendStorePath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {
@@ -1366,7 +1935,7 @@ pub const Installer = struct {
                 if (dep_id != invalid_dependency_id) {
                     const pkg_name = pkg_names[pkg_id];
                     buf.append("node_modules/" ++ Store.modules_dir_name);
-                    buf.appendFmt("{}", .{
+                    buf.appendFmt("{f}", .{
                         Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                     });
                     buf.append("node_modules");
@@ -1392,7 +1961,7 @@ pub const Installer = struct {
             else => {
                 const pkg_name = pkg_names[pkg_id];
                 buf.append("node_modules/" ++ Store.modules_dir_name);
-                buf.appendFmt("{}", .{
+                buf.appendFmt("{f}", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
                 buf.append("node_modules");
@@ -1436,6 +2005,8 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const debug = Output.scoped(.IsolatedInstaller, .hidden);
+
 const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
@@ -1464,6 +2035,7 @@ const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
+const PostinstallOptimizer = install.PostinstallOptimizer;
 const Resolution = install.Resolution;
 const Store = install.Store;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;

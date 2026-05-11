@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { bunEnv, tls } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import type { IncomingMessage } from "http";
 import { join } from "path";
 let url: URL;
@@ -130,6 +130,75 @@ it("allow renegotiation in tls module", async () => {
   const body = await promise;
   expect(body).toBe("Hello World");
 });
+
+it("should not crash when socket is closed inside the renegotiation handshake callback", async () => {
+  // When a TLS 1.2 server initiates renegotiation and then sends application data, the
+  // client-side SSL_read loop fires the on_handshake callback once the renegotiated
+  // handshake completes. If user code closes the socket inside that callback, the SSL*
+  // is freed (s->ssl = NULL) and the loop must not continue into SSL_read(NULL, ...).
+  // Run in a subprocess so a NULL-deref SIGSEGV shows up as a non-zero exit instead of
+  // taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", renegotiationCloseInHandshakeFixture],
+    env: {
+      ...bunEnv,
+      SERVER_HOST: url.hostname,
+      SERVER_PORT: url.port,
+      // If the subprocess segfaults in an ASAN build, symbolizing a ~1 GB
+      // binary can take longer than the test timeout. We only need the exit
+      // code / signal to assert that it did not crash.
+      ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "ok",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
+});
+
+const renegotiationCloseInHandshakeFixture = /* js */ `
+const { promise: done, resolve } = Promise.withResolvers();
+let handshakes = 0;
+const socket = await Bun.connect({
+  hostname: process.env.SERVER_HOST,
+  port: Number(process.env.SERVER_PORT),
+  tls: { rejectUnauthorized: false },
+  socket: {
+    open() {},
+    data() {},
+    error() {
+      resolve();
+    },
+    close() {
+      resolve();
+    },
+    handshake(socket) {
+      handshakes++;
+      if (handshakes === 1) {
+        // Trigger the server's request handler so it initiates renegotiation
+        // and writes application data once the renegotiated handshake completes.
+        socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+      } else {
+        // Second handshake = renegotiation completed. Closing here used to NULL
+        // s->ssl while ssl_on_data's SSL_read loop was still running.
+        socket.terminate();
+        resolve();
+      }
+    },
+  },
+});
+await done;
+if (handshakes < 2) {
+  throw new Error("expected renegotiation handshake callback to fire, got " + handshakes + " handshake(s)");
+}
+console.log("ok");
+`;
 
 it("should fail if renegotiation fails using tls module", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();

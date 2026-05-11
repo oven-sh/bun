@@ -20,9 +20,9 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
-    const ci_name = bun.detectCI();
+    const ci_name = bun.ci.detectCIName();
 
-    var print_buf = std.ArrayList(u8).init(allocator);
+    var print_buf = std.array_list.Managed(u8).init(allocator);
     defer print_buf.deinit();
     var print_writer = print_buf.writer();
 
@@ -69,14 +69,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
 
-        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-            Global.user_agent,
-            Global.os_name,
-            Global.arch_name,
-            false,
-            if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
-        });
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, false, if (ci_name != null) " ci/" else "", ci_name orelse "" });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
 
@@ -175,7 +168,7 @@ pub fn responseError(
         break :message @"error";
     };
 
-    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
+    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {f}\n", .{
         res.status_code,
         if (res.status.len > 0) " " else "",
         res.status,
@@ -361,7 +354,7 @@ pub const Registry = struct {
 
             if (needs_normalize) {
                 url = URL.parse(
-                    try std.fmt.allocPrint(allocator, "{s}://{}/{s}/", .{
+                    try std.fmt.allocPrint(allocator, "{s}://{f}/{s}/", .{
                         url.displayProtocol(),
                         url.displayHost(),
                         strings.trim(url.pathname, "/"),
@@ -584,7 +577,7 @@ pub fn Negatable(comptime T: type) type {
         }
 
         /// writes to a one line json array with a trailing comma and space, or writes a string
-        pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn toJson(field: T, writer: anytype) std.Io.Writer.Error!void {
             if (field == .none) {
                 // [] means everything, so unrecognized value
                 try writer.writeAll(
@@ -650,10 +643,11 @@ pub const OperatingSystem = enum(u16) {
     pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
 
     pub const current: OperatingSystem = switch (Environment.os) {
-        .linux => @enumFromInt(linux),
+        .linux => @enumFromInt(if (Environment.isAndroid) android else linux),
         .mac => @enumFromInt(darwin),
         .windows => @enumFromInt(win32),
-        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+        .freebsd => @enumFromInt(freebsd),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
     pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
@@ -679,27 +673,15 @@ pub const OperatingSystem = enum(u16) {
         .linux => "linux",
         .mac => "darwin",
         .windows => "win32",
-        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+        .freebsd => "freebsd",
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
         return .{ .added = this, .removed = .none };
     }
 
-    const jsc = bun.jsc;
-    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
-        var operating_system = negatable(.none);
-        var iter = try args.ptr[0].arrayIterator(globalObject);
-        while (try iter.next()) |item| {
-            const slice = try item.toSlice(globalObject, bun.default_allocator);
-            defer slice.deinit();
-            operating_system.apply(slice.slice());
-            if (globalObject.hasException()) return .zero;
-        }
-        if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch(current));
-    }
+    pub const jsFunctionOperatingSystemIsMatch = @import("../install_jsc/npm_jsc.zig").operatingSystemIsMatch;
 };
 
 pub const Libc = enum(u8) {
@@ -732,20 +714,7 @@ pub const Libc = enum(u8) {
     // TODO:
     pub const current: Libc = @intFromEnum(glibc);
 
-    const jsc = bun.jsc;
-    pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
-        var libc = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
-            defer slice.deinit();
-            libc.apply(slice.slice());
-            if (globalObject.hasException()) return .zero;
-        }
-        if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
-    }
+    pub const jsFunctionLibcIsMatch = @import("../install_jsc/npm_jsc.zig").libcIsMatch;
 };
 
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
@@ -772,13 +741,13 @@ pub const Architecture = enum(u16) {
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
         .x64 => @enumFromInt(x64),
-        else => @compileError("Specify architecture: " ++ Environment.arch),
+        .wasm => @compileError("Specify architecture: " ++ Environment.arch),
     };
 
     pub const current_name = switch (Environment.arch) {
         .arm64 => "arm64",
         .x64 => "x64",
-        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported architecture: " ++ @tagName(current)),
     };
 
     pub const NameMap = bun.ComptimeStringMap(u16, .{
@@ -807,20 +776,7 @@ pub const Architecture = enum(u16) {
         return .{ .added = this, .removed = .none };
     }
 
-    const jsc = bun.jsc;
-    pub fn jsFunctionArchitectureIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
-        var architecture = negatable(.none);
-        var iter = try args.ptr[0].arrayIterator(globalObject);
-        while (try iter.next()) |item| {
-            const slice = try item.toSlice(globalObject, bun.default_allocator);
-            defer slice.deinit();
-            architecture.apply(slice.slice());
-            if (globalObject.hasException()) return .zero;
-        }
-        if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(architecture.combine().isMatch(current));
-    }
+    pub const jsFunctionArchitectureIsMatch = @import("../install_jsc/npm_jsc.zig").architectureIsMatch;
 };
 
 pub const PackageVersion = extern struct {
@@ -870,7 +826,7 @@ pub const PackageVersion = extern struct {
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
 
-    /// `"libc"` field in package.json, not exposed in npm registry api yet.
+    /// `"libc"` field in package.json
     libc: Libc = Libc.none,
 
     /// `hasInstallScript` field in registry API.
@@ -929,11 +885,11 @@ pub const PackageManifest = struct {
     }
 
     pub fn byteLength(this: *const PackageManifest, scope: *const Registry.Scope) usize {
-        var counter = std.io.countingWriter(std.io.null_writer);
-        const writer = counter.writer();
+        var counter = std.Io.Writer.Discarding.init(&.{});
+        const writer = &counter.writer;
 
         Serializer.write(this, scope, @TypeOf(writer), writer) catch return 0;
-        return counter.bytes_written;
+        return counter.count;
     }
 
     pub const Serializer = struct {
@@ -1057,7 +1013,7 @@ pub const PackageManifest = struct {
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
+            var buffer = try std.array_list.Managed(u8).initCapacity(allocator, this.byteLength(scope) + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, scope, @TypeOf(writer), writer);
@@ -1241,9 +1197,9 @@ pub const PackageManifest = struct {
         fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             return if (scope.url_hash == Registry.default_url_hash)
-                try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
+                try std.fmt.bufPrintZ(buf, "{f}.npm", .{file_id_hex_fmt})
             else
-                try std.fmt.bufPrintZ(buf, "{any}-{any}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
+                try std.fmt.bufPrintZ(buf, "{f}-{f}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
         }
 
         pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -1255,7 +1211,7 @@ pub const PackageManifest = struct {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             const hex_timestamp: usize = @intCast(@max(std.time.milliTimestamp(), 0));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
-            try dest_path_stream_writer.print("{any}.npm-{any}", .{ file_id_hex_fmt, hex_timestamp_fmt });
+            try dest_path_stream_writer.print("{f}.npm-{f}", .{ file_id_hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             const out_path = try manifestFileName(&out_path_buf, file_id, scope);
@@ -1334,82 +1290,7 @@ pub const PackageManifest = struct {
         }
     };
 
-    pub const bindings = struct {
-        const jsc = bun.jsc;
-        const JSValue = jsc.JSValue;
-        const JSGlobalObject = jsc.JSGlobalObject;
-        const CallFrame = jsc.CallFrame;
-        const ZigString = jsc.ZigString;
-
-        pub fn generate(global: *JSGlobalObject) JSValue {
-            const obj = JSValue.createEmptyObject(global, 1);
-            const parseManifestString = ZigString.static("parseManifest");
-            obj.put(global, parseManifestString, jsc.createCallback(global, parseManifestString, 2, jsParseManifest));
-            return obj;
-        }
-
-        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-            const args = callFrame.arguments_old(2).slice();
-            if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
-                return global.throw("expected manifest filename and registry string arguments", .{});
-            }
-
-            const manifest_filename_str = try args[0].toBunString(global);
-            defer manifest_filename_str.deref();
-
-            const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
-            defer manifest_filename.deinit();
-
-            const registry_str = try args[1].toBunString(global);
-            defer registry_str.deref();
-
-            const registry = registry_str.toUTF8(bun.default_allocator);
-            defer registry.deinit();
-
-            const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
-                return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
-            };
-            defer manifest_file.close();
-
-            const scope: Registry.Scope = .{
-                .url_hash = Registry.Scope.hash(strings.withoutTrailingSlash(registry.slice())),
-                .url = .{
-                    .host = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
-                    .hostname = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
-                    .href = registry.slice(),
-                    .origin = strings.withoutTrailingSlash(registry.slice()),
-                    .protocol = if (strings.indexOfChar(registry.slice(), ':')) |colon| registry.slice()[0..colon] else "",
-                },
-            };
-
-            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
-                return global.throw("failed to load manifest file: {s}", .{@errorName(err)});
-            };
-
-            const package_manifest: PackageManifest = maybe_package_manifest orelse {
-                return global.throw("manifest is invalid ", .{});
-            };
-
-            var buf: std.ArrayListUnmanaged(u8) = .{};
-            const writer = buf.writer(bun.default_allocator);
-
-            // TODO: we can add more information. for now just versions is fine
-
-            try writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()});
-
-            for (package_manifest.versions, 0..) |version, i| {
-                if (i == package_manifest.versions.len - 1)
-                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
-                else
-                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
-            }
-
-            var result = bun.String.borrowUTF8(buf.items);
-            defer result.deref();
-
-            return result.toJSByParseJSON(global);
-        }
-    };
+    pub const bindings = @import("../install_jsc/npm_jsc.zig").ManifestBindings;
 
     pub fn str(self: *const PackageManifest, external: *const ExternalString) string {
         return external.slice(self.string_buf);
@@ -1882,7 +1763,7 @@ pub const PackageManifest = struct {
         defer all_extern_strings_dedupe_map.deinit();
         var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
         defer version_extern_strings_dedupe_map.deinit();
-        var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
+        var optional_peer_dep_names = std.array_list.Managed(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
         var bundled_deps_set = bun.StringSet.init(allocator);
@@ -2035,6 +1916,23 @@ pub const PackageManifest = struct {
                                         string_builder.count(property.value.?.asString(allocator) orelse "");
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // pnpm/yarn synthesise an implicit `"*"` optional peer for
+                    // entries that appear in `peerDependenciesMeta` but not in
+                    // `peerDependencies`. Reserve space for them; the build
+                    // pass below appends them after the declared peer deps.
+                    if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                        if (meta.expr.data == .e_object) {
+                            for (meta.expr.data.e_object.properties.slice()) |meta_prop| {
+                                const optional = meta_prop.value.?.asProperty("optional") orelse continue;
+                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) continue;
+                                const key = meta_prop.key.?.asString(allocator) orelse continue;
+                                dependency_sum += 1;
+                                string_builder.count(key);
+                                string_builder.count("*");
                             }
                         }
                     }
@@ -2358,9 +2256,31 @@ pub const PackageManifest = struct {
                     var non_optional_peer_dependency_offset: usize = 0;
 
                     inline for (dependency_groups) |pair| {
-                        if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
-                            if (versioned_deps.expr.data == .e_object) {
-                                const items = versioned_deps.expr.data.e_object.properties.slice();
+                        // For peer deps, fall through with an empty `items`
+                        // slice when `peerDependencies` is absent so that
+                        // `peerDependenciesMeta`-only entries (synthesised
+                        // below) still get a build pass. The fallthrough must
+                        // stay scoped to packages that actually have a
+                        // `peerDependenciesMeta`: the body sets
+                        // `package_version.bundled_dependencies` from this
+                        // iteration's slice of `bundled_deps_buf`, so an
+                        // unconditional empty pass would clobber the value the
+                        // `dependencies` iteration just produced.
+                        const items = items: {
+                            if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
+                                if (versioned_deps.expr.data == .e_object) {
+                                    break :items versioned_deps.expr.data.e_object.properties.slice();
+                                }
+                            }
+                            break :items &.{};
+                        };
+                        const is_peer_group = comptime strings.eqlComptime(pair.prop, "peerDependencies");
+                        const has_meta_only_peers = is_peer_group and blk: {
+                            const meta = prop.value.?.asProperty("peerDependenciesMeta") orelse break :blk false;
+                            break :blk meta.expr.data == .e_object and meta.expr.data.e_object.properties.len > 0;
+                        };
+                        if (items.len > 0 or has_meta_only_peers) {
+                            {
                                 var count = items.len;
 
                                 var this_names = dependency_names[0..count];
@@ -2384,9 +2304,18 @@ pub const PackageManifest = struct {
                                                         continue;
                                                     }
 
-                                                    optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_prop.key.?.asString(allocator) orelse unreachable));
+                                                    const meta_key = meta_prop.key.?.asString(allocator) orelse unreachable;
+                                                    optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_key));
+
+                                                    // Reserve a slot for a meta-only synthesised peer.
+                                                    // The slot is unused if `meta_key` also appears in
+                                                    // `peerDependencies` below.
+                                                    count += 1;
                                                 }
                                             }
+                                            // Re-slice now that the count grew.
+                                            this_names = dependency_names[0..count];
+                                            this_versions = dependency_values[0..count];
                                         }
                                     }
                                 }
@@ -2441,15 +2370,64 @@ pub const PackageManifest = struct {
                                     i += 1;
                                 }
 
-                                count = i;
+                                if (comptime is_peer) {
+                                    // Append meta-only optional peers (declared
+                                    // in `peerDependenciesMeta` but not in
+                                    // `peerDependencies`) as `"*"` versions.
+                                    // pnpm/yarn do this; webpack relies on it
+                                    // to make `webpack-cli` reachable.
+                                    if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                                        if (meta.expr.data == .e_object) {
+                                            outer: for (meta.expr.data.e_object.properties.slice()) |meta_prop| {
+                                                const optional = meta_prop.value.?.asProperty("optional") orelse continue;
+                                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) continue;
+                                                const meta_key = meta_prop.key.?.asString(allocator) orelse continue;
+                                                const meta_hash = String.Builder.stringHash(meta_key);
+                                                for (this_names[0..i]) |existing| {
+                                                    if (existing.hash == meta_hash) continue :outer;
+                                                }
+                                                this_names[i] = string_builder.append(ExternalString, meta_key);
+                                                this_versions[i] = string_builder.append(ExternalString, "*");
+                                                // Swap to the optional-peer
+                                                // prefix the rest of the loop
+                                                // body would have produced.
+                                                if (non_optional_peer_dependency_offset != i) {
+                                                    std.mem.swap(ExternalString, &this_names[i], &this_names[non_optional_peer_dependency_offset]);
+                                                    std.mem.swap(ExternalString, &this_versions[i], &this_versions[non_optional_peer_dependency_offset]);
+                                                }
+                                                non_optional_peer_dependency_offset += 1;
+                                                i += 1;
+                                            }
+                                        }
+                                    }
+                                }
 
-                                if (bundle_all_deps) {
-                                    package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
-                                } else {
-                                    package_version.bundled_dependencies = ExternalPackageNameHashList.init(
-                                        bundled_deps_buf,
-                                        bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                    );
+                                count = i;
+                                // The peer slice was over-reserved by the
+                                // number of `peerDependenciesMeta` entries (so
+                                // meta-only synthesised peers had room); trim
+                                // to what was actually written before the
+                                // ExternalStringList offsets are computed.
+                                this_names = this_names[0..count];
+                                this_versions = this_versions[0..count];
+
+                                // Bundled deps are matched against the
+                                // `dependencies`/`optionalDependencies` groups
+                                // only; the peer pass never adds to
+                                // `bundled_deps_buf`. With the meta-only
+                                // synthesis above the peer body now runs even
+                                // when `peerDependencies` is absent, so writing
+                                // here would clobber the value the dependencies
+                                // pass already produced with an empty slice.
+                                if (comptime !is_peer) {
+                                    if (bundle_all_deps) {
+                                        package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
+                                    } else {
+                                        package_version.bundled_dependencies = ExternalPackageNameHashList.init(
+                                            bundled_deps_buf,
+                                            bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                        );
+                                    }
                                 }
 
                                 var name_list = ExternalStringList.init(all_extern_strings, this_names);
@@ -2757,13 +2735,13 @@ pub const PackageManifest = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const std = @import("std");
 const Bin = @import("./bin.zig").Bin;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
 const Integrity = @import("./integrity.zig").Integrity;
-const ObjectPool = @import("../pool.zig").ObjectPool;
-const URL = @import("../url.zig").URL;
+const ObjectPool = @import("../collections/pool.zig").ObjectPool;
+const URL = @import("../url/url.zig").URL;
 
 const Aligner = @import("./install.zig").Aligner;
 const ExternalSlice = @import("./install.zig").ExternalSlice;

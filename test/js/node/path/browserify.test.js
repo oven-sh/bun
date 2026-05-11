@@ -469,7 +469,12 @@ describe("browserify path tests", () => {
     const failures = [];
     const cwd = process.cwd();
     const cwdParent = path.dirname(cwd);
-    const parentIsRoot = isWindows ? cwdParent.match(/^[A-Z]:\\$/) : cwdParent === "/";
+    const parentIsRoot = (levels = 1) => {
+      const dir = Array(levels)
+        .fill()
+        .reduce(wd => path.dirname(wd), cwd);
+      return isWindows ? dir.match(/^[a-zA-Z]:\\$/) : dir === "/";
+    };
 
     const relativeTests = [
       [
@@ -529,19 +534,19 @@ describe("browserify path tests", () => {
           ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
           ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
           ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
-          ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
+          ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot() ? "" : path.posix.resolve("../")}/static`],
           [
             "/app/node_modules/pkg",
             "../../static",
-            `../../..${parentIsRoot ? "" : path.posix.resolve("../../")}/static`,
+            `../../..${parentIsRoot(2) ? "" : path.posix.resolve("../../")}/static`,
           ],
-          ["/app", "../static", `..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
+          ["/app", "../static", `..${parentIsRoot() ? "" : path.posix.resolve("../")}/static`],
           ["/app", "../".repeat(64) + "static", "../static"],
           [".", "../static", cwd == "/" ? "static" : "../static"],
-          ["/", "../static", parentIsRoot ? "static" : `${path.posix.resolve("../")}/static`.slice(1)],
+          ["/", "../static", parentIsRoot() ? "static" : `${path.posix.resolve("../")}/static`.slice(1)],
           ["../", "../", ""],
-          ["../", "../../", parentIsRoot ? "" : ".."],
-          ["../../", "../", parentIsRoot ? "" : path.basename(cwdParent)],
+          ["../", "../../", parentIsRoot() ? "" : ".."],
+          ["../../", "../", parentIsRoot() ? "" : path.basename(cwdParent)],
           ["../../", "../../", ""],
         ],
       ],

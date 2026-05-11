@@ -26,13 +26,13 @@ const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort } = require("internal/shared");
+const { ExceptionWithHostPort, ConnResetException, NodeAggregateError, ErrnoException } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError, ErrnoException } = require("internal/shared");
+const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypePush = Array.prototype.push;
@@ -51,43 +51,9 @@ const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSo
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
-
-// IPv4 Segment
-const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
-const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-var IPv4Reg;
-
-// IPv6 Segment
-const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-var IPv6Reg;
-
-function isIPv4(s): boolean {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
-}
-
-function isIPv6(s): boolean {
-  return (IPv6Reg ??= new RegExp(
-    "^(?:" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(?::${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(?::${v6Seg}){0,1}:${v4Str}|(?::${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(?::${v6Seg}){0,2}:${v4Str}|(?::${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(?::${v6Seg}){0,3}:${v4Str}|(?::${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
-      `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
-}
-
-function isIP(s): 0 | 4 | 6 {
-  if (isIPv4(s)) return 4;
-  if (isIPv6(s)) return 6;
-  return 0;
-}
+const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -190,6 +156,7 @@ const SocketHandlers: SocketHandler = {
     const { data: self } = socket;
     if (!self) return;
 
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -285,9 +252,12 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
-      verifyError = checkServerIdentity(self.servername, cert);
+      if (cert) {
+        verifyError = checkServerIdentity(hostname, cert);
+      }
     }
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -334,6 +304,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const { data: self } = socket;
     if (!self) return;
 
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -501,7 +472,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
+    this.server?.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);
@@ -539,6 +510,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   data(socket, buffer) {
     $debug("Bun.Socket data");
     const { self } = socket.data;
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) socket.pause();
   },
@@ -595,9 +567,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
-      verifyError = checkServerIdentity(self.servername, cert);
+      if (cert) {
+        verifyError = checkServerIdentity(hostname, cert);
+      }
     }
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -773,8 +748,10 @@ function Socket(options?) {
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
-      data({ data: self }, buffer) {
+      data(socket, buffer) {
+        const { self } = socket.data;
         if (!self) return;
+        self._unrefTimer();
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
@@ -1548,6 +1525,9 @@ function lookupAndConnect(self, options) {
     autoSelectFamilyAttemptTimeout = getDefaultAutoSelectFamilyAttemptTimeout();
   }
 
+  self._host = host;
+  self._port = port;
+
   // If host is an IP, skip performing a lookup
   const addressType = isIP(host);
   if (addressType) {
@@ -1572,8 +1552,6 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  self._host = host;
-  self._port = port;
   const lookup = options.lookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
@@ -2272,7 +2250,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux";
+      const isLinux = process.platform === "linux" || process.platform === "android";
 
       if (!Number.isSafeInteger(port) || port < 0) {
         if (path) {
@@ -2431,7 +2409,9 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      addServerName(this._handle, name, context);
+      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // the native SSL_CTX wrapper at `.context`.
+      addServerName(this._handle, name, context.context ?? context);
     }
   }
 
@@ -2483,17 +2463,6 @@ function addServerAbortSignalOption(self, options) {
     process.nextTick(onAborted);
   } else {
     signal.addEventListener("abort", onAborted);
-  }
-}
-
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-  }
-
-  get ["constructor"]() {
-    return Error;
   }
 }
 

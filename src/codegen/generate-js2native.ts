@@ -228,7 +228,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
           filename: x.filename,
         })}(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {`,
         `    const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});`,
-        `    return @call(.always_inline, jsc.toJSHostFn(function.${x.symbol_target}), .{global, call_frame});`,
+        `    return @call(bun.callmod_inline, jsc.toJSHostFn(function.${x.symbol_target}), .{global, call_frame});`,
         "}",
       ]),
     "comptime {",

@@ -27,7 +27,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
-    clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
+    clap.parseParam("--dry-run                             Perform a dry run without making changes") catch unreachable,
     clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
     clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
     clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
@@ -44,7 +44,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
     clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
     clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
-    clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+    clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)") catch unreachable,
     clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
@@ -708,7 +708,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                 \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
                 \\
             ;
 
@@ -1072,7 +1072,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.option("--registry")) |registry| {
         if (!strings.hasPrefixComptime(registry, "https://") and !strings.hasPrefixComptime(registry, "http://")) {
-            Output.errGeneric("Registry URL must start with 'https://' or 'http://': {}\n", .{bun.fmt.quote(registry)});
+            Output.errGeneric("Registry URL must start with 'https://' or 'http://': {f}\n", .{bun.fmt.quote(registry)});
             Global.crash();
         }
         cli.registry = registry;

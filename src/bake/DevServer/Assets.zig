@@ -42,7 +42,7 @@ pub fn replacePath(
     assert(assets.owner().magic == .valid);
     defer assert(assets.files.count() == assets.refs.items.len);
     const alloc = assets.owner().allocator();
-    debug.log("replacePath {} {} - {s}/{s} ({s})", .{
+    debug.log("replacePath {f} {} - {s}/{s} ({s})", .{
         bun.fmt.quote(abs_path),
         content_hash,
         DevServer.asset_prefix,
@@ -112,7 +112,7 @@ pub fn putOrIncrementRefCount(assets: *Assets, content_hash: u64, ref_count: u32
 
 pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
     const index = assets.files.getIndex(content_hash) orelse
-        Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
+        Output.panic("Asset double unref: {x}", .{std.mem.asBytes(&content_hash)});
     assets.unrefByIndex(.init(@intCast(index)), dec_count);
 }
 
@@ -124,6 +124,18 @@ pub fn unrefByIndex(assets: *Assets, index: EntryIndex, dec_count: u32) void {
         assets.files.values()[index.get()].deref();
         assets.files.swapRemoveAt(index.get());
         _ = assets.refs.swapRemove(index.get());
+        // `swapRemove` moved the entry that was at the old last index into
+        // `index`'s slot. Any `path_map` value that still points at the old
+        // last index (now equal to `files.count()`) must be patched to point
+        // at the new slot, otherwise the next lookup for that path would read
+        // past the end of `files`/`refs`, or alias an unrelated asset if a
+        // new entry is appended afterwards.
+        const moved_from: u30 = @intCast(assets.files.count());
+        if (moved_from != index.get()) {
+            for (assets.path_map.values()) |*entry_index| {
+                if (entry_index.get() == moved_from) entry_index.* = index;
+            }
+        }
     }
 }
 

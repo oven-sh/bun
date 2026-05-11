@@ -1,0 +1,43 @@
+name: bun-types
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/bun-types/**"
+      - "packages/@types/bun/**"
+      - "test/integration/bun-types/**"
+      - "src/cli/init/tsconfig.default.json"
+      - ".github/workflows/bun-types.yml"
+  pull_request:
+    paths:
+      - "packages/bun-types/**"
+      - "packages/@types/bun/**"
+      - "test/integration/bun-types/**"
+      - "src/cli/init/tsconfig.default.json"
+      - ".github/workflows/bun-types.yml"
+
+env:
+  BUN_VERSION: "canary"
+
+jobs:
+  typecheck:
+    name: "TypeScript types"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        run: |
+          bun install
+          bun install --cwd test
+      - name: Check types
+        run: bun test test/integration/bun-types/bun-types.test.ts

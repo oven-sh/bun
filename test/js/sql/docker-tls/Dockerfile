@@ -51,16 +51,20 @@ RUN chmod +x /docker-entrypoint-initdb.d/init-users-db.sh
 
 # Create pg_hba.conf with SSL requirements
 RUN mkdir -p /etc/postgresql && touch /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all postgres 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_md5 127.0.0.1/32 md5" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_scram 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all postgres ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_md5 ::1/128 md5" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_scram ::1/128 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl replication all 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl replication all ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "# Allow local socket connections for init scripts" >> /etc/postgresql/pg_hba.conf && \
+    echo "local all postgres trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "local all all trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "# Remote TLS connections" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all postgres 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_md5 0.0.0.0/0 md5" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_scram 0.0.0.0/0 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all postgres ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_md5 ::/0 md5" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_scram ::/0 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl replication all 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl replication all ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
     echo "host all all all reject" >> /etc/postgresql/pg_hba.conf
 
 # Configure PostgreSQL for SSL

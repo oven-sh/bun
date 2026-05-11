@@ -3,6 +3,7 @@
 exports[`pnpm comprehensive migration tests large single package with many dependencies: large-single-package 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "large-app",
@@ -94,6 +95,7 @@ exports[`pnpm comprehensive migration tests large single package with many depen
 exports[`pnpm comprehensive migration tests complex monorepo with cross-dependencies: complex-monorepo 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "monorepo-root",
@@ -247,6 +249,7 @@ exports[`pnpm comprehensive migration tests complex monorepo with cross-dependen
 exports[`pnpm comprehensive migration tests pnpm with patches and overrides: patches-overrides 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "patches-test",
@@ -285,6 +288,7 @@ exports[`pnpm comprehensive migration tests pnpm with patches and overrides: pat
 exports[`pnpm comprehensive migration tests pnpm with peer dependencies and auto-install-peers: peer-deps-auto-install 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "peer-deps-test",

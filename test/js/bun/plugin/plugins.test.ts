@@ -355,6 +355,17 @@ describe("errors", () => {
     }
   });
 
+  it("handles invalid 'target'", () => {
+    const opts = {
+      setup: () => {},
+      target: 123n,
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

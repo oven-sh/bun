@@ -664,6 +664,42 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
   ]);
 });
 
+test("lifecycle script modifying version updates tarball filename (#17195)", async () => {
+  const updateScript = `const fs = require("fs");
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  pkg.version = "2.0.0-snapshot.test";
+  fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
+
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-version-update",
+        version: "1.0.0",
+        scripts: {
+          prepack: `${bunExe()} update-version.js`,
+        },
+      }),
+    ),
+    write(join(packageDir, "update-version.js"), updateScript),
+    write(join(packageDir, "index.js"), "module.exports = {};"),
+  ]);
+
+  await pack(packageDir, bunEnv);
+
+  // The tarball filename should use the UPDATED version
+  expect(await exists(join(packageDir, "pack-version-update-2.0.0-snapshot.test.tgz"))).toBeTrue();
+  // The old version tarball should NOT exist
+  expect(await exists(join(packageDir, "pack-version-update-1.0.0.tgz"))).toBeFalse();
+
+  const tarball = readTarball(join(packageDir, "pack-version-update-2.0.0-snapshot.test.tgz"));
+  expect(tarball.entries).toMatchObject([
+    { "pathname": "package/package.json" },
+    { "pathname": "package/index.js" },
+    { "pathname": "package/update-version.js" },
+  ]);
+});
+
 describe("bundledDependnecies", () => {
   for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"]) {
     test(`basic (${bundledDependencies})`, async () => {

@@ -149,27 +149,45 @@ pub const ClientEntryPoint = struct {
 };
 
 pub const ServerEntryPoint = struct {
-    source: logger.Source = undefined,
+    /// The generated wrapper source for `bun:main`. Always a valid slice
+    /// (either empty or owned by `bun.default_allocator`) so readers never
+    /// see `undefined` memory regardless of the `generated` flag's state.
+    contents: []const u8 = "",
+    generated: bool = false,
+
+    pub fn deinit(entry: *ServerEntryPoint) void {
+        if (entry.contents.len > 0) {
+            bun.default_allocator.free(entry.contents);
+        }
+        entry.contents = "";
+        entry.generated = false;
+    }
 
     pub fn generate(
         entry: *ServerEntryPoint,
-        allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
         path_to_use: string,
-        name: string,
     ) !void {
+        // Use the global allocator so this buffer's lifetime is decoupled
+        // from whichever arena the caller's VM happens to be using; the
+        // slice is read later from `getHardcodedModule` which outlives any
+        // per-transpile arena.
+        const allocator = bun.default_allocator;
         const code = brk: {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
-                    \\import * as start from '{}';
+                    \\import * as start from '{f}';
                     \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
+                    \\function isServerConfig(def) {{
+                    \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                    \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                     \\      var def = entryNamespace?.default;
-                    \\      if (def && (typeof def.fetch === 'function' || def.app != undefined))  {{
+                    \\      if (isServerConfig(def))  {{
                     \\        var server = globalThis[hmrSymbol];
                     \\        if (server) {{
                     \\           server.reload(def);
@@ -180,7 +198,7 @@ pub const ServerEntryPoint = struct {
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
-                    \\}} else if (typeof entryNamespace?.default?.fetch === 'function' || entryNamespace?.default?.app != undefined) {{
+                    \\}} else if (isServerConfig(entryNamespace?.default)) {{
                     \\   var server = globalThis[hmrSymbol];
                     \\   if (server) {{
                     \\      server.reload(entryNamespace.default);
@@ -200,16 +218,19 @@ pub const ServerEntryPoint = struct {
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from "{}";
+                \\import * as start from "{f}";
                 \\var entryNamespace = start;
+                \\function isServerConfig(def) {{
+                \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
-                \\      if (typeof entryNamespace?.default?.fetch === 'function')  {{
+                \\      if (isServerConfig(entryNamespace?.default))  {{
                 \\        const server = Bun.serve(entryNamespace.default);
                 \\        console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\      }}
                 \\   }}, reportError);
-                \\}} else if (typeof entryNamespace?.default?.fetch === 'function' || entryNamespace?.default?.app != null) {{
+                \\}} else if (isServerConfig(entryNamespace?.default)) {{
                 \\   const server = Bun.serve(entryNamespace.default);
                 \\   console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\}}
@@ -221,9 +242,13 @@ pub const ServerEntryPoint = struct {
             );
         };
 
-        entry.source = logger.Source.initPathString(name, code);
-        entry.source.path.text = name;
-        entry.source.path.namespace = "server-entry";
+        // Free the previous buffer on regenerate (hot reload) instead of
+        // leaking it. `contents` is either "" or a prior allocPrint result.
+        if (entry.contents.len > 0) {
+            allocator.free(entry.contents);
+        }
+        entry.contents = code;
+        entry.generated = true;
     }
 };
 
@@ -245,7 +270,7 @@ pub const MacroEntryPoint = struct {
         const hash = hasher.final();
         const fmt = bun.fmt.hexIntLower(hash);
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{f}.js", .{fmt}) catch unreachable;
         len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
@@ -299,13 +324,13 @@ pub const MacroEntryPoint = struct {
                 \\//Auto-generated file
                 \\var Macros;
                 \\try {{
-                \\  Macros = await import('{s}{s}');
+                \\  Macros = await import('{f}{f}');
                 \\}} catch (err) {{
                 \\   console.error("Error importing macro");
                 \\   throw err;
                 \\}}
                 \\if (!('{s}' in Macros)) {{
-                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\  throw new Error("Macro '{s}' not found in '{f}{f}'");
                 \\}}
                 \\
                 \\Bun.registerMacro({d}, Macros['{s}']);
@@ -339,7 +364,7 @@ pub const MacroEntryPoint = struct {
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
+const Fs = @import("../resolver/fs.zig");
 const std = @import("std");
 
 const bun = @import("bun");

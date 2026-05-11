@@ -15,11 +15,11 @@ pub const Version = struct {
     pub fn name(this: Version) ?string {
         if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
             if (strings.eqlComptime(this.tag, "canary")) {
-                const Cli = @import("../cli.zig");
+                const Cli = @import("./cli.zig");
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
-                    "bun-canary-timestamp-{any}",
+                    "bun-canary-timestamp-{f}",
                     .{
                         bun.fmt.hexIntLower(
                             bun.hash(
@@ -39,12 +39,13 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
-        else => @compileError("Unsupported OS for Bun Upgrade"),
+        .freebsd => "freebsd",
+        .wasm => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix_abi = if (Environment.isMusl) "-musl" else "";
+    const suffix_abi = if (Environment.isMusl) "-musl" else if (Environment.isAndroid) "-android" else "";
     const suffix_cpu = if (Environment.baseline) "-baseline" else "";
     const suffix = suffix_abi ++ suffix_cpu;
     pub const folder_name = "bun-" ++ triplet ++ suffix;
@@ -311,7 +312,7 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.com/install | bash",
-        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -422,6 +423,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.unit = .bytes;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
@@ -561,7 +563,7 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{f}\" \"{f}\" -Force",
                         .{
                             bun.fmt.escapePowershell(tmpname),
                             bun.fmt.escapePowershell(tmpdir_path),
@@ -757,10 +759,10 @@ pub const UpgradeCommand = struct {
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
                     current_executable_buf[target_dir_.len] = '\\';
-                    outdated_filename = try std.fmt.allocPrintZ(ctx.allocator, "{s}\\{s}.outdated", .{
+                    outdated_filename = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}\\{s}.outdated", .{
                         target_dirname,
                         target_filename,
-                    });
+                    }, 0);
                     std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
@@ -897,14 +899,14 @@ pub const upgrade_js_bindings = struct {
     const JSValue = jsc.JSValue;
     const ZigString = jsc.ZigString;
 
-    var tempdir_fd: ?bun.FileDescriptor = null;
+    var tempdir_fd: ?bun.FD = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
-        const obj = JSValue.createEmptyObject(global, 3);
+        const obj = JSValue.createEmptyObject(global, 2);
         const open = ZigString.static("openTempDirWithoutSharingDelete");
-        obj.put(global, open, jsc.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
         const close = ZigString.static("closeTempDirHandle");
-        obj.put(global, close, jsc.createCallback(global, close, 1, jsCloseTempDirHandle));
+        obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }
 
@@ -983,14 +985,14 @@ pub fn @"export"() void {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DotEnv = @import("../env_loader.zig");
-const fs = @import("../fs.zig");
-const linker = @import("../linker.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const fs = @import("../resolver/fs.zig");
+const linker = @import("../bundler/linker.zig");
 const std = @import("std");
 const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Command = @import("../cli.zig").Command;
-const URL = @import("../url.zig").URL;
-const which = @import("../which.zig").which;
+const Command = @import("./cli.zig").Command;
+const URL = @import("../url/url.zig").URL;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

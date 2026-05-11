@@ -143,7 +143,7 @@ export function enumeration(
         template<> std::optional<${qualifiedName}>
         WebCore::parseEnumerationFromString<${qualifiedName}>(const WTF::String& stringVal)
         {
-          static constexpr ::std::array<${pairType}, ${valueMap.size}> mappings {
+          static constexpr ::WTF::SortedArrayMap enumerationMapping { ::std::to_array<${pairType}>({
             ${joinIndented(
               12,
               Array.from(valueMap.entries())
@@ -155,8 +155,7 @@ export function enumeration(
                   },`;
                 }),
             )}
-          };
-          static constexpr ::WTF::SortedArrayMap enumerationMapping { mappings };
+          }) };
           if (auto* enumerationValue = enumerationMapping.tryGet(stringVal)) [[likely]] {
             return *enumerationValue;
           }

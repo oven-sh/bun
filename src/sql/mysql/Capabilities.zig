@@ -120,7 +120,7 @@ pub fn reject(this: *Capabilities) void {
     this.CLIENT_QUERY_ATTRIBUTES = false;
 }
 
-pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
     var first = true;
     inline for (comptime std.meta.fieldNames(Capabilities)) |field| {
         if (@TypeOf(@field(self, field)) == bool) {
@@ -187,6 +187,13 @@ pub fn fromInt(flags: u32) Capabilities {
         @field(this, field) = (@field(Capabilities, "_" ++ field) & flags) != 0;
     }
     return this;
+}
+
+/// Returns the intersection of two capability sets (AND).
+/// Per MySQL protocol, the client should only request capabilities
+/// that the server also advertises.
+pub fn intersect(self: Capabilities, other: Capabilities) Capabilities {
+    return fromInt(self.toInt() & other.toInt());
 }
 
 pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {

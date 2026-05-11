@@ -20,13 +20,13 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-cwd: bun.FileDescriptor,
+cwd: bun.FD,
 
 /// TODO: It would be nice to make this mutable so that certain commands (e.g.
 /// `export`) don't have to duplicate arguments. However, it is tricky because
 /// modifications will invalidate any codepath which previously sliced the array
 /// list (e.g. turned it into a `[]const [:0]const u8`)
-args: *const std.ArrayList(?[*:0]const u8),
+args: *const std.array_list.Managed(?[*:0]const u8),
 /// Cached slice of `args`.
 ///
 /// This caches the result of calling `bun.span(this.args.items[i])` since the
@@ -57,7 +57,7 @@ pub const Impl = union(Kind) {
     cp: Cp,
 };
 
-pub const Result = @import("../result.zig").Result;
+pub const Result = @import("../bun_core/result.zig").Result;
 
 // Note: this enum uses @tagName, choose wisely!
 pub const Kind = enum {
@@ -134,7 +134,7 @@ pub const BuiltinIO = struct {
     /// in the case of blob, we write to the file descriptor
     pub const Output = union(enum) {
         fd: struct { writer: *IOWriter, captured: ?*bun.ByteList = null },
-        buf: std.ArrayList(u8),
+        buf: std.array_list.Managed(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
         ignore,
@@ -167,7 +167,7 @@ pub const BuiltinIO = struct {
                 .buf => {
                     const alloc = this.buf.allocator;
                     this.buf.deinit();
-                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                    this.* = .{ .buf = std.array_list.Managed(u8).init(alloc) };
                 },
                 .ignore => {},
             }
@@ -211,7 +211,7 @@ pub const BuiltinIO = struct {
     pub const Input = union(enum) {
         fd: *IOReader,
         /// array list not ownedby this type
-        buf: std.ArrayList(u8),
+        buf: std.array_list.Managed(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
         ignore,
@@ -236,7 +236,7 @@ pub const BuiltinIO = struct {
                 .buf => {
                     const alloc = this.buf.allocator;
                     this.buf.deinit();
-                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                    this.* = .{ .buf = std.array_list.Managed(u8).init(alloc) };
                 },
                 .arraybuf => this.arraybuf.buf.deinit(),
                 .ignore => {},
@@ -263,6 +263,11 @@ pub const BuiltinIO = struct {
 
         ref_count: RefCount,
         blob: bun.webcore.Blob,
+
+        fn dupeRef(this: *Blob) *Blob {
+            this.ref();
+            return this;
+        }
 
         fn deinit(this: *Blob) void {
             this.blob.deinit();
@@ -333,24 +338,24 @@ pub fn init(
     kind: Kind,
     arena: *bun.ArenaAllocator,
     node: *const ast.Cmd,
-    args: *const std.ArrayList(?[*:0]const u8),
+    args: *const std.array_list.Managed(?[*:0]const u8),
     export_env: *EnvMap,
     cmd_local_env: *EnvMap,
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     io: *IO,
 ) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
-        .fd => |fd| .{ .fd = fd.refSelf() },
+        .fd => |fd| .{ .fd = fd.dupeRef() },
         .ignore => .ignore,
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
+        .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
+        .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
 
@@ -381,7 +386,7 @@ pub fn init(
         .echo => {
             cmd.exec.bltn.impl = .{
                 .echo = Echo{
-                    .output = std.ArrayList(u8).init(arena.allocator()),
+                    .output = std.array_list.Managed(u8).init(arena.allocator()),
                 },
             };
         },
@@ -435,7 +440,9 @@ fn initRedirections(
                     if (node.redirect.stdin) {
                         break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
                             .err => |e| {
-                                return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                const sys_err = e.toShellSystemError();
+                                defer sys_err.deref();
+                                return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                             },
                             .result => |f| f,
                         };
@@ -461,13 +468,17 @@ fn initRedirections(
 
                     break :redirfd switch (result) {
                         .err => |e| {
-                            return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                            const sys_err = e.toShellSystemError();
+                            defer sys_err.deref();
+                            return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                         },
                         .result => |f| {
                             if (bun.Environment.isWindows) {
                                 switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                     .err => |e| {
-                                        return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                        const sys_err = e.toShellSystemError();
+                                        defer sys_err.deref();
+                                        return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                                     },
                                     .result => |f2| break :redirfd f2,
                                 }
@@ -481,36 +492,61 @@ fn initRedirections(
                     cmd.exec.bltn.stdin.deref();
                     cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                 }
+
+                if (!node.redirect.stdout and !node.redirect.stderr) {
+                    return null;
+                }
+
+                const redirect_writer: *IOWriter = .init(
+                    redirfd,
+                    .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket },
+                    cmd.base.eventLoop(),
+                );
+                defer redirect_writer.deref();
+
                 if (node.redirect.stdout) {
                     cmd.exec.bltn.stdout.deref();
-                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
                 }
+
                 if (node.redirect.stderr) {
                     cmd.exec.bltn.stderr.deref();
-                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
                 }
             },
             .jsbuf => |val| {
                 const globalObject = interpreter.event_loop.js.global;
-                if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
-                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
-                        .array_buffer = buf,
-                        .held = .create(buf.value, globalObject),
-                    }, .i = 0 };
 
+                if (file.jsbuf.idx >= interpreter.jsobjs.len) {
+                    globalObject.throw("Invalid JS object reference in shell", .{}) catch {};
+                    return .failed;
+                }
+
+                if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
+                    // Each slot gets its own Strong; sharing one across stdin/stdout/stderr
+                    // would double-free the heap *Impl in Builtin.deinit().
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
-                        cmd.exec.bltn.stdin = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdin = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stdout) {
                         cmd.exec.bltn.stdout.deref();
-                        cmd.exec.bltn.stdout = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdout = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stderr) {
                         cmd.exec.bltn.stderr.deref();
-                        cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stderr = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
@@ -522,24 +558,29 @@ fn initRedirections(
                     var original_blob = body.use();
                     defer original_blob.deinit();
 
+                    if (!node.redirect.stdin and !node.redirect.stdout and !node.redirect.stderr) {
+                        return null;
+                    }
+
                     const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
                         .ref_count = .init(),
                         .blob = original_blob.dupe(),
                     });
+                    defer blob.deref();
 
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
-                        cmd.exec.bltn.stdin = .{ .blob = blob };
+                        cmd.exec.bltn.stdin = .{ .blob = blob.dupeRef() };
                     }
 
                     if (node.redirect.stdout) {
                         cmd.exec.bltn.stdout.deref();
-                        cmd.exec.bltn.stdout = .{ .blob = blob };
+                        cmd.exec.bltn.stdout = .{ .blob = blob.dupeRef() };
                     }
 
                     if (node.redirect.stderr) {
                         cmd.exec.bltn.stderr.deref();
-                        cmd.exec.bltn.stderr = .{ .blob = blob };
+                        cmd.exec.bltn.stderr = .{ .blob = blob.dupeRef() };
                     }
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Blob)) |blob| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
@@ -565,7 +606,7 @@ fn initRedirections(
                     }
                 } else {
                     const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                    cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)}) catch {};
+                    cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {f}", .{jsval.fmtString(globalObject)}) catch {};
                     return .failed;
                 }
             },
@@ -699,7 +740,7 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
 
             const len = buf.len;
             if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len) {
-                // std.ArrayList(comptime T: type)
+                // std.array_list.Managed(comptime T: type)
             }
             const write_len = if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len)
                 io.arraybuf.buf.array_buffer.byte_len - io.arraybuf.i
@@ -733,7 +774,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
         },
         jsc.SystemError => {
             if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
-            return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.message.byteSlice(), err.path });
+            return this.fmtErrorArena(kind, "{s}: {f}\n", .{ err.message.byteSlice(), err.path });
         },
         bun.shell.ShellErr => return switch (err) {
             .sys => this.taskErrorToString(kind, err.sys),
@@ -763,8 +804,8 @@ pub const Echo = @import("./builtin/echo.zig");
 pub const Which = @import("./builtin/which.zig");
 pub const Rm = @import("./builtin/rm.zig");
 pub const Exit = @import("./builtin/exit.zig");
-pub const True = @import("./builtin/true.zig");
-pub const False = @import("./builtin/false.zig");
+pub const True = @import("./builtin/true_.zig");
+pub const False = @import("./builtin/false_.zig");
 pub const Yes = @import("./builtin/yes.zig");
 pub const Seq = @import("./builtin/seq.zig");
 pub const Dirname = @import("./builtin/dirname.zig");

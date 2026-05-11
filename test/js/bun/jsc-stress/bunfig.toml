@@ -1,0 +1,5 @@
+[run]
+preload = "./preload.js"
+
+[test]
+preload = "./preload.js"

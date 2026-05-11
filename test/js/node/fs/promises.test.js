@@ -202,3 +202,89 @@ test("writing to file in append mode works", async () => {
 
   expect((await readFile(tempFile)).toString()).toEqual("test\ntest\ntest\n");
 });
+
+test("errors from fs.promises include async stack frames", async () => {
+  async function level3() {
+    await readFile("/nonexistent-path/does-not-exist.txt");
+  }
+  async function level2() {
+    await level3();
+  }
+  async function level1() {
+    await level2();
+  }
+
+  let caught;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async level3");
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});
+
+test("fs.promises async stack through Promise subclass", async () => {
+  class MyPromise extends Promise {}
+
+  async function caller() {
+    await MyPromise.resolve().then(() => readFile("/nonexistent-path/x.txt"));
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Subclass .then() may not preserve the reaction chain — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+test("fs.promises async stack through custom thenable", async () => {
+  async function caller() {
+    const thenable = {
+      then(onFulfilled, onRejected) {
+        return readFile("/nonexistent-path/x.txt").then(onFulfilled, onRejected);
+      },
+    };
+    await thenable;
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Custom thenables break the direct reaction chain — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+test("fs.promises async stack with Promise.all", async () => {
+  async function caller() {
+    await Promise.all([readFile("/nonexistent-path/a.txt"), readFile("/nonexistent-path/b.txt")]);
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Promise.all uses combinator context — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});

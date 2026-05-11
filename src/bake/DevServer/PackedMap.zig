@@ -106,7 +106,7 @@ pub const Shared = union(enum) {
     /// Amortized memory cost across all references to the same `PackedMap`
     pub fn memoryCost(self: Shared) usize {
         return switch (self) {
-            .some => |ptr| ptr.get().memoryCost() / ptr.strongCount(),
+            .some => |ptr| ptr.get().memoryCost() / @max(ptr.strongCount(), 1),
             else => 0,
         };
     }
@@ -114,7 +114,7 @@ pub const Shared = union(enum) {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
 const Chunk = bun.bundle_v2.Chunk;

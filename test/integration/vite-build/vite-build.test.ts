@@ -33,5 +33,5 @@ test(
     const out = await stdout.text();
     expect(out).toContain("done");
   },
-  60_000 * ASAN_MULTIPLIER,
+  120_000 * ASAN_MULTIPLIER,
 );

@@ -127,7 +127,7 @@ pub const InstallCompletionsCommand = struct {
 
         var cwd_buf: bun.PathBuffer = undefined;
 
-        var stdout = std.io.getStdOut();
+        var stdout = std.fs.File.stdout();
 
         var shell = ShellCompletions.Shell.unknown;
         if (bun.env_var.SHELL.platformGet()) |shell_name| {
@@ -138,7 +138,10 @@ pub const InstallCompletionsCommand = struct {
             // don't fail on this if we don't actually need to
             if (fail_exit_code == 1) {
                 if (!stdout.isTty()) {
-                    try stdout.writeAll(shell.completions());
+                    stdout.writeAll(shell.completions()) catch |err| switch (err) {
+                        error.BrokenPipe => Global.exit(0),
+                        else => return err,
+                    };
                     Global.exit(0);
                 }
             }
@@ -171,7 +174,10 @@ pub const InstallCompletionsCommand = struct {
 
         if (!bun.env_var.IS_BUN_AUTO_UPDATE.get()) {
             if (!stdout.isTty()) {
-                try stdout.writeAll(shell.completions());
+                stdout.writeAll(shell.completions()) catch |err| switch (err) {
+                    error.BrokenPipe => Global.exit(0),
+                    else => return err,
+                };
                 Global.exit(0);
             }
         }
@@ -532,10 +538,10 @@ pub const InstallCompletionsCommand = struct {
 const string = []const u8;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const fs = @import("../fs.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const fs = @import("../resolver/fs.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
-const which = @import("../which.zig").which;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

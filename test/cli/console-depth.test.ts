@@ -28,7 +28,7 @@ describe("console depth", () => {
 
   function normalizeOutput(output: string): string {
     // Normalize line endings and trim whitespace
-    return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+    return output.replace(/\r\n?/g, "\n").trim();
   }
 
   test("default console depth should be 2", async () => {

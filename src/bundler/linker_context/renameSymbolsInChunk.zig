@@ -19,8 +19,8 @@ pub fn renameSymbolsInChunk(
         renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
     }
 
-    var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
-        var list = std.ArrayList(StableRef).init(allocator);
+    var sorted_imports_from_other_chunks: std.array_list.Managed(StableRef) = brk: {
+        var list = std.array_list.Managed(StableRef).init(allocator);
         var count: u32 = 0;
         const imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
         for (imports_from_other_chunks) |item| {
@@ -141,7 +141,7 @@ pub fn renameSymbolsInChunk(
         r.addTopLevelSymbol(stable_ref.ref);
     }
 
-    var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
+    var sorted_ = std.array_list.Managed(u32).init(r.temp_allocator);
     var sorted = &sorted_;
     defer sorted.deinit();
 

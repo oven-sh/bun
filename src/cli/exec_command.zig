@@ -5,10 +5,10 @@ pub const ExecCommand = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("../jsc/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
         var buf: bun.PathBuffer = undefined;
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,

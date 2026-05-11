@@ -129,17 +129,17 @@ pub const Background = struct {
         } };
     }
 
-    pub fn toCss(this: *const Background, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Background, dest: *Printer) PrintErr!void {
         var has_output = false;
 
         if (!this.color.eql(&CssColor.default())) {
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
             has_output = true;
         }
 
         if (!this.image.eql(&Image.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.image.toCss(W, dest);
+            try this.image.toCss(dest);
             has_output = true;
         }
 
@@ -148,11 +148,11 @@ pub const Background = struct {
             if (has_output) {
                 try dest.writeStr(" ");
             }
-            try position.toCss(W, dest);
+            try position.toCss(dest);
 
             if (!this.size.eql(&BackgroundSize.default())) {
                 try dest.delim('/', true);
-                try this.size.toCss(W, dest);
+                try this.size.toCss(dest);
             }
 
             has_output = true;
@@ -160,13 +160,13 @@ pub const Background = struct {
 
         if (!this.repeat.eql(&BackgroundRepeat.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.repeat.toCss(W, dest);
+            try this.repeat.toCss(dest);
             has_output = true;
         }
 
         if (!this.attachment.eql(&BackgroundAttachment.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.attachment.toCss(W, dest);
+            try this.attachment.toCss(dest);
             has_output = true;
         }
 
@@ -175,7 +175,7 @@ pub const Background = struct {
 
         if (output_padding_box) {
             if (has_output) try dest.writeStr(" ");
-            try this.origin.toCss(W, dest);
+            try this.origin.toCss(dest);
             has_output = true;
         }
 
@@ -184,7 +184,7 @@ pub const Background = struct {
         {
             if (has_output) try dest.writeStr(" ");
 
-            try this.clip.toCss(W, dest);
+            try this.clip.toCss(dest);
             has_output = true;
         }
 
@@ -192,7 +192,7 @@ pub const Background = struct {
         if (!has_output) {
             if (dest.minify) {
                 // `0 0` is the shortest valid background value
-                try this.position.toCss(W, dest);
+                try this.position.toCss(dest);
             } else {
                 try dest.writeStr("none");
             }
@@ -282,15 +282,15 @@ pub const BackgroundSize = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const BackgroundSize, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundSize, dest: *Printer) PrintErr!void {
         return switch (this.*) {
             .cover => dest.writeStr("cover"),
             .contain => dest.writeStr("contain"),
             .explicit => |explicit| {
-                try explicit.width.toCss(W, dest);
+                try explicit.width.toCss(dest);
                 if (explicit.height != .auto) {
                     try dest.writeStr(" ");
-                    try explicit.height.toCss(W, dest);
+                    try explicit.height.toCss(dest);
                 }
                 return;
             },
@@ -333,9 +333,9 @@ pub const BackgroundPosition = struct {
         return .{ .result = BackgroundPosition.fromPosition(pos) };
     }
 
-    pub fn toCss(this: *const BackgroundPosition, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundPosition, dest: *Printer) PrintErr!void {
         const pos = this.intoPosition();
-        return pos.toCss(W, dest);
+        return pos.toCss(dest);
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
@@ -398,7 +398,7 @@ pub const BackgroundRepeat = struct {
         return .{ .result = .{ .x = x, .y = y } };
     }
 
-    pub fn toCss(this: *const BackgroundRepeat, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundRepeat, dest: *Printer) PrintErr!void {
         const Repeat = BackgroundRepeatKeyword.repeat;
         const NoRepeat = BackgroundRepeatKeyword.@"no-repeat";
 
@@ -407,10 +407,10 @@ pub const BackgroundRepeat = struct {
         } else if (this.x == NoRepeat and this.y == Repeat) {
             return dest.writeStr("repeat-y");
         } else {
-            try this.x.toCss(W, dest);
+            try this.x.toCss(dest);
             if (this.y != this.x) {
                 try dest.writeStr(" ");
-                try this.y.toCss(W, dest);
+                try this.y.toCss(dest);
             }
         }
     }
@@ -660,8 +660,10 @@ pub const BackgroundHandler = struct {
                     var clips: *SmallList(BackgroundClip, 1) = &clips_and_vp.*[0];
                     const vp: *VendorPrefix = &clips_and_vp.*[1];
                     if (vendor_prefix != vp.* and !val.eql(clips)) {
+                        // `flush()` takes ownership of `this.clips` via `bun.take` and
+                        // frees it, so `clips` (which aliases the payload of `this.clips`)
+                        // is a stale pointer once `flush()` returns. Do not touch it.
                         this.flush(allocator, dest, context);
-                        clips.deinit(allocator);
                         this.clips = .{ val.deepClone(allocator), vendor_prefix };
                     } else {
                         if (!val.eql(clips)) {
@@ -688,7 +690,7 @@ pub const BackgroundHandler = struct {
                 }
                 var clips_vp = VendorPrefix{ .none = true };
                 if (this.clips) |*clips_and_vp| {
-                    if (clips_vp != clips_and_vp.*[1] and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
+                    if (clips_vp != clips_and_vp.*[1] and !clips.eql(&clips_and_vp.*[0])) {
                         this.flush(allocator, dest, context);
                     } else {
                         bun.bits.insert(VendorPrefix, &clips_vp, clips_and_vp.*[1]);

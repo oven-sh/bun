@@ -69,7 +69,7 @@ export default function LandingPage() {
           <h2 className="text-3xl font-bold mb-6">Ready to Try?</h2>
           <div className="space-x-4">
             <a
-              href="https://bun.sh/docs"
+              href="https://bun.com/docs"
               className="inline-block bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg transition"
             >
               Read Docs

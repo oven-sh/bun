@@ -98,7 +98,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 1 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 1 complete");
             });
           },
@@ -108,7 +108,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 2 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 2 complete");
             });
           },
@@ -118,7 +118,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 3 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 3 complete");
             });
           },
@@ -159,7 +159,7 @@ describe("defer", () => {
               setup(build) {
                 build.onStart(async () => {
                   action.push("onStart 2 setup");
-                  await Bun.sleep(1000);
+                  await Bun.sleep(50);
                   action.push("onStart 2 complete");
                 });
               },
@@ -169,7 +169,7 @@ describe("defer", () => {
               setup(build) {
                 build.onStart(async () => {
                   action.push("onStart 3 setup");
-                  await Bun.sleep(1000);
+                  await Bun.sleep(50);
                   action.push("onStart 3 complete");
                 });
               },
@@ -537,12 +537,8 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     const outdir = path.join(folder, "dist");
 
     let onFinalizeCallCount = 0;
-    let onFinalizeCalledThrice = Promise.withResolvers();
     let onFinalizeCallRegistry = new FinalizationRegistry(() => {
       onFinalizeCallCount++;
-      if (onFinalizeCallCount === 3) {
-        onFinalizeCalledThrice.resolve();
-      }
     });
 
     const result = await (async function () {
@@ -641,8 +637,12 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
         "exports": [{ "ident": "logger" }],
       },
     });
-    Bun.gc(true);
-    await onFinalizeCalledThrice.promise;
+    // GC doesn't guarantee immediate finalization; spin the event loop and
+    // retry so the FinalizationRegistry callbacks have a chance to fire.
+    for (let i = 0; i < 100 && onFinalizeCallCount < 3; i++) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
     expect(onFinalizeCallCount).toBe(3);
   });
 });

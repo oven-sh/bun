@@ -201,7 +201,7 @@ interface JSCommonJSModule {
  * codegen. Passing a template parameter will break codegen. Prefer `$cpp(...)
  * as Foo` instead.
  *
- * Binding files are located in `src/bun.js/bindings`
+ * Binding files are located in `src/jsc/bindings`
  *
  * @see {@link $zig} for native zig bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
@@ -220,7 +220,7 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * codegen. Passing a template parameter will break codegen. Prefer `$zig(...)
  * as Foo` instead.
  *
- * Binding files are located in `src/bun.js/bindings`
+ * Binding files are located in `src/jsc/bindings`
  *
  * @see {@link $cpp} for native c++ bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
@@ -253,7 +253,7 @@ declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol:
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:net" {
-  export function _normalizeArgs(args: any[]): unknown[];
+  function _normalizeArgs(options: any[]): [Record<PropertyKey, any>, Function | null];
 
   interface Socket {
     _handle: Bun.Socket<{ self: Socket; req?: object }> | null;

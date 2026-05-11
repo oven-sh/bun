@@ -243,25 +243,25 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   }
 
   /// Serializes the value of a CSS property without its name or \`!important\` flag.
-  pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+  pub fn valueToCss(this: *const Property, dest: *css.Printer) PrintErr!void {
     return switch(this.*) {
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           const value = meta.valid_prefixes === undefined ? "value" : "value[0]";
           const to_css =
             meta.ty === "CSSNumber"
-              ? `CSSNumberFns.toCss(&${value}, W, dest)`
+              ? `CSSNumberFns.toCss(&${value}, dest)`
               : meta.ty === "CSSInteger"
-                ? `CSSIntegerFns.toCss(&${value}, W, dest)`
+                ? `CSSIntegerFns.toCss(&${value}, dest)`
                 : meta.ty.includes("ArrayList")
-                  ? `css.generic.toCss(${meta.ty}, ${value}, W, dest)`
-                  : `${value}.toCss(W, dest)`;
+                  ? `css.generic.toCss(${meta.ty}, ${value}, dest)`
+                  : `${value}.toCss(dest)`;
           return `.${escapeIdent(name)} => |*value| ${to_css},`;
         })
         .join("\n")}
-      .all => |*keyword| keyword.toCss(W, dest),
-      .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
-      .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
+      .all => |*keyword| keyword.toCss(dest),
+      .unparsed => |*unparsed| unparsed.value.toCss(dest, false),
+      .custom => |*c| c.value.toCss(dest, c.name == .custom),
     };
   }
 

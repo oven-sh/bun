@@ -378,10 +378,15 @@ class AssertionError extends Error {
       this.operator = operator;
     }
     ErrorCaptureStackTrace(this, stackStartFn || stackStartFunction);
-    // JSC::Interpreter::getStackTrace() sometimes short-circuits without creating a .stack property.
-    // e.g.: https://github.com/oven-sh/WebKit/blob/e32c6356625cfacebff0c61d182f759abf6f508a/Source/JavaScriptCore/interpreter/Interpreter.cpp#L501
-    if ($isUndefinedOrNull(this.stack)) {
-      ErrorCaptureStackTrace(this, AssertionError);
+    // When all stack frames are above the stackStartFn (e.g. in async
+    // contexts), captureStackTrace produces a stack with just the error
+    // message and no frame lines. Retry with AssertionError as the filter
+    // so we get at least the frames below the constructor.
+    {
+      const s = this.stack;
+      if ($isUndefinedOrNull(s) || (typeof s === "string" && s.indexOf("\n    at ") === -1)) {
+        ErrorCaptureStackTrace(this, AssertionError);
+      }
     }
     // Create error message including the error code in the name.
     this.stack; // eslint-disable-line no-unused-expressions

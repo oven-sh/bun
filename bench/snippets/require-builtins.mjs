@@ -11,10 +11,10 @@ const builtin = ${JSON.stringify(builtin)};
 const now = performance.now();
 require(builtin);
 const end = performance.now();
-process.stdout.write(JSON.stringify({builtin, time: end - now}) + "\\n");
+process.stdout.write(JSON.stringify({ builtin, time: end - now }) + "\\n");
   `,
   );
-  const result = spawnSync(typeof Bun !== "undefined" ? "bun" : "node", [path], {
+  spawnSync(process.execPath, [path], {
     stdio: ["inherit", "inherit", "inherit"],
     env: {
       ...process.env,

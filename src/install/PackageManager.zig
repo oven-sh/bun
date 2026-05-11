@@ -89,6 +89,7 @@ lockfile: *Lockfile = undefined,
 
 options: Options,
 preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
@@ -97,7 +98,7 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
+peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
@@ -356,7 +357,7 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
                 _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, node_pathZ)));
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
-                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, current_path.len);
                 try PATH.appendSlice(current_path);
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
@@ -425,7 +426,10 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+const cached_package_folder_name_bufs = bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer = undefined });
+pub inline fn cached_package_folder_name_buf() *bun.PathBuffer {
+    return &cached_package_folder_name_bufs.get().buf;
+}
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
@@ -494,14 +498,13 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
             \\)
             \\
             ,
-            else =>
-            \\#!/bin/sh
-            \\if [ "x$npm_config_node_gyp" = "x" ]; then
-            \\  bun x --silent node-gyp $@
-            \\else
-            \\  "$npm_config_node_gyp" $@
-            \\fi
-            \\
+            else => (if (Environment.isAndroid) "#!/system/bin/sh\n" else "#!/bin/sh\n") ++
+                \\if [ "x$npm_config_node_gyp" = "x" ]; then
+                \\  bun x --silent node-gyp $@
+                \\else
+                \\  "$npm_config_node_gyp" $@
+                \\fi
+                \\
             ,
         };
 
@@ -512,7 +515,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         // Add our node-gyp tempdir to the path
         const existing_path = manager.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
+        var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
@@ -1138,11 +1141,11 @@ const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
 const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
-const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
+const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FD, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
-const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
-const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
+const NetworkQueue = bun.LinearFifo(*NetworkTask, .{ .Static = 32 });
+const PatchTaskFifo = bun.LinearFifo(*PatchTask, .{ .Static = 32 });
 
 // pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
@@ -1190,6 +1193,7 @@ pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
 pub const enqueueDependencyWithMainAndSuccessFn = enqueue.enqueueDependencyWithMainAndSuccessFn;
 pub const enqueueExtractNPMPackage = enqueue.enqueueExtractNPMPackage;
+pub const createExtractTaskForStreaming = enqueue.createExtractTaskForStreaming;
 pub const enqueueGitCheckout = enqueue.enqueueGitCheckout;
 pub const enqueueGitForCheckout = enqueue.enqueueGitForCheckout;
 pub const enqueueNetworkTask = enqueue.enqueueNetworkTask;
@@ -1314,6 +1318,7 @@ const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;
 const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

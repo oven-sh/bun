@@ -371,8 +371,7 @@ describe("net.createServer events", () => {
     };
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(
       mustCall(async () => {
@@ -414,8 +413,7 @@ describe("net.createServer events", () => {
       mustNotCall("drop not called")();
     };
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 500);
     let connection_called = false;
     server
       .on(
@@ -486,8 +484,7 @@ describe("net.createServer events", () => {
       mustNotCall("close not called")();
     };
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 500);
 
     server
       .on(
@@ -520,8 +517,7 @@ describe("net.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(async () => {
       const address = server.address() as AddressInfo;

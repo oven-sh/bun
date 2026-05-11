@@ -20,13 +20,18 @@ export default {
       expectType(ws.data).is<{ name: string }>();
     },
   },
-} satisfies Bun.ServeOptions<{ name: string }>;
+  routes: {
+    "/": req => {
+      expectType(req.params).is<Record<string, string>>();
+    },
+  },
+} satisfies Bun.Serve.Options<{ name: string }>;
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);
 }
 
-function test<T = undefined, R extends string = never>(
+function test<T = undefined, R extends string = string>(
   name: string,
   options: Bun.Serve.Options<T, R>,
   {
@@ -71,6 +76,11 @@ function test<T = undefined, R extends string = never>(
 }
 
 test("basic", {
+  routes: {
+    "/123": {
+      "GET": new Response("Cool/great"),
+    },
+  },
   fetch(req) {
     console.log(req.url); // => http://localhost:3000/
     return new Response("Hello World");
@@ -459,15 +469,15 @@ test("very basic fetch with websocket message handler", {
   fetch: () => new Response("ok"),
   websocket: {
     message: ws => {
-      //
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
     },
   },
 });
 
 test("yet another basic fetch and websocket message handler", {
   websocket: {
-    message: () => {
-      //
+    message: ws => {
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
     },
   },
   fetch: (req, server) => {
@@ -481,8 +491,8 @@ test("yet another basic fetch and websocket message handler", {
 
 test("websocket + upgrade on a route path", {
   websocket: {
-    message: () => {
-      //
+    message: ws => {
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
     },
   },
   routes: {
@@ -563,7 +573,7 @@ test(
       if (Math.random() > 0.5) return undefined;
       return new Response();
     },
-    websocket: { message() {} },
+    websocket: { message: ws => expectType(ws).is<Bun.ServerWebSocket<undefined>>() },
   },
   {
     overrideExpectBehavior: server => {
@@ -814,5 +824,46 @@ test("multiple properties combined", {
   },
   error(error) {
     return new Response(`Combined server error: ${error.message}`, { status: 500 });
+  },
+});
+
+test("#24819 regression", {
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+        return Response.json("Sup");
+      },
+    },
+  },
+});
+
+// @ts-expect-error
+test("#24819 regression with no response requires websocket", {
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+      },
+    },
+  },
+});
+
+test("#24819 regression with websocket is happy", {
+  websocket: {
+    message: console.log,
+  },
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+      },
+    },
   },
 });

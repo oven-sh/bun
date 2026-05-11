@@ -103,3 +103,9 @@ q1 = 1
   });
   expect(parsed.items).toEqual([{ q1: 1 }]);
 });
+
+it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", () => {
+  const depth = 25_000;
+  const deepToml = "a = " + "{ b = ".repeat(depth) + "1" + " }".repeat(depth);
+  expect(() => Bun.TOML.parse(deepToml)).toThrow(RangeError);
+});

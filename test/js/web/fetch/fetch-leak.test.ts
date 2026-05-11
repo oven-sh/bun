@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tls as COMMON_CERT, gc, isCI } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ describe("fetch doesn't leak", () => {
       },
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       env: {
         ...bunEnv,
         SERVER: server.url.href,
@@ -76,7 +76,7 @@ describe("fetch doesn't leak", () => {
       env.COUNT = "1000";
     }
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       env,
       stderr: "inherit",
       stdout: "inherit",
@@ -114,7 +114,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 
       const rss = [];
 
-      const process = Bun.spawn({
+      await using process = Bun.spawn({
         cmd: [
           bunExe(),
           "--smol",
@@ -185,20 +185,71 @@ test("do not leak", async () => {
   }, 1e3);
 });
 
+test("fetch(data:) with percent-encoding does not leak", async () => {
+  // DataURL.decodeData leaked the intermediate percent-decoded buffer (and the
+  // base64 output buffer on decode error). Each fetch of a percent-encoded
+  // data: URL leaked ~len(url.data) bytes from bun.default_allocator.
+  const script = `
+    // ~240KB of percent-encoded payload; the intermediate percent-decoded
+    // buffer is allocated at url.data.len bytes and was previously leaked.
+    const plain = "data:text/plain," + Buffer.alloc(240000, "%41").toString();
+    // same payload is valid base64 (all 'A's); exercises the is_base64 branch
+    const b64 = "data:text/plain;base64," + Buffer.alloc(240000, "%41").toString();
+    // '!' is not base64 alphabet; exercises the error path that also leaked buf
+    const bad = "data:text/plain;base64," + Buffer.alloc(240000, "%21").toString();
+
+    async function hit() {
+      await (await fetch(plain)).arrayBuffer();
+      await (await fetch(b64)).arrayBuffer();
+      let rejected = false;
+      await fetch(bad).then(r => r.arrayBuffer(), () => { rejected = true; });
+      if (!rejected) throw new Error("invalid base64 data: URL unexpectedly succeeded");
+    }
+
+    for (let i = 0; i < 40; i++) await hit();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < 200; i++) await hit();
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+    if (deltaMB > 32) {
+      throw new Error("fetch(data:) leaked " + Math.round(deltaMB) + " MB over 200 iterations");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 60000);
+
 test("should not leak using readable stream", async () => {
   const buffer = Buffer.alloc(1024 * 128, "b");
   using server = Bun.serve({
     port: 0,
-    fetch: req => {
-      return new Response(buffer);
-    },
+    routes: { "/*": new Response(buffer) },
   });
 
-  const { stdout, stderr } = bunRun(join(import.meta.dir, "fetch-leak-test-fixture-6.js"), {
-    ...bunEnv,
-    SERVER_URL: server.url.href,
-    MAX_MEMORY_INCREASE: "5", // in MB
+  await using proc = Bun.spawn([bunExe(), join(import.meta.dir, "fetch-leak-test-fixture-6.js")], {
+    env: {
+      ...bunEnv,
+      SERVER_URL: server.url.href,
+      MAX_MEMORY_INCREASE: "5", // in MB
+    },
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  expect(stderr).toBe("");
-  expect(stdout).toContain("done");
+  const [exited, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  expect(stdout + stderr).toContain("done");
+  expect(exited).toBe(0);
 });

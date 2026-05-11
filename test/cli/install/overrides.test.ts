@@ -10,7 +10,7 @@ beforeAll(() => {
 
 function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
-    cmd: [bunExe(), ...args],
+    cmd: [bunExe(), ...args, "--linker=hoisted"],
     cwd,
     stdout: "inherit",
     stdin: "inherit",

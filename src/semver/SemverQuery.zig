@@ -18,17 +18,17 @@ next: ?*Query = null,
 const Formatter = struct {
     query: *const Query,
     buffer: []const u8,
-    pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(formatter: Formatter, writer: *std.Io.Writer) !void {
         const this = formatter.query;
 
         if (this.next) |ptr| {
             if (ptr.range.hasLeft() or ptr.range.hasRight()) {
-                try std.fmt.format(writer, "{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                try writer.print("{f} && {f}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
                 return;
             }
         }
 
-        try std.fmt.format(writer, "{}", .{this.range.fmt(formatter.buffer)});
+        try writer.print("{f}", .{this.range.fmt(formatter.buffer)});
     }
 };
 
@@ -50,13 +50,13 @@ pub const List = struct {
     const Formatter = struct {
         list: *const List,
         buffer: []const u8,
-        pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
             const this = formatter.list;
 
             if (this.next) |ptr| {
-                try std.fmt.format(writer, "{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                try writer.print("{f} || {f}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
             } else {
-                try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buffer)});
+                try writer.print("{f}", .{this.head.fmt(formatter.buffer)});
             }
         }
     };
@@ -143,7 +143,7 @@ pub const Group = struct {
         group: *const Group,
         buf: string,
 
-        pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
             const this = formatter.group;
 
             if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {
@@ -151,17 +151,17 @@ pub const Group = struct {
             }
 
             if (this.tail == null and this.head.tail == null) {
-                try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buf)});
+                try writer.print("{f}", .{this.head.fmt(formatter.buf)});
                 return;
             }
 
             var list = &this.head;
             while (list.next) |next| {
-                try std.fmt.format(writer, "{} && ", .{list.fmt(formatter.buf)});
+                try writer.print("{f} && ", .{list.fmt(formatter.buf)});
                 list = next;
             }
 
-            try std.fmt.format(writer, "{}", .{list.fmt(formatter.buf)});
+            try writer.print("{f}", .{list.fmt(formatter.buf)});
         }
     };
 
@@ -173,7 +173,7 @@ pub const Group = struct {
     }
 
     pub fn jsonStringify(this: *const Group, writer: anytype) !void {
-        const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+        const temp = try std.fmt.allocPrint(bun.default_allocator, "{f}", .{this.fmt()});
         defer bun.default_allocator.free(temp);
         try std.json.encodeJsonString(temp, .{}, writer);
     }

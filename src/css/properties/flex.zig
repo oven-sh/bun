@@ -123,10 +123,10 @@ pub const FlexFlow = struct {
         };
     }
 
-    pub fn toCss(this: *const FlexFlow, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const FlexFlow, dest: *css.Printer) css.PrintErr!void {
         var needs_space = false;
         if (!this.direction.eql(&FlexDirection.default()) or this.wrap.eql(&FlexWrap.default())) {
-            try this.direction.toCss(W, dest);
+            try this.direction.toCss(dest);
             needs_space = true;
         }
 
@@ -134,7 +134,7 @@ pub const FlexFlow = struct {
             if (needs_space) {
                 try dest.writeStr(" ");
             }
-            try this.wrap.toCss(W, dest);
+            try this.wrap.toCss(dest);
         }
 
         return;
@@ -216,7 +216,7 @@ pub const Flex = struct {
         };
     }
 
-    pub fn toCss(this: *const Flex, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Flex, dest: *css.Printer) css.PrintErr!void {
         if (this.grow == 0.0 and this.shrink == 0.0 and this.basis == .auto) {
             try dest.writeStr("none");
             return;
@@ -240,10 +240,10 @@ pub const Flex = struct {
         };
 
         if (this.grow != 1.0 or this.shrink != 1.0 or basis_kind != .NonZero) {
-            try CSSNumberFns.toCss(&this.grow, W, dest);
+            try CSSNumberFns.toCss(&this.grow, dest);
             if (this.shrink != 1.0 or basis_kind == .Length) {
                 try dest.writeStr(" ");
-                try CSSNumberFns.toCss(&this.shrink, W, dest);
+                try CSSNumberFns.toCss(&this.shrink, dest);
             }
         }
 
@@ -251,7 +251,7 @@ pub const Flex = struct {
             if (this.grow != 1.0 or this.shrink != 1.0 or basis_kind == .Length) {
                 try dest.writeStr(" ");
             }
-            try this.basis.toCss(W, dest);
+            try this.basis.toCss(dest);
         }
     }
 

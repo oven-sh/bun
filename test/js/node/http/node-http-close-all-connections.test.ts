@@ -1,17 +1,83 @@
 import { expect, test } from "bun:test";
+import { once } from "node:events";
+import http from "node:http";
+import { connect } from "node:net";
+import type { AddressInfo } from "node:net";
 import { bunEnv, bunExe } from "harness";
 
-// End-to-end regression: spawning a child that opens an HTTP server,
-// accepts a keep-alive connection, and calls
+// Regression: `@azure/msal-node`'s `LoopbackClient.closeServer` calls
 //   server.close();
 //   server.closeAllConnections();
 //   server.unref();
-// must exit immediately — not wait for the keep-alive idle timeout to
-// reclaim the in-flight socket. This is the @azure/msal-node hang.
+// in sequence. Bun used to null out the internal server reference in
+// `close()`, so the subsequent `closeAllConnections()` was a no-op —
+// the keep-alive socket kept the event loop alive and the process hung.
 // Issue: https://github.com/oven-sh/bun/issues/30501
-//
-// This is in a standalone file because it spawns a bun subprocess and so
-// cannot run under Node.js the way `node-http.test.ts` requires.
+test("closeAllConnections() after close() force-closes in-flight sockets", async () => {
+  const { promise: requestReceived, resolve: resolveReceived } = Promise.withResolvers<void>();
+  const server = http.createServer((req, _res) => {
+    // Signal receipt but DO NOT reply — socket is "in flight" (not idle)
+    // when the teardown sequence runs. This is the case where close()
+    // alone (which only closes idle connections) cannot reclaim the
+    // socket, and closeAllConnections() must do it.
+    resolveReceived();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const sock = connect(port, "127.0.0.1");
+  const { promise: sockClosed, resolve: resolveClosed } = Promise.withResolvers<void>();
+  sock.on("close", () => resolveClosed());
+  sock.on("error", () => {});
+  await once(sock, "connect");
+  sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+  await requestReceived;
+
+  // msal-style teardown — no waiting between calls
+  server.close();
+  server.closeAllConnections();
+  server.unref();
+
+  // The client socket must be force-closed by closeAllConnections().
+  // Without the fix, the socket stays open indefinitely (msal hang).
+  await sockClosed;
+});
+
+// Regression: when a caller does close() and then listen() again before
+// the previous shutdown's allClosed promise has fulfilled, the stale
+// callback must not null out the newly-created server handle.
+test("listen() during an in-flight close() doesn't corrupt the new server", async () => {
+  const server = http.createServer((_req, res) => res.end("ok"));
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  // Fire-and-forget close; don't wait for the allClosed callback.
+  server.close();
+
+  // Re-listen immediately while the previous shutdown is still settling.
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const secondAddress = server.address() as AddressInfo | null;
+  expect(secondAddress).not.toBeNull();
+  const secondPort = secondAddress!.port;
+  expect(secondPort).toBeInteger();
+
+  // Drain the new server — address() must still return a port after
+  // microtasks run (this is where the stale close callback would have
+  // hit, pre-fix).
+  await new Promise(r => setImmediate(r));
+  expect((server.address() as AddressInfo | null)?.port).toBe(secondPort);
+
+  // Confirm the new server actually serves requests, not just has a port.
+  const res = await fetch(`http://127.0.0.1:${secondPort}`);
+  expect(await res.text()).toBe("ok");
+
+  await new Promise<void>(r => server.close(() => r()));
+});
+
+// End-to-end: spawn a child that opens an HTTP server, accepts a
+// keep-alive connection, and calls the msal teardown. Must exit
+// immediately — not wait for the keep-alive idle timeout to reclaim
+// the in-flight socket.
 test("process exits after close() + closeAllConnections() + unref() teardown", async () => {
   await using proc = Bun.spawn({
     cmd: [

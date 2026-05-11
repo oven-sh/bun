@@ -185,7 +185,28 @@ impl<'a> Scope<'a> {
         expr::data::Store::set_memory_allocator(prev);
         stmt::data::Store::set_memory_allocator(prev);
         bun_logger::js_ast::set_data_store_override(self.previous_logger);
-        bun_alloc::ast_alloc::set_thread_heap(self.previous_heap);
+        if !prev.is_null() {
+            // Returning into an outer `ASTMemoryAllocator` scope: its arena's
+            // `heap_ptr()` cannot have changed while it was suspended
+            // (`Store::reset` early-returns while `MEMORY_ALLOCATOR` is set,
+            // and the outer arena is only `reset()` by its own `enter()`), so
+            // the snapshot is valid.
+            bun_alloc::ast_alloc::set_thread_heap(self.previous_heap);
+        } else {
+            // Returning into the raw `Stmt.Data.Store` block-store (no
+            // `ASTMemoryAllocator` was active before this scope). The
+            // `store_ast_alloc_heap` side arena owns `AST_HEAP` there. We
+            // cannot trust `self.previous_heap`: if `enter()` ran
+            // `Store::begin()` → `store_ast_alloc_heap::reset()`, that
+            // `mi_heap_destroy`+rebuild left the snapshot dangling. And we
+            // cannot leave `AST_HEAP` as-is: when `current` was `Some`, it
+            // still points at *this* scope's arena, which the caller is about
+            // to drop. Re-read the side arena's live heap (or null if none
+            // exists yet — i.e. no block-store on this thread).
+            bun_alloc::ast_alloc::set_thread_heap(
+                crate::ast::store_ast_alloc_heap::current_heap(),
+            );
+        }
     }
 }
 

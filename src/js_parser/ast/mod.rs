@@ -103,6 +103,130 @@ impl<T> Drop for DebugOnlyDisablerScope<T> {
     }
 }
 
+/// Per-thread side `MimallocArena` that backs `AstAlloc` while the bundler's
+/// `Stmt.Data.Store` / `Expr.Data.Store` block-store is active and **no**
+/// `ASTMemoryAllocator` scope is in effect.
+///
+/// The runtime-transpiler path already routes `AstAlloc` into
+/// `ASTMemoryAllocator.arena` (see `ASTMemoryAllocator::push` /
+/// `Scope::enter`). The bundler does *not* use `ASTMemoryAllocator` — AST
+/// nodes go into the thread-local `NewStore` block list — so prior to this
+/// module `AST_HEAP` was null on that path and every embedded
+/// `Vec<_, AstAlloc>` (e.g. `G::PropertyList` inside an `E::Object`) fell
+/// back to global mimalloc. `NewStore::reset()` does not run `Drop` on stored
+/// nodes (it just rewinds each block's bump pointer), so those global-heap
+/// `Vec` buffers leaked one-AST-per-bundled-file (bun-build-api LSan: ~40 MB
+/// of `Vec<Property>` across 8 builds).
+///
+/// This side arena gives `AstAlloc` an `mi_heap` whose lifetime is exactly
+/// `NewStore`'s: created in `Store::create`, `mi_heap_destroy`+rebuilt in
+/// `Store::reset`/`begin`, torn down in `Store::deinit`. The buffers are then
+/// bulk-freed alongside the AST nodes, with no per-element `Drop` — the same
+/// invariant `Expr::Data::clone_in`'s `ptr::read` relies on.
+///
+/// Wiring lives only in `Stmt::data::Store` (not `Expr`'s): the two stores
+/// are always created/reset/deinit'd as a pair, and a single shared heap is
+/// what we want.
+pub(crate) mod store_ast_alloc_heap {
+    use core::cell::Cell;
+    use core::ptr;
+
+    use bun_alloc::MimallocArena;
+
+    thread_local! {
+        /// `Box<MimallocArena>` leaked to a raw pointer so the arena's
+        /// address (and therefore its `heap_ptr()`) is stable across the
+        /// thread's lifetime. Null until `enter()` runs once on this thread.
+        static ARENA: Cell<*mut MimallocArena> = const { Cell::new(ptr::null_mut()) };
+    }
+
+    /// Idempotently create the side arena and point `AST_HEAP` at it.
+    ///
+    /// Called from `Stmt::data::Store::create` after the block-store
+    /// `INSTANCE` is set. The caller's existing `memory_allocator().is_null()`
+    /// early-return guarantees no `ASTMemoryAllocator` scope is active, so we
+    /// own `AST_HEAP` here; `ASTMemoryAllocator::{push, Scope::enter}` save
+    /// the current heap before overwriting and restore it on pop/exit, so a
+    /// later nested ASTMemoryAllocator scope round-trips back to this heap.
+    pub fn enter() {
+        // A/B kill-switch for measuring the fix; remove after CI confirms.
+        if std::env::var_os("BUN_DISABLE_STORE_AST_HEAP").is_some() {
+            return;
+        }
+        let arena = ARENA.with(|c| {
+            let p = c.get();
+            if !p.is_null() {
+                return p;
+            }
+            // Stable heap address for the thread's lifetime; freed in `exit()`.
+            let p = Box::into_raw(Box::new(MimallocArena::new()));
+            c.set(p);
+            p
+        });
+        // SAFETY: `arena` is a live `Box::into_raw` allocation owned by this
+        // thread; only `exit()` (on this thread) frees it.
+        bun_alloc::ast_alloc::set_thread_heap(unsafe { (*arena).heap_ptr() });
+    }
+
+    /// Destroy + rebuild the side arena's heap and re-publish the new
+    /// `heap_ptr()` to `AST_HEAP`.
+    ///
+    /// Called from `Stmt::data::Store::reset` / the reset arm of `begin`
+    /// after `Backing::reset`. Those callers already early-return when
+    /// `disable_reset` is set or an `ASTMemoryAllocator` is active, so the
+    /// heap-destroy here has the same lifetime as the block-store reset and
+    /// `AST_HEAP` is ours to write.
+    pub fn reset() {
+        let arena = ARENA.with(|c| c.get());
+        if arena.is_null() {
+            // `reset()` reached before `create()` — caller contract violation
+            // in the block-store API, but be defensive: just create.
+            enter();
+            return;
+        }
+        // SAFETY: `arena` is the live `Box::into_raw` allocation from
+        // `enter()`; this thread is its only mutator. `MimallocArena::reset`
+        // does `mi_heap_destroy` + `mi_heap_new`, so re-publish the new heap.
+        unsafe {
+            (*arena).reset();
+            bun_alloc::ast_alloc::set_thread_heap((*arena).heap_ptr());
+        }
+    }
+
+    /// Current `mi_heap_t*` of this thread's side arena, or null if `enter()`
+    /// has not run on this thread. Used by `ASTMemoryAllocator::Scope::exit`
+    /// when returning into the raw block-store: it cannot trust its
+    /// `previous_heap` snapshot (a `Store::begin()` reset inside the scope may
+    /// have rebuilt the heap), so it re-reads the live pointer here.
+    #[inline]
+    pub fn current_heap() -> *mut bun_alloc::mimalloc::Heap {
+        let arena = ARENA.with(|c| c.get());
+        if arena.is_null() {
+            return ptr::null_mut();
+        }
+        // SAFETY: `arena` is the live `Box::into_raw` allocation from
+        // `enter()`; this thread is its only mutator and `heap_ptr()` is a
+        // read-only accessor.
+        unsafe { (*arena).heap_ptr() }
+    }
+
+    /// Clear `AST_HEAP` and drop the side arena.
+    ///
+    /// Called from `Stmt::data::Store::deinit` after the block-store
+    /// `INSTANCE` is destroyed.
+    pub fn exit() {
+        let arena = ARENA.with(|c| c.replace(ptr::null_mut()));
+        // `deinit()`'s caller has already early-returned if an
+        // `ASTMemoryAllocator` is active, so `AST_HEAP` is ours to clear.
+        bun_alloc::ast_alloc::set_thread_heap(ptr::null_mut());
+        if !arena.is_null() {
+            // SAFETY: `arena` was `Box::into_raw`'d in `enter()` on this
+            // thread and is now being reclaimed exactly once.
+            drop(unsafe { Box::from_raw(arena) });
+        }
+    }
+}
+
 /// RAII guard that resets the thread-local `Stmt.Data.Store` and
 /// `Expr.Data.Store` slabs on scope exit. Replaces the Zig idiom
 /// `defer { Stmt.Data.Store.reset(); Expr.Data.Store.reset(); }` so callers

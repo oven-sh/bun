@@ -856,13 +856,18 @@ describe("Bun.Image", () => {
     // first: macOS ImageIO always accepts it, but Windows Server 2019
     // ships with a WIC TIFF codec that rejects some otherwise-valid
     // baseline TIFFs with WINCODEC_ERR_COMPONENTNOTFOUND. When the probe
-    // fails, the test skips rather than hard-failing — production code is
-    // still exercised on the macOS lane.
+    // fails the test body is skipped — bun:test has no dynamic-skip
+    // primitive so a zero-assertion test resolves as `(pass)` in the
+    // reporter rather than `(skip)`; the console.warn below makes the
+    // opt-out visible in CI logs so a reader can tell coverage is absent
+    // on that lane. Production code is still exercised on the macOS and
+    // Windows 11 lanes.
     const runTiffTest = async (body: () => Promise<void>) => {
       try {
         await new Bun.Image(makeTiff(1, 1, 8, () => [0, 0, 0])).metadata();
       } catch {
-        return; // host WIC/CG can't read our hand-rolled TIFF — skip
+        console.warn("system-backend TIFF probe failed; skipping body (host WIC/CG rejects the hand-rolled fixture)");
+        return;
       }
       await body();
     };

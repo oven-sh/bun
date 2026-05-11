@@ -180,7 +180,7 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime process completion: value-only state lives below, effect application
 stays above.
 
-This branch proves six production paths plus one Mini-shell hard-case slice.
+This branch proves seven production paths plus one Mini-shell hard-case slice.
 WebView process exits use the
 runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
@@ -222,15 +222,20 @@ Lifecycle scripts now also keep their pure command/readiness state in
 package name, current script index, output-fd readiness, timer, alive-count
 state, install-task context, lower `ProcessHandle`, stdout/stderr
 `BufferedReaderHandle`s, and the `LifecycleScriptExit` reducer. The production
-spawn path records those lower handles in the sidecar state, and the current
-owner callback validates process exit through the sidecar-owned `ProcessHandle`
-before feeding `LifecycleScriptExit`. The install context stores the entry id
-plus a typed installer handle; the concrete `Installer<'_>` pointer is
-recovered only at the `bun_install` effect sites. Their `ProcessExit` owner
-re-entry remains a separate type-movement problem:
-when process exit is the last event, the current callback synchronously resumes
-the owning lifecycle state and may free or restart that owner. Cron
-register/remove now keep their child-process
+spawn path records those lower handles in the sidecar state and installs
+`ProcessExitTarget::Install(InstallProcessExitTarget::LifecycleScript(...))`.
+`bun_spawn` stores only a `LifecycleScriptStateHandle`, feeds
+`LifecycleScriptExit`, and emits an install-domain action when the reducer says
+the owning script may be ready. `bun_install` keeps the effectful owner side:
+it drains ready nodes from the existing `PackageManager.active_lifecycle_scripts`
+heap, then the normal lifecycle code prints output, updates progress, starts the
+next script, completes installer entries, or frees the subprocess. The install
+context stores the entry id plus a typed installer handle; the concrete
+`Installer<'_>` pointer is recovered only at the `bun_install` effect sites. The
+reader side for lifecycle stdout/stderr still uses the existing
+`BufferedReaderParent` callback path, so the next movement target is making
+those readers feed the same typed lifecycle state instead of calling back into
+`LifecycleScriptSubprocess`. Cron register/remove now keep their child-process
 readiness/error state in `bun_runtime_types::cron::ProcessState`: pending
 output-fd count, lower `ProcessHandle`, stdout/stderr `BufferedReaderHandle`s,
 initialized `ProcessExitReadiness`, and the first process-output error. The
@@ -266,6 +271,8 @@ Process-exit production shape
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     │     └─> returns LifecycleScriptExitAction
+  │     ├─> LifecycleScriptStateHandle
+  │     │     └─> safe handle around lifecycle-domain state; no LifecycleScriptSubprocess pointer in bun_spawn
   │     ├─> LifecycleScriptState
   │     │     └─> owns pure lifecycle command/readiness/timer/install-task state while bun_install keeps effects
   │     ├─> InstallerHandle / InstallCtx
@@ -342,8 +349,16 @@ pub struct SecurityScanExit {
 
 pub struct SecurityScanExitHandle(/* private */);
 
+pub struct LifecycleScriptStateHandle(/* private */);
+
 pub enum InstallProcessExitTarget {
+    LifecycleScript(LifecycleScriptStateHandle),
     SecurityScan(SecurityScanExitHandle),
+}
+
+pub enum InstallProcessExitAction {
+    LifecycleScript(LifecycleScriptExitAction),
+    SecurityScan(SecurityScanExitAction),
 }
 
 pub enum InstallBufferedReaderTarget {

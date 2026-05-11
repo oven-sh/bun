@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use crate::lifecycle::LifecycleScriptState;
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,31 @@ impl LifecycleScriptExit {
     #[inline]
     pub const fn output_drained(&self) -> bool {
         self.remaining_fds == 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LifecycleScriptStateHandle(NonNull<LifecycleScriptState>);
+
+impl LifecycleScriptStateHandle {
+    /// # Safety
+    /// `state` must remain live and uniquely owned by the lifecycle subprocess
+    /// until the process target using this handle has stopped firing.
+    #[inline]
+    pub unsafe fn from_live_state(state: &mut LifecycleScriptState) -> Self {
+        Self(NonNull::from(state))
+    }
+
+    #[inline]
+    fn with_state<R>(self, f: impl FnOnce(&mut LifecycleScriptState) -> R) -> R {
+        let mut state = self.0;
+        // SAFETY: upheld by `from_live_state`'s construction contract.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> LifecycleScriptExitAction {
+        self.with_state(|state| state.on_process_exit(ctx))
     }
 }
 
@@ -122,15 +148,25 @@ impl SecurityScanExitHandle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallProcessExitTarget {
+    LifecycleScript(LifecycleScriptStateHandle),
     SecurityScan(SecurityScanExitHandle),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallProcessExitAction {
+    LifecycleScript(LifecycleScriptExitAction),
+    SecurityScan(SecurityScanExitAction),
 }
 
 impl InstallProcessExitTarget {
     #[inline]
-    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) {
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> InstallProcessExitAction {
         match self {
+            Self::LifecycleScript(state) => {
+                InstallProcessExitAction::LifecycleScript(state.on_process_exit(ctx))
+            }
             Self::SecurityScan(state) => {
-                state.on_process_exit(ctx);
+                InstallProcessExitAction::SecurityScan(state.on_process_exit(ctx))
             }
         }
     }
@@ -232,6 +268,8 @@ impl SecurityScanExit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lifecycle::{LifecycleScriptState, ScriptsList};
+    use bun_core::ZBox;
     use bun_spawn_types::{Exited, rusage_zeroed};
 
     fn process_identity(id: usize) -> ProcessIdentity {
@@ -261,6 +299,56 @@ mod tests {
             exit.record_reader_done(),
             LifecycleScriptExitAction::MaybeFinished
         );
+    }
+
+    fn lifecycle_state() -> LifecycleScriptState {
+        LifecycleScriptState::new(
+            ScriptsList {
+                items: [
+                    Some(Box::<[u8]>::from(b"preinstall".as_slice())),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                first_index: 0,
+                total: 1,
+                cwd: ZBox::from_bytes(b"/tmp/pkg"),
+                package_name: Box::<[u8]>::from(b"pkg".as_slice()),
+            },
+            false,
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn lifecycle_state_handle_records_process_exit_without_owner() {
+        // ProcessExit stores a handle to lifecycle-domain state, not a
+        // LifecycleScriptSubprocess owner pointer. Effects remain with the
+        // install owner that drains ready active scripts.
+        let process = process_identity(3);
+        let rusage = rusage_zeroed();
+        let mut state = lifecycle_state();
+        state.record_output_fd();
+        state.initialize_exit_state(process);
+        let handle = unsafe { LifecycleScriptStateHandle::from_live_state(&mut state) };
+
+        assert_eq!(
+            handle.on_process_exit(&ProcessExitContext::new(
+                process,
+                Status::Exited(Exited { code: 0, signal: 0 }),
+                &rusage,
+            )),
+            LifecycleScriptExitAction::Pending
+        );
+        assert!(!state.ready_to_handle_exit());
+        assert_eq!(
+            state.record_reader_done(),
+            LifecycleScriptExitAction::MaybeFinished
+        );
+        assert!(state.ready_to_handle_exit());
     }
 
     #[test]

@@ -104,6 +104,9 @@ use crate::server::ServerAllConnectionsClosedTask;
 use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
+use bun_install_types::process_exit::{
+    InstallProcessExitAction, LifecycleScriptExitAction,
+};
 use bun_runtime_types::process_exit::RuntimeProcessExitAction;
 use bun_runtime_types::reader::RuntimeBufferedReaderDelivery;
 
@@ -142,6 +145,25 @@ pub fn __bun_dispatch_process_exit_delivery(
     context: *mut core::ffi::c_void,
 ) {
     match delivery {
+        bun_spawn::ProcessExitDelivery::Install { event_loop, action } => match action {
+            InstallProcessExitAction::LifecycleScript(
+                LifecycleScriptExitAction::MaybeFinished,
+            ) => {
+                let context = process_exit_context(event_loop, context);
+                if !context.is_null() {
+                    unsafe {
+                        bun_install::LifecycleScriptSubprocess::drain_ready_from_event_loop_context(
+                            context,
+                        );
+                    }
+                }
+            }
+            InstallProcessExitAction::LifecycleScript(
+                LifecycleScriptExitAction::WrongProcess
+                | LifecycleScriptExitAction::Pending,
+            )
+            | InstallProcessExitAction::SecurityScan(_) => {}
+        },
         bun_spawn::ProcessExitDelivery::Runtime { event_loop, action } => match action {
             RuntimeProcessExitAction::ChromeProcess { process, status } => {
                 crate::webview::ChromeProcess::on_process_exit(process, status);

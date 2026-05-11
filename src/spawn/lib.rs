@@ -87,6 +87,10 @@ pub enum ProcessExitTarget {
 
 #[derive(Clone)]
 pub enum ProcessExitDelivery {
+    Install {
+        event_loop: EventLoopHandle,
+        action: bun_install_types::process_exit::InstallProcessExitAction,
+    },
     Runtime {
         event_loop: EventLoopHandle,
         action: bun_runtime_types::process_exit::RuntimeProcessExitAction,
@@ -96,6 +100,9 @@ pub enum ProcessExitDelivery {
 impl core::fmt::Debug for ProcessExitDelivery {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Install { action, .. } => {
+                f.debug_struct("Install").field("action", action).finish()
+            }
             Self::Runtime { action, .. } => {
                 f.debug_struct("Runtime").field("action", action).finish()
             }
@@ -119,8 +126,11 @@ impl ProcessExitTarget {
                     rusage,
                 )
                 .expect("Process::on_exit passes a live Process pointer");
-                target.on_process_exit(&ctx);
-                None
+                let event_loop = unsafe { (*process).event_loop };
+                Some(ProcessExitDelivery::Install {
+                    event_loop,
+                    action: target.on_process_exit(&ctx),
+                })
             }
             Self::Runtime(target) => {
                 let ctx = bun_spawn_types::ProcessExitContext::from_process_ptr(

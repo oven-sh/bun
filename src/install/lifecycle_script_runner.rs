@@ -16,10 +16,14 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_install_types::lifecycle::{InstallCtx, LifecycleScriptState};
-use bun_install_types::process_exit::LifecycleScriptExitAction;
-use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use bun_install_types::process_exit::{
+    InstallProcessExitTarget, LifecycleScriptExitAction, LifecycleScriptStateHandle,
+};
+use bun_spawn::{
+    Process, ProcessExitTarget, Rusage, SpawnOptions, SpawnResultExt as _, Status,
+};
 use bun_io_types::reader::BufferedReaderHandle;
-use bun_spawn_types::{ProcessExitContext, ProcessHandle};
+use bun_spawn_types::ProcessHandle;
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -359,6 +363,53 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.handle_exit(status);
             }
         }
+    }
+
+    unsafe fn find_ready_node(
+        node: *mut LifecycleScriptSubprocess<'static>,
+    ) -> *mut LifecycleScriptSubprocess<'static> {
+        if node.is_null() {
+            return core::ptr::null_mut();
+        }
+
+        if unsafe { (*node).state.ready_to_handle_exit() } {
+            return node;
+        }
+
+        let child = unsafe { (*node).heap.child };
+        let ready = unsafe { Self::find_ready_node(child) };
+        if !ready.is_null() {
+            return ready;
+        }
+
+        let next = unsafe { (*node).heap.next };
+        unsafe { Self::find_ready_node(next) }
+    }
+
+    unsafe fn drain_ready_for_manager(manager: *mut PackageManager) {
+        loop {
+            let ready = unsafe { Self::find_ready_node((*manager).active_lifecycle_scripts.root) };
+            if ready.is_null() {
+                break;
+            }
+
+            let Some(status) = (unsafe { (*ready).state.exit_status() }) else {
+                break;
+            };
+
+            unsafe { (*ready).handle_exit(status) };
+        }
+    }
+
+    /// Drain lifecycle scripts whose typed process/readiness state completed
+    /// during a lower-tier event-loop callback.
+    ///
+    /// # Safety
+    /// `context` must be the live `PackageManager` context installed on the
+    /// current event loop tick.
+    pub unsafe fn drain_ready_from_event_loop_context(context: *mut c_void) {
+        let manager = unsafe { bun_ptr::callback_ctx::<PackageManager>(context) };
+        unsafe { Self::drain_ready_for_manager(manager) };
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
@@ -738,17 +789,24 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let process_handle = ProcessHandle::from_ptr(process)
             .expect("spawned Process pointer must not be null");
         (*this).state.initialize_exit_state_from_handle(process_handle);
-        // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
-        // we hold no live `&mut Self` here, so the synchronous `on_exit`
-        // dispatch below may reenter `on_process_exit` through it without
-        // aliasing. It outlives `process`.
-        (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
+        let exit_handle = LifecycleScriptStateHandle::from_live_state(&mut (*this).state);
+        (*process).set_exit_target(ProcessExitTarget::Install(
+            InstallProcessExitTarget::LifecycleScript(exit_handle),
+        ));
 
-        if let Err(err) = (*process).watch_or_reap() {
-            if !(*process).has_exited() {
-                // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                let _ = (*process).on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
+        let delivery = match (*process).watch_or_reap() {
+            Ok(result) => result.into_delivery(),
+            Err(err) => {
+                if !(*process).has_exited() {
+                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
+                    (*process).on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>())
+                } else {
+                    None
+                }
             }
+        };
+        if delivery.is_some() {
+            Self::drain_ready_for_manager(manager);
         }
 
         Ok(())
@@ -1034,26 +1092,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    /// This function may free the *LifecycleScriptSubprocess
-    pub fn on_process_exit(&mut self, proc: *mut Process, status: Status, rusage: &Rusage) {
-        let Some(process_handle) = ProcessHandle::from_ptr(proc) else {
-            Output::debug_warn(format_args!(
-                "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with null process"
-            ));
-            return;
-        };
-        if !self.state.matches_process_handle(process_handle) {
-            Output::debug_warn(format_args!(
-                "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
-            ));
-            return;
-        }
-        let action = self
-            .state
-            .on_process_exit(&ProcessExitContext::from_handle(process_handle, status, rusage));
-        self.apply_exit_action(action);
-    }
-
     pub fn reset_polls(&mut self) {
         if cfg!(debug_assertions) {
             debug_assert!(
@@ -1188,13 +1226,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .manager()
             .pending_lifecycle_script_tasks
             .fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-bun_spawn::link_impl_ProcessExit! {
-    LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, &*rusage),
     }
 }
 

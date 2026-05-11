@@ -211,6 +211,18 @@ impl LifecycleScriptState {
     }
 
     #[inline]
+    pub fn ready_to_handle_exit(&self) -> bool {
+        self.exit_state
+            .as_ref()
+            .is_some_and(|exit_state| {
+                matches!(
+                    exit_state.maybe_finished(),
+                    LifecycleScriptExitAction::MaybeFinished
+                )
+            })
+    }
+
+    #[inline]
     pub fn exit_status(&self) -> Option<Status> {
         self.exit_state
             .as_ref()

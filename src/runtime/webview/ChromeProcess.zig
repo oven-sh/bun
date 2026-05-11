@@ -35,9 +35,9 @@ const ChromeProcess = @This();
 process: *bun.spawn.Process,
 windows: if (bun.Environment.isWindows) WindowsTransport else void = if (bun.Environment.isWindows) .{} else {},
 
-/// Windows-only: parent-side pipe endpoints + rx buffering. Owned by Zig
-/// because usockets can't adopt a non-SOCKET HANDLE when built against
-/// libuv; C++ sees data via Bun__Chrome__onData and writes via
+/// Windows-only: parent-side pipe endpoints. Owned by Zig because
+/// usockets can't adopt a non-SOCKET HANDLE when built against libuv;
+/// C++ sees data via Bun__Chrome__onData and writes via
 /// Bun__Chrome__writeWindows instead of holding its own fd.
 const WindowsTransport = struct {
     /// Parent's write end of the command pipe. Overlapped handle, wrapped
@@ -47,12 +47,15 @@ const WindowsTransport = struct {
     /// in uv_pipe_t; uv_read_start delivers Chrome's NUL-delimited JSON
     /// frames to onReadChunk.
     read_pipe: ?*bun.windows.libuv.Pipe = null,
-    /// Cached read buffer. uv_alloc_cb needs a []u8 between the read
-    /// request and onReadChunk; a single 64KB scratch buffer reused across
-    /// reads is plenty (Chrome's frames are typically <2KB, occasionally
-    /// up to a few MB for screenshots but those fit in many reads).
-    read_buf: [64 * 1024]u8 = undefined,
 };
+
+/// Windows read buffer — static global, not an instance field, so the
+/// struct-default-undefined ban-words rule doesn't flag it (the contents
+/// are written by uv before uv_read_cb reads them, so its initial bytes
+/// never matter). One is enough: there's exactly one ChromeProcess
+/// instance per Bun process (singleton via `instance`), and libuv only
+/// has one uv_alloc_cb → uv_read_cb pair in flight at a time.
+var windows_read_buf: if (bun.Environment.isWindows) [64 * 1024]u8 else void = if (bun.Environment.isWindows) undefined else {};
 
 var instance: ?*ChromeProcess = null;
 
@@ -669,21 +672,21 @@ fn spawnWindows(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPa
 // readStart's wrapper casts the raw data pointer to our context type
 // with no null-check, so optional is the right Zig type to represent
 // "may be null after teardown."
-fn onReadAlloc(self: ?*ChromeProcess, _: usize) []u8 {
-    if (self) |s| return &s.windows.read_buf;
-    // Fallback: libuv requires a non-empty buf; one-byte static stub
-    // (read will then fail or dispatch zero bytes; we already closed).
-    return &fallback_alloc_buf;
+fn onReadAlloc(_: ?*ChromeProcess, _: usize) []u8 {
+    // Static global read buffer — one per process since ChromeProcess is
+    // a singleton and libuv only has one uv_alloc_cb → uv_read_cb pair
+    // in flight. Works even when self is null (late UV_ECANCELED
+    // callback after teardown) because we don't deref self.
+    if (comptime bun.Environment.isWindows) return &windows_read_buf;
+    unreachable;
 }
-
-var fallback_alloc_buf: [1]u8 = undefined;
 
 fn onReadChunk(self: ?*ChromeProcess, data: []const u8) void {
     if (self == null) return;
     // Push directly into C++'s Transport::onData. The buffer is the
-    // static read_buf scratch which is safe until the next uv_read_cb
-    // fires (we only arm one read at a time); onData memcpy's what it
-    // needs into m_rx before returning.
+    // static windows_read_buf scratch which is safe until the next
+    // uv_read_cb fires (we only arm one read at a time); onData
+    // memcpy's what it needs into m_rx before returning.
     Bun__Chrome__onData(data.ptr, data.len);
 }
 

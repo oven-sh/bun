@@ -171,7 +171,12 @@ impl<'a> AnyEventLoop<'a> {
     ) {
         match self {
             AnyEventLoop::Js { owner } => {
+                let owner = *owner;
                 while !is_done(context) {
+                    let previous_context = owner.set_current_context(context);
+                    let _context_guard = scopeguard::guard(previous_context, |previous_context| {
+                        owner.restore_current_context(previous_context);
+                    });
                     owner.tick();
                     owner.auto_tick();
                 }
@@ -205,6 +210,11 @@ impl<'a> AnyEventLoop<'a> {
             // the next `is_done` call.
             match unsafe { &mut *this } {
                 AnyEventLoop::Js { owner } => {
+                    let owner = *owner;
+                    let previous_context = owner.set_current_context(context);
+                    let _context_guard = scopeguard::guard(previous_context, |previous_context| {
+                        owner.restore_current_context(previous_context);
+                    });
                     owner.tick();
                     owner.auto_tick();
                 }
@@ -224,7 +234,11 @@ impl<'a> AnyEventLoop<'a> {
     pub fn tick_once(&mut self, context: *mut core::ffi::c_void) {
         match self {
             AnyEventLoop::Js { owner } => {
-                let _ = context;
+                let owner = *owner;
+                let previous_context = owner.set_current_context(context);
+                let _context_guard = scopeguard::guard(previous_context, |previous_context| {
+                    owner.restore_current_context(previous_context);
+                });
                 owner.tick();
                 owner.auto_tick_active();
             }

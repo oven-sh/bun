@@ -1151,6 +1151,12 @@ bun_event_loop::link_impl_JsEventLoop! {
         stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),
         stderr() => (*this).vm_ref().as_mut().rare_data().stderr().cast(),
         current_context() => (*this).current_context(),
+        set_current_context(context) => (*this)
+            .set_current_context(context)
+            .map_or(core::ptr::null_mut(), NonNull::as_ptr),
+        restore_current_context(previous) => {
+            (*this).restore_current_context(NonNull::new(previous));
+        },
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),

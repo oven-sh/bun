@@ -297,6 +297,10 @@ Process-exit production wiring
   │     ├─> Worker installs ProcessExitTarget::Runtime(TestParallelWorker { index })
   │     ├─> bun_spawn emits RuntimeProcessExitAction with index + ProcessIdentity + Status
   │     └─> bun_runtime::dispatch indexes the existing Coordinator.workers slice and calls on_worker_exit synchronously
+  ├─> event_loop/AnyEventLoop.rs and jsc/event_loop.rs
+  │     ├─> MiniEventLoop already exposed the tick context while draining tasks and file polls
+  │     ├─> the JS AnyEventLoop arm now sets/restores EventLoop.current_context around tick work too
+  │     └─> runtime dispatch can rely on the same typed current-context boundary for JS and Mini drivers
   └─> spawn/process.rs sync Windows path
         ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
         └─> never enters the cross-crate ProcessExit table

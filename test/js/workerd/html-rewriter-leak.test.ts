@@ -35,10 +35,12 @@ test.skipIf(isDebug)(
         return process.memoryUsage.rss();
       }
 
-      pass(); pass();
-      const before = pass();
-      pass(); pass();
-      const after = pass();
+      // High-water-mark comparison: musl mimalloc oscillates ±27 MB as it
+      // purges/recommits whole segments between passes. A single before/after
+      // snapshot can land on opposite phases (false +27 MB). A real leak
+      // raises the CEILING every pass; allocator oscillation does not.
+      const before = Math.max(pass(), pass(), pass());
+      const after  = Math.max(pass(), pass(), pass());
 
       process.stdout.write(
         JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",

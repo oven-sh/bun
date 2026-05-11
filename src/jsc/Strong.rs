@@ -215,6 +215,24 @@ impl Impl {
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
     pub unsafe fn destroy(this: NonNull<Impl>) {
         crate::mark_binding!();
+        // Defensive: a corrupted slot pointer here segfaults inside JSC's
+        // HandleBlock::handleSet (the backing block is recovered by masking
+        // the slot to the block base, then `+0x10` is read), which loses the
+        // Rust caller frame. With panic=abort the crash-handler hook captures
+        // a Rust backtrace, so a `panic!` at this layer surfaces the *exact*
+        // call site that holds the corrupted Strong. The 0x10000 floor is
+        // Windows' default null-page guard; legitimate `Impl*` are bmalloc'd
+        // far above it.
+        if cfg!(debug_assertions) || cfg!(windows) {
+            // Always-on on Windows while #53265 fs-promises-writeFile segfault
+            // is being root-caused; release-stripped elsewhere. Remove the
+            // `|| cfg!(windows)` once the corrupting writer is found.
+            assert!(
+                (this.as_ptr() as usize) >= 0x10000,
+                "Strong<Impl>* corrupted ({:p}); owning struct was overwritten",
+                this.as_ptr(),
+            );
+        }
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }

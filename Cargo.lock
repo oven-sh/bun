@@ -756,6 +756,7 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
+ "bun_io_types",
  "bun_paths",
  "bun_ptr",
  "bun_sys",

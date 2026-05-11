@@ -60,8 +60,8 @@ mod event_loop_delay_monitor_draft;
 // Zig: `heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less)`.
 //
 // Real intrusive pairing-heap (meld/remove/combine_siblings) ported in
-// `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real
-// `bun_io::heap::IntrusiveField` and impls `HeapNode` in its defining crate
+// `bun_io_types::heap::Intrusive`. `EventLoopTimer` now embeds the real
+// `bun_io_types::heap::IntrusiveField` and impls `HeapNode` in its defining crate
 // (`bun_event_loop`), so the orphan-rule block is gone. `TimerHeap` is a thin
 // newtype that adapts `*mut T` ↔ `Option<*mut T>` for the existing call-sites
 // (`All::insert/remove/next/get_timeout`).
@@ -70,7 +70,7 @@ mod event_loop_delay_monitor_draft;
 #[derive(Default)]
 pub struct TimerHeapCtx;
 
-impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
+impl bun_io_types::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     #[inline]
     fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
         // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
@@ -80,7 +80,7 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
 }
 
 #[derive(Default)]
-pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
+pub struct TimerHeap(bun_io_types::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
 
 impl TimerHeap {
     #[inline]

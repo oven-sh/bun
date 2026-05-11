@@ -10,7 +10,7 @@ use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use crate::PackageManager;
 use bun_event_loop::AnyEventLoop;
-use bun_io::heap as io_heap;
+use bun_io_types::heap as io_heap;
 use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};

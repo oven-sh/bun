@@ -22,6 +22,7 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_io.workspace = true
+bun_io_types.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_sys.workspace = true

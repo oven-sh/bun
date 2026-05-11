@@ -911,8 +911,10 @@ pub const Resolver = struct {
         errdefer (r.flushDebugLogs(.fail) catch {});
 
         // A path with a null byte cannot exist on the filesystem. Continuing
-        // anyways would cause assertion failures.
-        if (bun.strings.containsChar(import_path, 0)) {
+        // anyways would cause assertion failures. Likewise, a path longer
+        // than MAX_PATH_BYTES cannot name a real file and would overflow the
+        // threadlocal path buffers used below.
+        if (import_path.len > bun.MAX_PATH_BYTES or bun.strings.containsChar(import_path, 0)) {
             r.flushDebugLogs(.fail) catch {};
             return .{ .not_found = {} };
         }

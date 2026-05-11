@@ -133,6 +133,10 @@ pub const Transpiler = struct {
 
             // Bust directory cache and try again
             const buster_name = name: {
+                // A path this long cannot have a cached directory entry and
+                // would overflow `cache_bust_buf` during normalization below.
+                if (entry_point.len > bun.MAX_PATH_BYTES) break :name "";
+
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
                         // Normalized with trailing slash

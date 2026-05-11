@@ -475,7 +475,13 @@ impl Default for TestOptions {
             path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
             test_filter_regex: None,
-            max_concurrency: 20,
+            // Under ASAN every spawned `bun` child is several-× heavier in
+            // RSS and ~2× slower to start, so `describe.concurrent` test
+            // files that spawn one child per test (e.g. process-stdio,
+            // multi-run) hit 20 live children at once and OOM the CI box.
+            // Cap the default to 5 there; the `--max-concurrency` flag still
+            // overrides explicitly.
+            max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             isolate: false,
             parallel: 0,
             parallel_delay_ms: None,

@@ -1578,19 +1578,21 @@ pub fn client_virtual_source() -> logger::Source {
 pub struct PatternBuffer {
     pub bytes: PathBuffer,
     // Zig: std.math.IntFittingRange(0, @sizeOf(bun.PathBuffer)) — smallest int
-    // fitting MAX_PATH_BYTES. u16 covers all platforms (max ~32768).
-    pub i: u16,
+    // fitting MAX_PATH_BYTES. On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
+    // (> u16::MAX), so u32 is required; u16 would truncate the initial index
+    // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
+    pub i: u32,
 }
 
 impl PatternBuffer {
     pub const EMPTY: PatternBuffer = PatternBuffer {
         bytes: PathBuffer::ZEROED, // TODO(port): Zig used `undefined`; uninit not const-safe
-        i: core::mem::size_of::<PathBuffer>() as u16,
+        i: core::mem::size_of::<PathBuffer>() as u32,
     };
 
     pub fn prepend(&mut self, chunk: &[u8]) {
         debug_assert!(self.i as usize >= chunk.len());
-        self.i -= u16::try_from(chunk.len()).expect("int cast");
+        self.i -= u32::try_from(chunk.len()).expect("int cast");
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 

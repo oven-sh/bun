@@ -185,7 +185,7 @@ pub const Parser = struct {
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
         defer p.lexer.deinit();
 
-        p.lexer.track_comments = this.options.features.minify_identifiers;
+        // `p.lexer.track_comments` was set by Parser.init via initWithTrackComments.
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
         if (p.options.features.minify_syntax or

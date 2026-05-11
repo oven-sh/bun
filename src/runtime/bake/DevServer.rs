@@ -2470,7 +2470,7 @@ impl DevServer {
             SavedRequestUnion::Stack(r) => BunString::borrow_utf8((**r).url()),
             SavedRequestUnion::Saved(data) => 'brk: {
                 // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                let url = unsafe { &(*data.request).url }.clone();
+                let url = unsafe { (*data.request).url.get() };
                 url.ref_();
                 break 'brk url;
             }
@@ -2916,7 +2916,7 @@ impl DeferredRequest {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { &(*saved.request).url }.byte_slice())
+                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
                 );
                 saved.ctx.set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
                 // PORT NOTE: saved.js_request (jsc::Strong) drops at end of arm

@@ -335,14 +335,14 @@ mod shim {
         signal.pending_activity_unref();
         signal.unref();
     }
-    #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
-        cb.trigger(ev, g)
+    #[inline] pub fn iec_trigger(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>, ev: request::EventType, g: &JSGlobalObject) -> bool {
+        cb.with_mut(|cb| cb.trigger(ev, g))
     }
-    #[inline] pub fn iec_deinit(cb: &mut request::InternalJSEventCallback) {
-        cb.deinit()
+    #[inline] pub fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
+        cb.with_mut(|cb| cb.deinit())
     }
-    #[inline] pub fn iec_has_callback(cb: &request::InternalJSEventCallback) -> bool {
-        cb.has_callback()
+    #[inline] pub fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
+        cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
@@ -365,7 +365,7 @@ mod shim {
         // is the `.value` field of a pooled `HiveRef` slot (see field docs).
         let _ = unsafe { v.unref() };
     }
-    #[inline] pub fn request_ensure_url(r: &mut Request) -> Result<(), bun_alloc::AllocError> {
+    #[inline] pub fn request_ensure_url(r: &Request) -> Result<(), bun_alloc::AllocError> {
         r.ensure_url()
     }
 }
@@ -1211,7 +1211,7 @@ where
         }
 
         if let Some(request) = this.request_weakref.get() {
-            if shim::iec_trigger(&mut request.internal_event_callback, request::EventType::Timeout, global_this) {
+            if shim::iec_trigger(&request.internal_event_callback, request::EventType::Timeout, global_this) {
                 any_js_calls.set(true);
             }
         }
@@ -1264,11 +1264,11 @@ where
 
         if let Some(request) = this.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
-            if shim::iec_trigger(&mut request.internal_event_callback, request::EventType::Abort, global_this) {
+            if shim::iec_trigger(&request.internal_event_callback, request::EventType::Abort, global_this) {
                 any_js_calls.set(true);
             }
             // we can already clean this strong refs
-            shim::iec_deinit(&mut request.internal_event_callback);
+            shim::iec_deinit(&request.internal_event_callback);
             this.request_weakref.deref();
         }
         // if signal is not aborted, abort the signal
@@ -1341,7 +1341,7 @@ where
         if let Some(request) = self.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
             // we can already clean this strong refs
-            shim::iec_deinit(&mut request.internal_event_callback);
+            shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.deref();
         }
 
@@ -2038,7 +2038,7 @@ where
         }
 
         if request_object.ensure_url().is_err() {
-            request_object.url = BunString::empty();
+            request_object.url.set(BunString::empty());
         }
 
         // we have to clone the request headers here since they will soon belong to a different request
@@ -2060,7 +2060,7 @@ where
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
-            self.pathname = request_object.url.clone();
+            self.pathname = request_object.url.get().clone();
         }
         self.set_abort_handler();
     }

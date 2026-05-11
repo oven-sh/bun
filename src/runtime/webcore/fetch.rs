@@ -543,7 +543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_mut!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
-            break 'extract_url req.url.dupe_ref();
+            break 'extract_url req.url.get().dupe_ref();
         }
 
         if let Some(request_init) = request_init_object {
@@ -1106,7 +1106,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = &req.signal {
+            if let Some(signal_) = req.signal.get() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;

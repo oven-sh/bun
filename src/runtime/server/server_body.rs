@@ -2280,7 +2280,7 @@ where
             // JS wrapper, which `response_value` keeps alive). `request` is
             // kept alive by `request_value` (its JS wrapper) for the duration
             // of this synchronous frame.
-            unsafe { (*resp).set_url((*request).url.clone()) };
+            unsafe { (*resp).set_url((*request).url.get().clone()) };
         }
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
@@ -2864,12 +2864,12 @@ where
                     let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
                     let mut s = Vec::new();
                     write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
-                    request_object.url = BunString::clone_utf8(&s);
+                    request_object.url.set(BunString::clone_utf8(&s));
                 } else {
-                    request_object.url = BunString::clone_utf8(path);
+                    request_object.url.set(BunString::clone_utf8(path));
                 }
             } else {
-                request_object.url = BunString::clone_utf8(path);
+                request_object.url.set(BunString::clone_utf8(path));
             }
             ctx.clear_req();
         }

@@ -538,7 +538,7 @@ impl FileSystemRouter {
                 if let Some(req) = argument.as_::<Request>() {
                     // SAFETY: `as_` returns a live `*mut Request` for `argument`'s lifetime.
                     unsafe { (*req).ensure_url().expect("unreachable") };
-                    break 'brk unsafe { (*req).url.to_utf8() };
+                    break 'brk unsafe { (*req).url.get().to_utf8() };
                 }
 
                 if let Some(resp) = argument.as_::<Response>() {

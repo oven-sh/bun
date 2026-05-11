@@ -1339,8 +1339,8 @@ impl Run {
                 break 'do_redis_preconnect;
             };
             // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
-            // wrapper; uniquely accessed here under the API lock.
-            if let Err(e) = unsafe { &mut *client }.do_connect(global, redis) {
+            // wrapper; accessed here under the API lock.
+            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
                 global.report_active_exception_as_unhandled(e);
             }
         }

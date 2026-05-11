@@ -909,7 +909,7 @@ impl ValkeyClient {
             }
             RESPValue::Push(push) => {
                 let p = self.parent();
-                let sub_count = p._subscription_ctx.channels_subscribed_to_count(&global_this)?;
+                let sub_count = p._subscription_ctx.get().channels_subscribed_to_count(&global_this)?;
 
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
@@ -1513,10 +1513,16 @@ impl ValkeyClient {
     }
 
     #[inline]
-    fn parent(&mut self) -> &mut JSValkeyClient {
-        // SAFETY: self points to JSValkeyClient.client (intrusive embed via `container_of`).
+    fn parent(&mut self) -> &JSValkeyClient {
+        // SAFETY: self points to JSValkeyClient.client (intrusive embed via
+        // `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`,
+        // so the field offset is unchanged. R-2: shared `&` only — every
+        // `JSValkeyClient` method this reaches is now `&self`, so a `&mut`
+        // backref (which would alias the outer host-fn `&self`) is no longer
+        // needed nor sound.
         unsafe {
-            &mut *(bun_core::from_field_ptr!(JSValkeyClient, client, std::ptr::from_mut::<Self>(self)))
+            &*(bun_core::from_field_ptr!(JSValkeyClient, client, std::ptr::from_mut::<Self>(self))
+                .cast_const())
         }
     }
 

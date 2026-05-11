@@ -145,7 +145,7 @@ macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -174,7 +174,7 @@ macro_rules! cmd_key {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -207,7 +207,7 @@ macro_rules! cmd_key_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -258,7 +258,7 @@ macro_rules! cmd_key_value {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -294,7 +294,7 @@ macro_rules! cmd_key_value_value2 {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -333,7 +333,7 @@ macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -375,7 +375,7 @@ macro_rules! cmd_key_value_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
-            this: &mut Self,
+            this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -424,7 +424,7 @@ macro_rules! cmd_key_value_varargs {
 impl JSValkeyClient {
     #[bun_jsc::host_fn(method)]
     pub fn js_send(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -470,7 +470,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -497,7 +497,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_buffer(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -525,7 +525,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn set(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"set")?;
 
         let args_view = frame.arguments();
@@ -585,7 +585,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn incr(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn incr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"incr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -611,7 +611,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn decr(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn decr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"decr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -638,7 +638,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn exists(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -668,7 +668,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn expire(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -714,7 +714,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ttl(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn ttl(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"ttl")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -741,7 +741,7 @@ impl JSValkeyClient {
 
     // Implement srem (remove value from a set)
     #[bun_jsc::host_fn(method)]
-    pub fn srem(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn srem(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"srem")?;
 
         let args_view = frame.arguments();
@@ -790,7 +790,7 @@ impl JSValkeyClient {
     // Implement srandmember (get random member from set)
     #[bun_jsc::host_fn(method)]
     pub fn srandmember(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -840,7 +840,7 @@ impl JSValkeyClient {
     // Implement smembers (get all members of a set)
     #[bun_jsc::host_fn(method)]
     pub fn smembers(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -870,7 +870,7 @@ impl JSValkeyClient {
 
     // Implement spop (pop a random member from a set)
     #[bun_jsc::host_fn(method)]
-    pub fn spop(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn spop(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"spop")?;
 
         let args_view = frame.arguments();
@@ -912,7 +912,7 @@ impl JSValkeyClient {
 
     // Implement sadd (add member to a set)
     #[bun_jsc::host_fn(method)]
-    pub fn sadd(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn sadd(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"sadd")?;
 
         let args_view = frame.arguments();
@@ -961,7 +961,7 @@ impl JSValkeyClient {
     // Implement sismember (check if value is member of a set)
     #[bun_jsc::host_fn(method)]
     pub fn sismember(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -995,7 +995,7 @@ impl JSValkeyClient {
     // Implement hmget (get multiple values from hash)
     #[bun_jsc::host_fn(method)]
     pub fn hmget(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1070,7 +1070,7 @@ impl JSValkeyClient {
     // Implement hincrby (increment hash field by integer value)
     #[bun_jsc::host_fn(method)]
     pub fn hincrby(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1106,7 +1106,7 @@ impl JSValkeyClient {
     // Implement hincrbyfloat (increment hash field by float value)
     #[bun_jsc::host_fn(method)]
     pub fn hincrbyfloat(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1141,7 +1141,7 @@ impl JSValkeyClient {
 
     // PERF(port): `command` was a comptime []const u8 — demoted to runtime &'static [u8]
     fn hset_impl(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
         command: &'static [u8],
@@ -1275,13 +1275,13 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn hset(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn hset(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         Self::hset_impl(this, global, frame, b"HSET")
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn hmset(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1306,7 +1306,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn hsetnx(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1341,7 +1341,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn hexists(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1374,7 +1374,7 @@ impl JSValkeyClient {
 
     // Implement ping (send a PING command with an optional message)
     #[bun_jsc::host_fn(method)]
-    pub fn ping(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn ping(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // PORT NOTE: reshaped from Zig stack-array + slice pattern to Option<JSArgument>
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
@@ -1511,7 +1511,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn smove(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1564,7 +1564,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn publish(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1611,7 +1611,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn subscribe(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1647,6 +1647,7 @@ impl JSValkeyClient {
                 //                      the SUBSCRIBE command fails? We have no way to roll back the addition of the
                 //                      handler.
                 this._subscription_ctx
+                    .get()
                     .upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
         } else if channel_or_many.is_string() {
@@ -1658,6 +1659,7 @@ impl JSValkeyClient {
             redis_channels.push(channel);
 
             this._subscription_ctx
+                .get()
                 .upsert_receive_handler(global, channel_or_many, handler_callback)?;
         } else {
             return Err(global.throw_invalid_argument_type("subscribe", "channel", "string or array"));
@@ -1672,7 +1674,7 @@ impl JSValkeyClient {
             Ok(p) => p,
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this._subscription_ctx.clear_all_receive_handlers(global)?;
+                this._subscription_ctx.get().clear_all_receive_handlers(global)?;
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
             }
         };
@@ -1684,7 +1686,7 @@ impl JSValkeyClient {
     ///
     /// The subscription context must exist when calling this function.
     fn send_unsubscribe_request_and_cleanup(
-        this: &mut Self,
+        this: &Self,
         this_js: JSValue,
         global: &JSGlobalObject,
         redis_channels: &[JSArgument],
@@ -1708,7 +1710,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn unsubscribe(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1722,7 +1724,7 @@ impl JSValkeyClient {
 
         // If no arguments, unsubscribe from all channels
         if args_view.is_empty() {
-            this._subscription_ctx.clear_all_receive_handlers(global)?;
+            this._subscription_ctx.get().clear_all_receive_handlers(global)?;
             return Self::send_unsubscribe_request_and_cleanup(
                 this,
                 frame.this(),
@@ -1735,7 +1737,7 @@ impl JSValkeyClient {
         let channel_or_many = frame.argument(0);
 
         // Get the subscription context
-        if !this._subscription_ctx.is_subscriber {
+        if !this._subscription_ctx.get().is_subscriber {
             return Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED));
         }
 
@@ -1766,6 +1768,7 @@ impl JSValkeyClient {
 
             let remaining_listeners = match this
                 ._subscription_ctx
+                .get()
                 .remove_receive_handler(global, channel, listener_cb)
             {
                 Ok(Some(n)) => n,
@@ -1818,6 +1821,7 @@ impl JSValkeyClient {
                 redis_channels.push(channel);
                 // Clear the handlers for this channel
                 this._subscription_ctx
+                    .get()
                     .clear_receive_handlers(global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
@@ -1829,6 +1833,7 @@ impl JSValkeyClient {
             redis_channels.push(channel);
             // Clear the handlers for this channel
             this._subscription_ctx
+                .get()
                 .clear_receive_handlers(global, channel_or_many)?;
         } else {
             return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string or array"));
@@ -1840,7 +1845,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn duplicate(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1849,15 +1854,15 @@ impl JSValkeyClient {
         let new_client_ptr = this.clone_without_connecting(global)?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
-        let new_client: &mut JSValkeyClient = unsafe { &mut *new_client_ptr };
+        let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
-        new_client.this_value = JsRef::init_weak(new_client_js);
-        new_client._subscription_ctx = SubscriptionCtx::init(new_client)?;
+        new_client.this_value.set(JsRef::init_weak(new_client_js));
+        new_client._subscription_ctx.set(SubscriptionCtx::init(new_client)?);
         // If the original client is already connected and not manually closed, start connecting the new client.
-        if this.client.status == valkey::Status::Connected && !this.client.flags.is_manually_closed {
+        if this.client.get().status == valkey::Status::Connected && !this.client.get().flags.is_manually_closed {
             // Use strong reference during connection to prevent premature GC
-            new_client.client.flags.connection_promise_returns_client = true;
+            new_client.client_mut().flags.connection_promise_returns_client = true;
             return new_client.do_connect(global, new_client_js);
         }
 

@@ -1893,11 +1893,11 @@ pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> 
     let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only mutable reference for field init below.
-    let valkey_mut = unsafe { &mut *valkey };
-    valkey_mut.this_value = jsc::JsRef::init_weak(as_js);
-    match SubscriptionCtx::init(valkey_mut) {
-        Ok(ctx) => valkey_mut._subscription_ctx = ctx,
+    // hold the only reference for field init below.
+    let valkey_ref = unsafe { &*valkey };
+    valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
+    match SubscriptionCtx::init(valkey_ref) {
+        Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
             let _ = global_this.throw_error(err.into(), "Failed to create Redis client");

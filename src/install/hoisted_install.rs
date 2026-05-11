@@ -232,22 +232,24 @@ pub fn install_hoisted_packages(
             // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
             // via `Box` (Zig: `*Lockfile`), so deref the Box for the heap addr.
             unsafe { &raw mut *(*mgr_ptr).lockfile };
-        let buf_trees: *const Vec<tree::Tree> =
-            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.trees) };
-        let buf_hoisted: *const Vec<DependencyID> =
-            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.hoisted_dependencies) };
-        let buf_deps: *const Vec<crate::Dependency> =
-            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.dependencies) };
-        let buf_strings: *const Vec<u8> =
-            unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.string_bytes) };
+        // SAFETY: `lockfile_ptr` is the heap-stable Box address derived above;
+        // each buffer lives at a fixed offset within it for the install pass.
+        let buf_trees: bun_ptr::BackRef<Vec<tree::Tree>> =
+            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.trees)) };
+        let buf_hoisted: bun_ptr::BackRef<Vec<DependencyID>> =
+            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.hoisted_dependencies)) };
+        let buf_deps: bun_ptr::BackRef<Vec<crate::Dependency>> =
+            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.dependencies)) };
+        let buf_strings: bun_ptr::BackRef<Vec<u8>> =
+            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.string_bytes)) };
 
-        // SAFETY: see BACKREF note above — slices live for the duration of this
-        // block; `filter()` (the only buffer mutator) has already run.
+        // BACKREF — slices live for the duration of this block; `filter()` (the
+        // only buffer mutator) has already run.
         let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::from_slices(
-            unsafe { (*buf_trees).as_slice() },
-            unsafe { (*buf_hoisted).as_slice() },
-            unsafe { (*buf_deps).as_slice() },
-            unsafe { (*buf_strings).as_slice() },
+            buf_trees.as_slice(),
+            buf_hoisted.as_slice(),
+            buf_deps.as_slice(),
+            buf_strings.as_slice(),
         );
 
         #[cfg(unix)]

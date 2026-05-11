@@ -44,14 +44,14 @@ pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 type StdFsDir = sys::Dir;
 
 pub struct PatchTask {
-    /// BACKREF (Zig: `*PackageManager`). Stored raw because the task is held
-    /// via raw pointer through the intrusive thread-pool queue while the
-    /// manager is concurrently borrowed `&mut` on the main thread; a `&`
+    /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task
+    /// is held via raw pointer through the intrusive thread-pool queue while
+    /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// `*mut` (not `*const`) because the worker thread hands it to
-    /// `PackageManager::wake_raw(*mut Self)`, which writes the event-loop wake
-    /// flag — provenance must permit mutation.
-    pub manager: *mut PackageManager,
+    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
+    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
+    /// writes the event-loop wake flag.
+    pub manager: bun_ptr::BackRef<PackageManager>,
     pub tempdir: StdFsDir,
     pub project_dir: &'static [u8],
     pub callback: Callback,
@@ -196,7 +196,7 @@ impl PatchTask {
         // the worker thread only touches the lock-free `patch_task_queue` and the
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
-        let mgr = self.manager;
+        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
@@ -469,9 +469,9 @@ impl PatchTask {
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
             // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-            // SAFETY: BACKREF; the lockfile is read-only while apply tasks run
+            // BACKREF; the lockfile is read-only while apply tasks run
             // off-thread (same contract as the Zig pointer dereference here).
-            let manager = unsafe { &*self.manager };
+            let manager = self.manager.get();
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
             let mut label = Vec::<u8>::new();
@@ -504,9 +504,9 @@ impl PatchTask {
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
         // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-        // SAFETY: BACKREF — read-only lockfile access; same contract as the
-        // Zig pointer dereference here.
-        let lockfile = unsafe { &(*self.manager).lockfile };
+        // BACKREF — read-only lockfile access; same contract as the Zig
+        // pointer dereference here.
+        let lockfile = &self.manager.get().lockfile;
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
@@ -655,9 +655,9 @@ impl PatchTask {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
                     // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-                    // SAFETY: BACKREF — read-only lockfile access on the worker
-                    // thread; same contract as the Zig pointer dereference here.
-                    let manager = unsafe { &*self.manager };
+                    // BACKREF — read-only lockfile access on the worker thread;
+                    // same contract as the Zig pointer dereference here.
+                    let manager = self.manager.get();
                     log.add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -753,7 +753,7 @@ impl PatchTask {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
-        let mgr = self.manager;
+        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
@@ -792,7 +792,7 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: std::ptr::from_mut::<PackageManager>(manager),
+            manager: bun_ptr::BackRef::new_mut(manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -869,7 +869,7 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: std::ptr::from_mut::<PackageManager>(pkg_manager),
+            manager: bun_ptr::BackRef::new_mut(pkg_manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),

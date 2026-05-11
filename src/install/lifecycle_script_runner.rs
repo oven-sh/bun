@@ -210,11 +210,11 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub stdout: OutputReader,
     pub stderr: OutputReader,
     pub has_called_process_exit: bool,
-    /// Zig: `manager: *PackageManager`. Stored as raw `*mut` (not `&'a`) so
+    /// Zig: `manager: *PackageManager`. Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
-    pub manager: *mut PackageManager,
+    pub manager: bun_ptr::BackRef<PackageManager>,
     /// Zig: `envp: [:null]?[*:0]const u8` — allocated with `manager.allocator`
     /// (manager-lifetime) and never freed there. Ownership is moved into this
     /// struct so the `K=V\0` buffers stay alive across every async
@@ -298,12 +298,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// SAFETY: `manager` is a live `*mut PackageManager` set at construction.
     #[inline]
     fn manager(&self) -> &PackageManager {
-        // SAFETY: `manager` is non-null and outlives every subprocess (Zig
+        // `manager` is non-null and outlives every subprocess (Zig
         // `*PackageManager` is the singleton install-loop owner).
-        unsafe { &*self.manager }
+        self.manager.get()
     }
 
     /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
@@ -312,7 +311,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     #[inline]
     fn manager_mut(&self) -> &mut PackageManager {
         // SAFETY: see fn doc.
-        unsafe { &mut *self.manager }
+        unsafe { &mut *self.manager.as_ptr() }
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
@@ -407,7 +406,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     unsafe fn ensure_not_in_heap(this: *mut Self) {
         // SAFETY: caller contract — `this` is non-null and live.
         unsafe {
-            let manager: *mut PackageManager = (*this).manager;
+            let manager: *mut PackageManager = (*this).manager.as_ptr();
             let heap = core::ptr::addr_of_mut!((*this).heap);
             // SAFETY: `manager` is non-null and outlives every subprocess (see
             // `Self::manager`); the install loop is single-threaded here.
@@ -488,7 +487,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // Body wrapped in one block; per-field accesses do not materialize a
         // whole-struct `&mut Self` across reentrant calls.
         unsafe {
-        let manager: *mut PackageManager = (*this).manager;
+        let manager: *mut PackageManager = (*this).manager.as_ptr();
         let original_script = (*this).scripts.items[next_script_index as usize]
             .as_ref()
             .expect("script present");
@@ -1104,7 +1103,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn spawn_package_scripts(
-        manager: *mut PackageManager,
+        manager: &mut PackageManager,
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,
         shell_bin: Option<&'a ZStr>,
@@ -1116,7 +1115,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // TODO(port): narrow error set
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
-            manager,
+            manager: bun_ptr::BackRef::new_mut(manager),
             envp,
             shell_bin,
             package_name,
@@ -1221,7 +1220,7 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         // through `EventLoopHandle::from_any` so the by-value `EventLoopCtx`
         // carries the right `kind`.
         unsafe {
-            bun_event_loop::EventLoopHandle::from_any(&mut (*(*this).manager).event_loop)
+            bun_event_loop::EventLoopHandle::from_any(&mut (*(*this).manager.as_ptr()).event_loop)
                 .as_event_loop_ctx()
         }
     }

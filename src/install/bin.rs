@@ -674,22 +674,22 @@ impl<'a> NamesIterator<'a> {
 // alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
-// Raw pointers mirror the Zig ownership model exactly.
+// `BackRef<Vec<_>>` mirrors the Zig ownership model exactly.
 pub struct PriorityQueueContext {
-    pub dependencies: *const Vec<Dependency>,
-    pub string_buf: *const Vec<u8>,
+    pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
+    pub string_buf: bun_ptr::BackRef<Vec<u8>>,
 }
 
 impl PriorityQueueContext {
     pub fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
-        // SAFETY: `dependencies` / `string_buf` point at
+        // `dependencies` / `string_buf` point at
         // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
         // for the entire install (the `PackageInstaller` that owns this queue
         // also borrows the same `Lockfile`). The Vecs may be reallocated by
         // `fix_cached_lockfile_package_slices`, which is why we re-deref the
-        // `*const Vec` (header) on every compare instead of caching a slice.
-        let deps = unsafe { (*self.dependencies).as_slice() };
-        let buf = unsafe { (*self.string_buf).as_slice() };
+        // `BackRef<Vec>` (header) on every compare instead of caching a slice.
+        let deps = self.dependencies.as_slice();
+        let buf = self.string_buf.as_slice();
         let a_name = deps[a as usize].name.slice(buf);
         let b_name = deps[b as usize].name.slice(buf);
         strings::order(a_name, b_name)

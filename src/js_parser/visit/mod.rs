@@ -1249,26 +1249,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, StmtData::SEnum(_)) {
-                        // PORT NOTE: `scope_order_to_visit: &'a mut [ScopeOrder<'a>]` —
-                        // save/restore via raw ptr+len (Zig used a slice copy).
-                        let old_ptr = p.scope_order_to_visit.as_mut_ptr();
-                        let old_len = p.scope_order_to_visit.len();
+                        // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
+                        // save/restore matches the Zig slice-copy directly.
+                        let old_scopes_in_order = p.scope_order_to_visit;
 
-                        // SAFETY: arena-owned `&'a mut [ScopeOrder<'a>]`; we reborrow
-                        // the same buffer the map stored at parse time. `Loc` lacks
-                        // `Hash` (logger crate) so `ArrayHashMap::get` is unavailable;
-                        // linear scan over `keys()`/`values()` (enums are rare).
+                        // `Loc` lacks `Hash` (logger crate) so `ArrayHashMap::get`
+                        // is unavailable; linear scan over `keys()`/`values()`
+                        // (enums are rare).
                         // TODO(port): switch to `.get(&stmt.loc)` once `Loc: Hash`.
-                        p.scope_order_to_visit = unsafe {
-                            scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc)
-                        };
+                        p.scope_order_to_visit =
+                            scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
                         let mut temp = ListManaged::new_in(p.arena);
                         let res = p.visit_and_append_stmt(&mut temp, stmt);
-                        // SAFETY: `old_ptr/old_len` describe the same arena slice we
-                        // saved above; `defer p.scope_order_to_visit = old_scopes_in_order`.
-                        p.scope_order_to_visit =
-                            unsafe { core::slice::from_raw_parts_mut(old_ptr, old_len) };
+                        // Zig: `defer p.scope_order_to_visit = old_scopes_in_order`.
+                        p.scope_order_to_visit = old_scopes_in_order;
                         res?;
                         preprocessed_enums.push(temp.into_bump_slice());
                     }
@@ -1326,13 +1321,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             preprocessed_enum_i += 1;
                             visited.extend_from_slice(enum_stmts);
 
-                            // SAFETY: see scopes_for_enum_at note above.
-                            let enum_scope_count = unsafe {
-                                scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc).len()
-                            };
+                            let enum_scope_count =
+                                scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc).len();
                             // Zig: `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
-                            let taken = core::mem::take(&mut p.scope_order_to_visit);
-                            p.scope_order_to_visit = &mut taken[enum_scope_count..];
+                            p.scope_order_to_visit =
+                                &p.scope_order_to_visit[enum_scope_count..];
                             continue 'stmt_loop;
                         }
                         _ => {}
@@ -1890,24 +1883,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 /// `p.scopes_in_order_for_enum.get(loc)` workaround: `bun_ast::Loc` lacks
 /// `Hash`, so `ArrayHashMap::get` (gated on `ArrayHashContext<K>`) is
 /// unavailable. Linear scan over the (small) parallel key/value slices.
-///
-/// # Safety
-/// Reborrows the arena-owned `&'a mut [ScopeOrder<'a>]` stored in the map via
-/// raw ptr — same pattern as `P::next_scope_in_order_for_visit_pass` (P.rs:2449).
-/// The slice was leaked into the bump arena at parse time and outlives the map.
 // TODO(port): replace with `.get(&loc).unwrap()` once `Loc: Hash` lands in
 // bun_logger (cross-crate; out of scope here).
-unsafe fn scopes_for_enum_at<'a>(
-    map: &bun_collections::ArrayHashMap<bun_ast::Loc, core::ptr::NonNull<[ScopeOrder<'a>]>>,
+fn scopes_for_enum_at<'a>(
+    map: &bun_collections::ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
     loc: bun_ast::Loc,
-) -> &'a mut [ScopeOrder<'a>] {
+) -> &'a [ScopeOrder<'a>] {
     let keys = map.keys();
     let values = map.values();
     for i in 0..keys.len() {
         if keys[i] == loc {
-            // SAFETY: see fn doc — arena-owned slice valid for `'a`; the map
-            // stores raw `NonNull` so the caller becomes the sole live `&mut`.
-            return unsafe { &mut *values[i].as_ptr() };
+            return values[i];
         }
     }
     unreachable!("scopes_in_order_for_enum miss for enum stmt loc");

@@ -202,11 +202,13 @@ re-enters the current `MiniEventLoop` context. Parallel test workers use the
 same runtime sidecar action pattern with the JS event loop: the target stores
 only the worker slot index, and `run_as_coordinator` exposes its stack-owned
 `Coordinator` as the current JS-loop driver context while `coord.drive()` runs.
-Mini shell subprocesses use the same idea with shell arena identity:
-`bun_spawn` stores `RuntimeProcessExitTarget::ShellCommand { command: NodeId }`,
-the standalone-shell driver exposes the live `Interpreter` as the Mini tick
-context, and runtime dispatch calls back into the command arena by `NodeId`
-without storing `ShellSubprocess*` in the process.
+Shell subprocesses use the same idea with shell arena identity: `bun_spawn`
+stores `RuntimeProcessExitTarget::ShellCommand { command: NodeId,
+interpreter: Option<InterpreterHandle> }`. The standalone-shell driver exposes
+the live `Interpreter` as the Mini tick context, while the JS-shell path stores
+a sidecar-owned `InterpreterHandle` because one JS event loop may host multiple
+live interpreters. Runtime dispatch calls back into the command arena by
+`NodeId` without storing `ShellSubprocess*` or a `CmdHandle` in the process.
 Installer sleeps now use the same current-context shape without changing their
 closure callback context: `PackageManager::sleep_until` keeps its erased
 `is_done` closure as the Mini/JS task context, while exposing `PackageManager*`
@@ -247,9 +249,10 @@ the current owner callback validates process exit through the sidecar-owned
 not enough to remove `ProcessExitKind::Subprocess`; the wrapper owns the JSC
 refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer cleanup, and self
 deref edges that have to move or be named through a typed runtime effect
-boundary. The JS shell path has the same owner-movement requirement: a JS event
-loop can have multiple live shell interpreters, so a single loop
-`current_context` is not an identity for the interpreter.
+boundary. The JS shell path has the same interpreter-identity issue that Mini
+avoids with tick context: a JS event loop can have multiple live shell
+interpreters, so it carries an explicit sidecar-owned `InterpreterHandle`
+alongside the `NodeId` instead of relying on a single loop `current_context`.
 
 ```
 Process-exit production shape
@@ -392,10 +395,11 @@ Process-exit production wiring
   │     └─> does not by itself identify which LifecycleScriptSubprocess completed
   ├─> runtime/shell/interpreter.rs and subproc.rs
   │     ├─> standalone shell passes the live Interpreter as MiniEventLoop tick context
-  │     ├─> Mini shell subprocesses install RuntimeProcessExitTarget::ShellCommand { command: NodeId }
-  │     ├─> bun_spawn emits RuntimeProcessExitAction::ShellCommand with NodeId + ProcessIdentity + Status
+  │     ├─> Mini shell subprocesses install RuntimeProcessExitTarget::ShellCommand { command: NodeId, interpreter: None }
+  │     ├─> JS shell subprocesses install RuntimeProcessExitTarget::ShellCommand { command: NodeId, interpreter: Some(InterpreterHandle) }
+  │     ├─> bun_spawn emits RuntimeProcessExitAction::ShellCommand with NodeId + optional InterpreterHandle + ProcessIdentity + Status
   │     ├─> direct wait/immediate-exit paths dispatch the same typed delivery with the known interpreter context
-  │     └─> JS shell keeps the legacy handler until interpreter identity moves out of the JS owner object graph
+  │     └─> neither path stores ShellSubprocess* or CmdHandle in bun_spawn
   └─> spawn/process.rs sync Windows path
         ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
         └─> never enters the cross-crate ProcessExit table
@@ -456,32 +460,22 @@ Remaining owner movement
   │           - a ProcessExitTarget that stores only ProcessState preserves the reducer but loses process-exit-last synchronous owner re-entry
   │           - a ProcessExitTarget that stores CronRegisterJob*/CronRemoveJob* is the old callback owner pointer under a typed spelling
   │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
-  ├─> Bun.spawn Subprocess
-  │     ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
-  │     │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
-  │     │     - embeds SubprocessExitState for lower process/stdout/stderr handles
-  │     │     - spawn setup still installs ProcessExit::Subprocess after stream/IPC setup and before watch/watch_or_reap
-  │     ├─> existing VM process tracking
-  │     │     - ProcessAutoKiller stores Process* -> (), only for later kill/deref; it has no Subprocess* or JS object owner slot
-  │     │     - therefore ProcessIdentity/Process* cannot recover the Subprocess owner without adding a new registry
-  │     ├─> current re-entry: Subprocess::on_process_exit
-  │     │     - validates through SubprocessExitState::process_handle before applying JS wrapper effects
-  │     │     - updates resource usage, removes timers/signals, closes terminal/stdin, resumes stdout/stderr, resolves promises, invokes onExit, disconnects IPC, and derefs self
-  │     │     - the exit path consumes cached JS values from the generated JSSubprocess object and runs callbacks under the owning event loop
-  │     └─> honest next move
-  │           - move the stable subprocess state/effect boundary out of the JSC wrapper enough that bun_spawn stores a typed target and bun_runtime consumes a typed action
-  │           - because bun_jsc depends on bun_spawn, this cannot be done by making bun_spawn or bun_runtime_types depend on bun_jsc handles directly
-  │           - ProcessIdentity plus a runtime-side lookup would preserve neither the current allocation shape nor the direct owner lifetime edge
-  └─> JS shell subprocesses
-        ├─> current owner: runtime/shell/subproc.rs::ShellSubprocess
-        │     - Mini shell now uses ShellCommand { command: NodeId } because its tick context is the live Interpreter
-        ├─> remaining JS path
-        │     - spawn_async still installs ProcessExit::Shell for EventLoopHandle::Js
-        │     - a single JS EventLoop.current_context cannot identify one Interpreter because multiple shell interpreters can be live on one JS event loop
-        │     - Cmd::SubprocExec already stores interp + NodeId after spawn, but handing that pair to bun_spawn would just move the old owner pointer to a CmdHandle-shaped target
+  └─> Bun.spawn Subprocess
+        ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
+        │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
+        │     - embeds SubprocessExitState for lower process/stdout/stderr handles
+        │     - spawn setup still installs ProcessExit::Subprocess after stream/IPC setup and before watch/watch_or_reap
+        ├─> existing VM process tracking
+        │     - ProcessAutoKiller stores Process* -> (), only for later kill/deref; it has no Subprocess* or JS object owner slot
+        │     - therefore ProcessIdentity/Process* cannot recover the Subprocess owner without adding a new registry
+        ├─> current re-entry: Subprocess::on_process_exit
+        │     - validates through SubprocessExitState::process_handle before applying JS wrapper effects
+        │     - updates resource usage, removes timers/signals, closes terminal/stdin, resumes stdout/stderr, resolves promises, invokes onExit, disconnects IPC, and derefs self
+        │     - the exit path consumes cached JS values from the generated JSSubprocess object and runs callbacks under the owning event loop
         └─> honest next move
-              - move JS shell interpreter identity into sidecar state, or arrange a per-shell typed driver context that is already present when the process exit is delivered
-              - storing ShellSubprocess* or CmdHandle in ProcessExitTarget would be the old owner callback in typed clothing
+              - move the stable subprocess state/effect boundary out of the JSC wrapper enough that bun_spawn stores a typed target and bun_runtime consumes a typed action
+              - because bun_jsc depends on bun_spawn, this cannot be done by making bun_spawn or bun_runtime_types depend on bun_jsc handles directly
+              - ProcessIdentity plus a runtime-side lookup would preserve neither the current allocation shape nor the direct owner lifetime edge
 ```
 
 ```
@@ -497,15 +491,11 @@ What a real next split must change
   │     ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
   │     ├─> missing typed consumer: exact cron job state-machine owner
   │     └─> valid shape: split register/remove into shared cron job state plus runtime effect applier; bun_spawn records exit into the shared state and bun_runtime advances/resolves without recovering CronRegisterJob*
-  ├─> Bun.spawn
-  │     ├─> current typed data: ProcessIdentity, Status, Rusage, SubprocessExitState
-  │     ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
-  │     ├─> missing typed consumer: subprocess exit state that contains the JS/stdio/IPC lifetime edges without being the JS wrapper pointer
-  │     └─> valid shape: split the stable subprocess exit state out of the generated JS wrapper enough that ProcessExitTarget names that state and runtime dispatch applies JS effects from it
-  └─> JS shell
-        ├─> current typed data: NodeId in bun_runtime_types::shell
-        ├─> missing typed consumer: interpreter identity for the JS event-loop path
-        └─> valid shape: make the JS shell driver expose a per-interpreter typed context at process-exit delivery time, or move interpreter identity/state into a shell sidecar that is not a ShellSubprocess*/CmdHandle pointer
+  └─> Bun.spawn
+        ├─> current typed data: ProcessIdentity, Status, Rusage, SubprocessExitState
+        ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
+        ├─> missing typed consumer: subprocess exit state that contains the JS/stdio/IPC lifetime edges without being the JS wrapper pointer
+        └─> valid shape: split the stable subprocess exit state out of the generated JS wrapper enough that ProcessExitTarget names that state and runtime dispatch applies JS effects from it
 ```
 
 ```
@@ -533,16 +523,12 @@ Required deeper type movement
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     ├─> the JSC promise/global side needs its own inert handle split before a complete cron job state can live below bun_runtime
   │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
-  ├─> Bun.spawn needs a separable subprocess exit state
-  │     ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
-  │     ├─> SubprocessExitState now stores the lower ProcessHandle and stdout/stderr BufferedReaderHandle from the production spawn path
-  │     ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
-  │     ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
-  │     └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
-  └─> JS shell needs interpreter identity below the process-exit event
-        ├─> Mini shell works because the Mini driver supplies the live Interpreter as typed tick context
-        ├─> JS shell has a shared JS event loop with multiple possible interpreters
-        └─> the honest shape is per-interpreter typed driver context or sidecar-owned interpreter identity, not ShellSubprocess*/CmdHandle recovery
+  └─> Bun.spawn needs a separable subprocess exit state
+        ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
+        ├─> SubprocessExitState now stores the lower ProcessHandle and stdout/stderr BufferedReaderHandle from the production spawn path
+        ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
+        ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
+        └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```
 
 ```

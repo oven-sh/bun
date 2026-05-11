@@ -23,6 +23,7 @@ use crate::api::bun::process::{
     self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
 };
 use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_runtime_types::shell::InterpreterHandle as ShellInterpreterHandle;
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
 #[cfg(windows)]
@@ -281,13 +282,6 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 }
 
 pub type WatchFd = Fd;
-
-bun_spawn::link_impl_ProcessExit! {
-    Shell for ShellSubprocess => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, &*rusage),
-    }
-}
 
 /// Mini-shell process-exit delivery. The `Process` stores only the sidecar
 /// `NodeId`; the live interpreter comes from the MiniEventLoop tick context.
@@ -821,17 +815,20 @@ impl ShellSubprocess {
                 subproc.proc().set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
                     RuntimeProcessExitTarget::ShellCommand {
                         command: cmd_parent.id,
+                        interpreter: None,
                     },
                 ));
             }
             EventLoopHandle::Js { .. } => {
-                // The JS event loop may have multiple live shell interpreters.
-                // Keep the legacy owner callback there until the JS shell owner
-                // state moves far enough into a sidecar type to identify the
-                // interpreter without storing `ShellSubprocess*`.
-                subproc.proc().set_exit_handler(unsafe {
-                    bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
-                });
+                subproc.proc().set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
+                    RuntimeProcessExitTarget::ShellCommand {
+                        command: cmd_parent.id,
+                        interpreter: Some(
+                            ShellInterpreterHandle::from_ptr(interp)
+                                .expect("shell interpreter pointer is non-null"),
+                        ),
+                    },
+                ));
             }
         }
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);

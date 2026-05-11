@@ -1,4 +1,4 @@
-use core::fmt;
+use core::{fmt, num::NonZeroUsize};
 
 /// Index into the shell interpreter's node arena.
 ///
@@ -31,6 +31,25 @@ impl fmt::Display for NodeId {
     }
 }
 
+/// Stable identity for a live shell interpreter.
+///
+/// The process/IO layers treat this only as an identity token. Dereferencing it
+/// stays in `bun_runtime`, which owns the shell interpreter implementation.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct InterpreterHandle(NonZeroUsize);
+
+impl InterpreterHandle {
+    #[inline]
+    pub fn from_ptr<T>(ptr: *mut T) -> Option<Self> {
+        NonZeroUsize::new(ptr.cast::<()>() as usize).map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr<T>(self) -> *mut T {
+        self.0.get() as *mut T
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +58,15 @@ mod tests {
     fn node_id_display_preserves_shell_labels() {
         assert_eq!(NodeId(7).to_string(), "Node#7");
         assert_eq!(NodeId::INTERPRETER.to_string(), "Node(interp)");
+    }
+
+    #[test]
+    fn interpreter_handle_preserves_pointer_identity() {
+        let mut interpreter = 0u8;
+        let ptr = core::ptr::from_mut(&mut interpreter);
+        let handle = InterpreterHandle::from_ptr(ptr).unwrap();
+
+        assert_eq!(handle.as_ptr::<u8>(), ptr);
+        assert!(InterpreterHandle::from_ptr::<u8>(core::ptr::null_mut()).is_none());
     }
 }

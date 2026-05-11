@@ -196,10 +196,17 @@ pub fn __bun_dispatch_process_exit_delivery(
             }
             RuntimeProcessExitAction::ShellCommand {
                 command,
+                interpreter,
                 process: _,
                 status,
             } => {
-                let context = process_exit_context(event_loop, context);
+                let context = interpreter
+                    .map(|interpreter| {
+                        interpreter
+                            .as_ptr::<crate::shell::Interpreter>()
+                            .cast::<core::ffi::c_void>()
+                    })
+                    .unwrap_or_else(|| process_exit_context(event_loop, context));
                 unsafe {
                     crate::shell::subproc::on_process_exit_from_event_loop_context(
                         context,

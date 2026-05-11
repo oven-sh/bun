@@ -1,4 +1,4 @@
-use crate::shell::NodeId;
+use crate::shell::{InterpreterHandle, NodeId};
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub enum RuntimeProcessExitTarget {
     },
     ShellCommand {
         command: NodeId,
+        interpreter: Option<InterpreterHandle>,
     },
 }
 
@@ -46,6 +47,7 @@ pub enum RuntimeProcessExitAction {
     },
     ShellCommand {
         command: NodeId,
+        interpreter: Option<InterpreterHandle>,
         process: ProcessIdentity,
         status: Status,
     },
@@ -78,8 +80,12 @@ impl RuntimeProcessExitTarget {
                 process: ctx.process_identity(),
                 status: ctx.status.clone(),
             },
-            Self::ShellCommand { command } => RuntimeProcessExitAction::ShellCommand {
+            Self::ShellCommand {
                 command,
+                interpreter,
+            } => RuntimeProcessExitAction::ShellCommand {
+                command,
+                interpreter,
                 process: ctx.process_identity(),
                 status: ctx.status.clone(),
             },
@@ -147,15 +153,18 @@ mod tests {
 
         match (RuntimeProcessExitTarget::ShellCommand {
             command: crate::shell::NodeId(6),
+            interpreter: None,
         })
         .on_process_exit(&ctx)
         {
             RuntimeProcessExitAction::ShellCommand {
                 command,
+                interpreter,
                 process: actual_process,
                 status,
             } => {
                 assert_eq!(command, crate::shell::NodeId(6));
+                assert_eq!(interpreter, None);
                 assert_eq!(actual_process, process);
                 assert_eq!(status.exit_code(), Some(0));
             }

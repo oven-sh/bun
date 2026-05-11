@@ -151,7 +151,6 @@ bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
         LifecycleScript,
-        Shell,
         CronRegister,
         CronRemove,
     ] {

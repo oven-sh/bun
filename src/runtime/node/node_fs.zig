@@ -4616,12 +4616,15 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == jsc.Node.Dirent) {
                 if (dirent_path.isEmpty()) {
-                    // When encoding is .buffer, store raw bytes 1:1 as Latin-1 so
-                    // the C++ side can hand them straight to createBuffer without
-                    // a lossy UTF-8 ↔ UTF-16 round-trip. `toBunString(.buffer)`
-                    // transcodes through UTF-16 and replaces invalid UTF-8 with
-                    // U+FFFD — wrong for raw filesystem bytes.
-                    dirent_path = if (args.encoding == .buffer)
+                    // Storage is gated on `path_is_buffer`, not on `encoding`:
+                    // - When the path arg was a Buffer, `parentPath` is emitted as
+                    //   a Buffer, so we store the raw bytes 1:1 as Latin-1 to
+                    //   survive the round-trip without UTF-8 replacement.
+                    // - Otherwise `parentPath` is emitted as a JS string, so the
+                    //   stored `bun.String` must be a correctly-decoded string —
+                    //   use `toBunString(args.encoding)`. `encoding: "buffer"` on
+                    //   a string path is only a hint for how `name` is decoded.
+                    dirent_path = if (args.path_is_buffer)
                         bun.String.cloneLatin1(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename))
                     else
                         jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
@@ -4834,10 +4837,10 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        // For encoding=buffer, store raw bytes as Latin-1 so
-                        // they survive the round-trip to a Buffer on the C++
-                        // side without UTF-8 replacement.
-                        dirent_path_prev = if (args.encoding == .buffer)
+                        // Storage tracks path_is_buffer to match emission:
+                        // raw bytes as Latin-1 when parentPath will be a Buffer,
+                        // otherwise a properly-decoded JS string.
+                        dirent_path_prev = if (args.path_is_buffer)
                             bun.String.cloneLatin1(path_u8)
                         else
                             bun.String.cloneUTF8(path_u8);
@@ -5006,8 +5009,8 @@ pub const NodeFS = struct {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
-                            // For encoding=buffer, preserve raw bytes 1:1 as Latin-1.
-                            dirent_path_prev = if (args.encoding == .buffer)
+                            // Storage tracks path_is_buffer to match emission.
+                            dirent_path_prev = if (args.path_is_buffer)
                                 bun.String.cloneLatin1(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8))
                             else
                                 jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8), args.encoding);

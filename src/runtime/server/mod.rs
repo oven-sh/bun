@@ -1180,9 +1180,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             // SAFETY: out-param written by `on_request_ffi`;
                             // owned ref held until `deref()` below.
                             let nhr = unsafe { &mut *node_http_response };
-                            if nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                                || nhr.flags.contains(NhrFlags::SOCKET_CLOSED)
-                                || nhr.flags.contains(NhrFlags::UPGRADED)
+                            if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                                || nhr.flags.get().contains(NhrFlags::SOCKET_CLOSED)
+                                || nhr.flags.get().contains(NhrFlags::UPGRADED)
                             {
                                 strong_promise.deinit();
                                 break 'brk HttpResult::Success;
@@ -1194,8 +1194,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HttpResult::Success;
                             }
 
-                            nhr.promise =
-                                core::mem::replace(&mut strong_promise, jsc::StrongOptional::empty());
+                            nhr.promise.set(
+                                core::mem::replace(&mut strong_promise, jsc::StrongOptional::empty()),
+                            );
                             // PORT NOTE: `#[host_fn(export = …)]` emits its
                             // C-ABI shim as `__jsc_host_<fn>`; the export name
                             // is link-only.
@@ -1228,9 +1229,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if !node_http_response.is_null() {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &mut *node_http_response };
-                    if !nhr.flags.contains(NhrFlags::UPGRADED) {
-                        if let Some(raw) = nhr.raw_response {
-                            if !nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                    if !nhr.flags.get().contains(NhrFlags::UPGRADED) {
+                        if let Some(raw) = nhr.raw_response.get() {
+                            if !nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
                                 // PORT NOTE: matches server.zig:2173 verbatim.
@@ -1258,9 +1259,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !node_http_response.is_null() {
             // SAFETY: see `nhr` above.
             let nhr = unsafe { &mut *node_http_response };
-            if !nhr.flags.contains(NhrFlags::UPGRADED) {
-                if let Some(raw) = nhr.raw_response {
-                    if !nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+            if !nhr.flags.get().contains(NhrFlags::UPGRADED) {
+                if let Some(raw) = nhr.raw_response.get() {
+                    if !nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
                         && raw.state().is_response_pending()
                     {
                         nhr.set_on_aborted_handler();

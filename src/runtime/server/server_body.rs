@@ -1639,8 +1639,8 @@ where
         if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             let node_http_response = unsafe { &mut *node_http_response };
-            if node_http_response.flags.contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response.flags.contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
+            if node_http_response.flags.get().contains(NodeHTTPResponseFlags::ENDED)
+                || node_http_response.flags.get().contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
             {
                 return Ok(JSValue::FALSE);
             }
@@ -1728,7 +1728,7 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
-                        if let Some(raw_response) = node_http_response.raw_response {
+                        if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
                             fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket().cast::<c_void>());

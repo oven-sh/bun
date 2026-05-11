@@ -42,14 +42,11 @@ impl ParameterDescription {
 // PORT NOTE: Zig returned `[]align(1) const Int4`; Rust cannot form an unaligned `&[i32]`,
 // so we reinterpret as `&[[u8; 4]]` (align 1) and let the caller `from_ne_bytes` each element.
 fn to_int32_slice(slice: &[u8]) -> &[[u8; core::mem::size_of::<Int4>()]] {
-    // SAFETY: [u8; 4] has align 1 and the returned length is `slice.len() / 4`, so the
-    // reinterpreted region is entirely within `slice`.
-    unsafe {
-        core::slice::from_raw_parts(
-            slice.as_ptr().cast::<[u8; core::mem::size_of::<Int4>()]>(),
-            slice.len() / core::mem::size_of::<Int4>(),
-        )
-    }
+    // `[u8; 4]` has align 1 and is `AnyBitPattern`, so this is a safe bytemuck
+    // cast. Truncate any trailing `len % 4` bytes first to match Zig's
+    // `bytesAsSlice` semantics (cast_slice would panic on a remainder).
+    let n = core::mem::size_of::<Int4>();
+    bun_core::cast_slice(&slice[..slice.len() - slice.len() % n])
 }
 
 // ported from: src/sql/postgres/protocol/ParameterDescription.zig

@@ -713,10 +713,9 @@ impl MySQLConnection {
 
         match status {
             ConnectionState::Connected => {
-                // SAFETY: get_js_connection returns the parent struct embedding self.
                 // PORT NOTE: spec spelling — Zig defines `onConnectionEstabilished`
                 // (sic, JSMySQLConnection.zig:654 / MySQLConnection.zig:491).
-                unsafe { (*self.get_js_connection()).on_connection_estabilished() };
+                self.js_connection_ref().on_connection_estabilished();
             }
             _ => {}
         }
@@ -758,8 +757,7 @@ impl MySQLConnection {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
 
-                // SAFETY: get_js_connection returns the parent struct embedding self.
-                unsafe { (*self.get_js_connection()).on_error_packet(None, err) };
+                self.js_connection_ref().on_error_packet(None, err);
                 return Err(AnyMySQLError::AuthenticationFailed);
             }
 

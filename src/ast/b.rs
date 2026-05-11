@@ -133,20 +133,18 @@ impl B {
         // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
-        // Local mirror of `bun.writeAnyToHasher` for arbitrary `Copy` POD —
-        // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
-        // we cannot impl that trait for tuples/`Tag` from this crate-file scope.
-        // Mirrors Zig `hasher.update(std.mem.asBytes(&thing))`.
+        // Local mirror of `bun.writeAnyToHasher`. Zig fed anonymous tuples
+        // through `std.mem.asBytes`, but Rust tuples have *uninitialized*
+        // padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on 64-bit), so
+        // forming a `&[u8]` over them is UB. Instead we feed each scalar
+        // field individually and bound on `NoUninit` so the compiler proves
+        // every byte is initialized — same pattern as `expr::Data::write_to_hasher`.
+        // The hash is only used in-process for React Fast Refresh, so the
+        // byte-stream change vs. Zig is immaterial (and the old stream was
+        // nondeterministic anyway).
         #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: Copy>(h: &mut H, v: T) {
-            // SAFETY: `T: Copy` ⇒ no drop glue / no interior refs; we read
-            // exactly size_of::<T> initialized bytes from `v`'s stack slot.
-            h.update(unsafe {
-                core::slice::from_raw_parts(
-                    core::ptr::addr_of!(v).cast::<u8>(),
-                    core::mem::size_of::<T>(),
-                )
-            });
+        fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::NoUninit>(h: &mut H, v: T) {
+            h.update(bun_core::bytes_of(&v));
         }
         match self {
             B::BIdentifier(id) => {
@@ -154,12 +152,15 @@ impl B {
                 // `original_name` is an arena-owned slice valid for the
                 // parser/AST arena that `symbol_table` borrows from.
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
-                raw(hasher, (self.tag(), original_name.len()));
+                raw(hasher, self.tag() as u8);
+                raw(hasher, original_name.len());
             }
             B::BArray(array) => {
-                raw(hasher, (self.tag(), array.has_spread, array.items().len()));
+                raw(hasher, self.tag() as u8);
+                raw(hasher, array.has_spread);
+                raw(hasher, array.items().len());
                 for item in array.items().iter() {
-                    raw(hasher, (item.default_value.is_some(),));
+                    raw(hasher, item.default_value.is_some());
                     if let Some(default) = &item.default_value {
                         default.data.write_to_hasher(hasher, symbol_table);
                     }
@@ -167,9 +168,11 @@ impl B {
                 }
             }
             B::BObject(object) => {
-                raw(hasher, (self.tag(), object.properties().len()));
+                raw(hasher, self.tag() as u8);
+                raw(hasher, object.properties().len());
                 for property in object.properties().iter() {
-                    raw(hasher, (property.default_value.is_some(), property.flags));
+                    raw(hasher, property.default_value.is_some());
+                    raw(hasher, property.flags.as_u8());
                     if let Some(default) = &property.default_value {
                         default.data.write_to_hasher(hasher, symbol_table);
                     }

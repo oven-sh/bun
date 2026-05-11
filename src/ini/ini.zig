@@ -1251,20 +1251,35 @@ pub fn loadNpmrc(
                         allocator.free(key_buf);
                     }
 
+                    // Repeated entries for the same nerf-dart (common when
+                    // `~/.npmrc` and the project `.npmrc` both set the
+                    // same key) replace the previous value; free the
+                    // prior slice so we don't leak across overrides.
                     switch (conf_item.optname) {
                         ._authToken => {
-                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.token = x;
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.token.len > 0) allocator.free(gop.value_ptr.token);
+                                gop.value_ptr.token = x;
+                            }
                         },
                         ._auth => {
                             // Keep `_auth` base64-encoded — that's what the
                             // HTTP client wants for Basic auth headers.
-                            gop.value_ptr.auth_b64 = try allocator.dupe(u8, conf_item.value);
+                            const new_auth = try allocator.dupe(u8, conf_item.value);
+                            if (gop.value_ptr.auth_b64.len > 0) allocator.free(gop.value_ptr.auth_b64);
+                            gop.value_ptr.auth_b64 = new_auth;
                         },
                         .username => {
-                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.username = x;
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.username.len > 0) allocator.free(gop.value_ptr.username);
+                                gop.value_ptr.username = x;
+                            }
                         },
                         ._password => {
-                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.password = x;
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.password.len > 0) allocator.free(gop.value_ptr.password);
+                                gop.value_ptr.password = x;
+                            }
                         },
                         else => unreachable,
                     }

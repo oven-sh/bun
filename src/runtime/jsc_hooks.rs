@@ -1722,7 +1722,7 @@ fn console_print_runtime_object_inner<const C: bool>(
             "Timeout(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
         );
         let mut w = IoAsFmt(writer_);
-        if internals.flags.kind() == crate::timer::Kind::SetInterval {
+        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line(
                 "repeats ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
             );

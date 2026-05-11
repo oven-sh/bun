@@ -1873,7 +1873,7 @@ impl<'a> Formatter<'a> {
                                     u64::try_from(timer.internals.id.max(0)).unwrap(),
                                 ) as usize,
                         );
-                        if timer.internals.flags.kind() == crate::timer::Kind::SetInterval {
+                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
                                 b"repeats ".len()
                                     + bun_fmt::fast_digit_count(

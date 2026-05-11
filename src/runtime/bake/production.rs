@@ -207,7 +207,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
     vm.is_main_thread = true;
-    jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+    jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
     // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not

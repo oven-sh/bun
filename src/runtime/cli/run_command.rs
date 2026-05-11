@@ -978,7 +978,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Allow setting a custom timezone.
         if let Some(tz) = vm.env_loader().get(b"TZ") {
@@ -1143,7 +1143,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
             .store(ctx.runtime_options.experimental_http2_fetch, ::core::sync::atomic::Ordering::Relaxed);

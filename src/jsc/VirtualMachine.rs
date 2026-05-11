@@ -417,15 +417,43 @@ pub struct VMHolder;
 pub static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+// `#[thread_local]` (bare `__thread` slot) instead of `thread_local!` macro:
+// `LocalKey::__getit` adds a lazy-init check + on some targets a
+// `pthread_getspecific` round-trip per access; Zig's `threadlocal var vm`
+// is a single `mov %fs:OFFSET`. `get_or_null()` (which reads `VM`) is the
+// highest-fan-in accessor on the per-request path — every
+// `VirtualMachine::get()/as_mut()/vm_get()` reaches it ≥3× per
+// `run_callback`. Const-init `Cell<ptr>` has no destructor, so no
+// `LocalKey` registration is needed. Module-level because Rust forbids
+// associated `static`s; the `VMHolder` namespace is preserved via the
+// `#[inline(always)]` accessors below.
+#[thread_local]
+static VM: Cell<Option<*mut VirtualMachine>> = Cell::new(None);
+#[thread_local]
+static CACHED_GLOBAL_OBJECT: Cell<Option<*mut JSGlobalObject>> = Cell::new(None);
+
 impl VMHolder {
-    thread_local! {
-        pub static VM: Cell<Option<*mut VirtualMachine>> = const { Cell::new(None) };
-        pub static CACHED_GLOBAL_OBJECT: Cell<Option<*mut JSGlobalObject>> = const { Cell::new(None) };
+    /// Reads the per-thread `*mut VirtualMachine` slot.
+    #[inline(always)]
+    pub fn vm() -> Option<*mut VirtualMachine> {
+        VM.get()
+    }
+    #[inline(always)]
+    pub fn set_vm(vm: Option<*mut VirtualMachine>) {
+        VM.set(vm)
+    }
+    #[inline(always)]
+    pub fn cached_global_object() -> Option<*mut JSGlobalObject> {
+        CACHED_GLOBAL_OBJECT.get()
+    }
+    #[inline(always)]
+    pub fn set_cached_global_object(g: Option<*mut JSGlobalObject>) {
+        CACHED_GLOBAL_OBJECT.set(g)
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__setDefaultGlobalObject(global: *mut JSGlobalObject) {
-        if let Some(vm_instance) = Self::VM.get() {
+        if let Some(vm_instance) = VM.get() {
             // SAFETY: vm pointer set by init() on this thread
             let vm_instance = unsafe { &mut *vm_instance };
             vm_instance.global = global;
@@ -433,32 +461,32 @@ impl VMHolder {
                 MAIN_THREAD_VM.store(vm_instance, core::sync::atomic::Ordering::Release);
             }
         }
-        Self::CACHED_GLOBAL_OBJECT.set(Some(global));
+        CACHED_GLOBAL_OBJECT.set(Some(global));
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getDefaultGlobalObject() -> Option<NonNull<JSGlobalObject>> {
-        if let Some(g) = Self::CACHED_GLOBAL_OBJECT.get() {
+        if let Some(g) = CACHED_GLOBAL_OBJECT.get() {
             return NonNull::new(g);
         }
-        if let Some(vm_instance) = Self::VM.get() {
+        if let Some(vm_instance) = VM.get() {
             // SAFETY: vm pointer set by init() on this thread
             let g = unsafe { (*vm_instance).global };
-            Self::CACHED_GLOBAL_OBJECT.set(Some(g));
+            CACHED_GLOBAL_OBJECT.set(Some(g));
         }
         None
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__thisThreadHasVM() -> bool {
-        Self::VM.get().is_some()
+        VM.get().is_some()
     }
 }
 
-thread_local! {
-    pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = const { Cell::new(false) };
-    pub static IS_MAIN_THREAD_VM: Cell<bool> = const { Cell::new(false) };
-}
+#[thread_local]
+pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
+#[thread_local]
+pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
 pub static IS_SMOL_MODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
@@ -639,7 +667,7 @@ impl VirtualMachine {
     #[inline(always)]
     pub fn get_or_null() -> Option<*mut VirtualMachine> {
         // thread-local set by init() on this thread; one VM per thread
-        VMHolder::VM.get()
+        VM.get()
     }
 
     pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
@@ -649,12 +677,12 @@ impl VirtualMachine {
 
     #[inline]
     pub fn is_loaded() -> bool {
-        VMHolder::VM.get().is_some()
+        VM.get().is_some()
     }
 
     /// Installs `vm` as the current thread's VM (Zig: `VMHolder.vm = vm`).
     pub fn set_current(vm: *mut VirtualMachine) {
-        VMHolder::VM.set(Some(vm));
+        VM.set(Some(vm));
     }
 
     /// Returns `&'static` so callers can hold the global across `&mut self`
@@ -1885,7 +1913,7 @@ impl VirtualMachine {
             }
             p.cast()
         };
-        VMHolder::VM.set(Some(vm));
+        VM.set(Some(vm));
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
@@ -2046,7 +2074,7 @@ impl VirtualMachine {
             (*vm).jsc_vm = jsc_vm;
             jsc_vm
         };
-        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(global));
+        VMHolder::set_cached_global_object(Some(global));
 
         // Spec VirtualMachine.zig:1313: `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
@@ -2793,11 +2821,10 @@ pub struct ResolveFunctionResult {
     pub query_string: &'static [u8],
 }
 
-thread_local! {
-    /// Spec VirtualMachine.zig:1584 `source_code_printer`.
-    pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
-        const { Cell::new(None) };
-}
+/// Spec VirtualMachine.zig:1584 `source_code_printer`.
+#[thread_local]
+pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
+    Cell::new(None);
 
 /// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
 fn normalize_specifier_for_resolution<'a>(
@@ -2813,23 +2840,20 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-thread_local! {
-    /// Spec VirtualMachine.zig:1722 `specifier_cache_resolver_bufs` (bun.ThreadlocalBuffers —
-    /// heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size).
-    static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
+/// Spec VirtualMachine.zig:1722 `specifier_cache_resolver_bufs` (bun.ThreadlocalBuffers —
+/// heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size).
+#[thread_local]
+static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
+    core::cell::Cell::new(core::ptr::null_mut());
 
 #[inline]
 fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
-    SPECIFIER_CACHE_RESOLVER_BUF.with(|c| {
-        let mut p = c.get();
-        if p.is_null() {
-            p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
-            c.set(p);
-        }
-        p
-    })
+    let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
+    if p.is_null() {
+        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+        SPECIFIER_CACHE_RESOLVER_BUF.set(p);
+    }
+    p
 }
 
 fn ensure_source_code_printer() {
@@ -3541,7 +3565,7 @@ impl VirtualMachine {
         // SAFETY: extern "C" FFI; `console` valid.
         let new_global = unsafe { BakeCreateProdGlobal(vm_ref.console.cast()) };
         vm_ref.global = new_global;
-        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
+        VMHolder::set_cached_global_object(Some(new_global));
         vm_ref.regular_event_loop.global = NonNull::new(new_global);
         // SAFETY: `new_global` is freshly created and live for VM lifetime.
         // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow).
@@ -4512,7 +4536,7 @@ impl VirtualMachine {
         let new_global: *mut JSGlobalObject =
             JSGlobalObject::create_for_test_isolation(unsafe { &*old_global }, self.console.cast());
         self.global = new_global;
-        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
+        VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
         self.has_loaded_constructors = true;

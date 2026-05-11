@@ -20,6 +20,13 @@
 // preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
 // enum, so this is the structural-match subset of the feature.
 #![feature(adt_const_params)]
+// `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
+// per-callback statics — bare `__thread`/`.tbss` instead of the
+// `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
+// the wrapper as the next-largest single fan-in after the e0204b3/80284f8
+// accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
+// Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
+#![feature(thread_local)]
 #![allow(incomplete_features)]
 
 extern crate alloc;

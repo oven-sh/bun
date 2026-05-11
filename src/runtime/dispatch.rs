@@ -1056,11 +1056,11 @@ pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTi
     match tag {
         EventLoopTimerTag::TimeoutObject => unsafe {
             let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, t);
-            Some((*parent).internals.flags.epoch())
+            Some((*parent).internals.flags.get().epoch())
         },
         EventLoopTimerTag::ImmediateObject => unsafe {
             let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, t);
-            Some((*parent).internals.flags.epoch())
+            Some((*parent).internals.flags.get().epoch())
         },
         EventLoopTimerTag::AbortSignalTimeout => unsafe {
             let parent = bun_core::from_field_ptr!(AbortSignalTimeout, event_loop_timer, t);

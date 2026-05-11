@@ -154,7 +154,7 @@ pub fn __bun_jsc_generate_cached_bytecode(
     source: &[u8],
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.with(|c| c.set(true));
+    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(false);
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);

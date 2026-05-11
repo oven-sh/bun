@@ -405,19 +405,21 @@ impl Fetcher {
     }
 }
 
-thread_local! {
-    /// Per-worker parse arena (Zig: `var arena = bun.ArenaAllocator.init(...)`
-    /// stack-local per call). Hoisted to a thread-local leaked `Box` so the
-    /// `&'static Arena` handed to `Transpiler::set_arena` is genuinely
-    /// `'static` instead of a stack-lifetime erasure. `run()` `reset()`s it on
-    /// reuse to bulk-free the previous iteration's parse/print allocations.
-    static PARSE_ARENA: Cell<Option<NonNull<Arena>>> =
-        const { Cell::new(None) };
-    static AST_MEMORY_STORE: Cell<Option<NonNull<ASTMemoryAllocator>>> =
-        const { Cell::new(None) };
-    static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> =
-        const { Cell::new(None) };
-}
+/// Per-worker parse arena (Zig: `var arena = bun.ArenaAllocator.init(...)`
+/// stack-local per call). Hoisted to a thread-local leaked `Box` so the
+/// `&'static Arena` handed to `Transpiler::set_arena` is genuinely
+/// `'static` instead of a stack-lifetime erasure. `run()` `reset()`s it on
+/// reuse to bulk-free the previous iteration's parse/print allocations.
+//
+// `#[thread_local]` not `thread_local!`: Zig `threadlocal var` is bare
+// `__thread`; the macro's `LocalKey::__getit` wrapper showed up on the
+// async-import hot path. All three are const-init `Cell<ptr>` (no dtor).
+#[thread_local]
+static PARSE_ARENA: Cell<Option<NonNull<Arena>>> = Cell::new(None);
+#[thread_local]
+static AST_MEMORY_STORE: Cell<Option<NonNull<ASTMemoryAllocator>>> = Cell::new(None);
+#[thread_local]
+static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
 
 impl TranspilerJob {
     /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the slot
@@ -545,7 +547,7 @@ impl TranspilerJob {
         // per-iteration `mi_heap_new` count is unchanged vs. a stack-local
         // `Arena::new()`+`Drop` — the hoist is for lifetime soundness, not to
         // reduce heap churn (only a non-mimalloc arena type could do that).
-        let arena_ptr: NonNull<Arena> = PARSE_ARENA.with(|cell| match cell.get() {
+        let arena_ptr: NonNull<Arena> = match PARSE_ARENA.get() {
             Some(p) => {
                 // SAFETY: thread-local owns the leaked Box; only this thread
                 // touches it, and no `&Arena` from a prior `run()` survives
@@ -553,7 +555,7 @@ impl TranspilerJob {
                 // frame). `reset()` re-stamps the debug owning-thread id, so a
                 // pool worker that picked this up after a different worker
                 // first populated the slot would still pass the thread-lock
-                // assert — though `thread_local!` already guarantees same-
+                // assert — though `#[thread_local]` already guarantees same-
                 // thread here.
                 // Per-`import()` on the transpiler-pool worker. Like
                 // `transpile_source_code_arena`, paying `mi_heap_destroy +
@@ -565,10 +567,10 @@ impl TranspilerJob {
             }
             None => {
                 let p = bun_core::heap::into_raw_nn(Box::new(Arena::new()));
-                cell.set(Some(p));
+                PARSE_ARENA.set(Some(p));
                 p
             }
-        });
+        };
         // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
         // requires `&'static Arena` for `set_arena`. The leaked `Box<Arena>`
         // backing `PARSE_ARENA` lives for the worker thread's lifetime, so this
@@ -602,13 +604,14 @@ impl TranspilerJob {
             return;
         }
 
-        let mut ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
-            if cell.get().is_none() {
-                let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
-                cell.set(Some(bun_core::heap::into_raw_nn(boxed)));
+        let mut ast_store_ptr = match AST_MEMORY_STORE.get() {
+            Some(p) => p,
+            None => {
+                let p = bun_core::heap::into_raw_nn(Box::new(ASTMemoryAllocator::new(arena_ref)));
+                AST_MEMORY_STORE.set(Some(p));
+                p
             }
-            cell.get().unwrap()
-        });
+        };
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let ast_memory_store = unsafe { ast_store_ptr.as_mut() };
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
@@ -1013,15 +1016,17 @@ impl TranspilerJob {
             }
         }
 
-        let mut printer_ptr = SOURCE_CODE_PRINTER.with(|cell| {
-            if cell.get().is_none() {
+        let mut printer_ptr = match SOURCE_CODE_PRINTER.get() {
+            Some(p) => p,
+            None => {
                 let writer = BufferWriter::init();
                 let mut bp = Box::new(BufferPrinter::init(writer));
                 bp.ctx.append_null_byte = false;
-                cell.set(Some(bun_core::heap::into_raw_nn(bp)));
+                let p = bun_core::heap::into_raw_nn(bp);
+                SOURCE_CODE_PRINTER.set(Some(p));
+                p
             }
-            cell.get().unwrap()
-        });
+        };
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let source_code_printer = unsafe { printer_ptr.as_mut() };
 

@@ -78,77 +78,73 @@ test.concurrent("--randomize and --seed work", async () => {
 // the birthday-paradox collision search takes ~5–10 s (vs ~50 ms release)
 // and would starve the sibling concurrent tests past their default 5s
 // timeout. A generous per-test timeout covers the slow debug path.
-test(
-  "--randomize: files whose u32-truncated path hashes collide get distinct per-file orders",
-  async () => {
-    // Find two filenames under an unpredictable tempDir prefix whose full
-    // wyhash differs but whose lower 32 bits match. Birthday collision on
-    // u32 is ~77k filenames at 50% probability, ~200k at 99%.
-    const tmpRoot = tempDirWithFiles("randomize-hash-collision", {});
-    // macOS: /tmp is a symlink to /private/tmp; the test runner resolves
-    // the real path, so the collision has to be found on that form.
-    const realRoot = isMacOS ? realpathSync(tmpRoot) : tmpRoot;
+test("--randomize: files whose u32-truncated path hashes collide get distinct per-file orders", async () => {
+  // Find two filenames under an unpredictable tempDir prefix whose full
+  // wyhash differs but whose lower 32 bits match. Birthday collision on
+  // u32 is ~77k filenames at 50% probability, ~200k at 99%.
+  const tmpRoot = tempDirWithFiles("randomize-hash-collision", {});
+  // macOS: /tmp is a symlink to /private/tmp; the test runner resolves
+  // the real path, so the collision has to be found on that form.
+  const realRoot = isMacOS ? realpathSync(tmpRoot) : tmpRoot;
 
-    let aIdx = -1;
-    let bIdx = -1;
-    const seen = new Map<number, number>();
-    const mask = 0xffffffffn;
-    for (let i = 0; i < 200_000; i++) {
-      const h = Number(Bun.hash(join(realRoot, `f${i}.test.ts`)) & mask);
-      if (seen.has(h)) {
-        aIdx = seen.get(h)!;
-        bIdx = i;
-        break;
-      }
-      seen.set(h, i);
+  let aIdx = -1;
+  let bIdx = -1;
+  const seen = new Map<number, number>();
+  const mask = 0xffffffffn;
+  for (let i = 0; i < 200_000; i++) {
+    const h = Number(Bun.hash(join(realRoot, `f${i}.test.ts`)) & mask);
+    if (seen.has(h)) {
+      aIdx = seen.get(h)!;
+      bIdx = i;
+      break;
     }
-    if (aIdx < 0) throw new Error("no u32 hash collision found in 200k filenames");
+    seen.set(h, i);
+  }
+  if (aIdx < 0) throw new Error("no u32 hash collision found in 200k filenames");
 
-    // Same body in both files so any difference in observed order comes
-    // from the per-file PRNG, not the tests themselves. Stdout prefixes
-    // let us attribute each "RUN" line to its file.
-    const body = (tag: string) => `
+  // Same body in both files so any difference in observed order comes
+  // from the per-file PRNG, not the tests themselves. Stdout prefixes
+  // let us attribute each "RUN" line to its file.
+  const body = (tag: string) => `
       import { test, expect } from "bun:test";
       test.each(["alpha","bravo","charlie","delta","echo","foxtrot","golf"])(
         "order: %s",
         (word) => { console.log("RUN ${tag} " + word); expect(typeof word).toBe("string"); },
       );
     `;
-    await Bun.write(join(tmpRoot, `f${aIdx}.test.ts`), body("A"));
-    await Bun.write(join(tmpRoot, `f${bIdx}.test.ts`), body("B"));
+  await Bun.write(join(tmpRoot, `f${aIdx}.test.ts`), body("A"));
+  await Bun.write(join(tmpRoot, `f${bIdx}.test.ts`), body("B"));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--randomize", "--seed=42"],
-      cwd: tmpRoot,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--randomize", "--seed=42"],
+    cwd: tmpRoot,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
 
-    const orderA = stdout
-      .split("\n")
-      .filter(l => l.startsWith("RUN A "))
-      .map(l => l.slice(6));
-    const orderB = stdout
-      .split("\n")
-      .filter(l => l.startsWith("RUN B "))
-      .map(l => l.slice(6));
-    const sorted = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"].sort();
-    // Both files must have produced a full run. Under the old truncated-
-    // hash key the second file's Source was dropped entirely; loading it
-    // still happened via the module system, so its tests do run, but the
-    // assertion below is the one that actually catches the regression.
-    expect([...orderA].sort()).toEqual(sorted);
-    expect([...orderB].sort()).toEqual(sorted);
-    // The actual regression: colliding files must get distinct PRNG seeds,
-    // so their shuffled orders must differ. With the old truncated-hash
-    // key both arrays are identical.
-    expect(orderA).not.toEqual(orderB);
-  },
-  60_000,
-);
+  const orderA = stdout
+    .split("\n")
+    .filter(l => l.startsWith("RUN A "))
+    .map(l => l.slice(6));
+  const orderB = stdout
+    .split("\n")
+    .filter(l => l.startsWith("RUN B "))
+    .map(l => l.slice(6));
+  const sorted = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"].sort();
+  // Both files must have produced a full run. Under the old truncated-
+  // hash key the second file's Source was dropped entirely; loading it
+  // still happened via the module system, so its tests do run, but the
+  // assertion below is the one that actually catches the regression.
+  expect([...orderA].sort()).toEqual(sorted);
+  expect([...orderB].sort()).toEqual(sorted);
+  // The actual regression: colliding files must get distinct PRNG seeds,
+  // so their shuffled orders must differ. With the old truncated-hash
+  // key both arrays are identical.
+  expect(orderA).not.toEqual(orderB);
+}, 60_000);
 
 test.concurrent("randomizes order of files", async () => {
   const dir = tempDirWithFiles(

@@ -186,36 +186,45 @@ pub mod bun_str {
 #[cfg(windows)]
 pub mod bun_core {
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
-    /// `UnsafeCell` with no synchronization. The shim is single-threaded
-    /// (Zig built it `single_threaded = true`), so the unconditional `Sync`
-    /// is trivially upheld.
+    /// interior-mutability cell with no synchronization. The shim is
+    /// single-threaded (Zig built it `single_threaded = true`), so the
+    /// unconditional `Sync` is trivially upheld.
+    ///
+    /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
+    /// `#[repr(transparent)]` over `UnsafeCell` with identical `Send`/`!Sync`
+    /// auto-traits, but gives `.get()/.set()` for `T: Copy` without a raw
+    /// deref. The only remaining `unsafe` is the `impl Sync` below — the
+    /// irreducible single-thread invariant.
     #[repr(transparent)]
-    pub struct RacyCell<T: ?Sized>(core::cell::UnsafeCell<T>);
+    pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
     // SAFETY: standalone shim is single-threaded.
     unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
     impl<T> RacyCell<T> {
         #[inline]
         pub const fn new(value: T) -> Self {
-            Self(core::cell::UnsafeCell::new(value))
+            Self(core::cell::Cell::new(value))
         }
         #[inline]
         pub const fn get(&self) -> *mut T {
-            self.0.get()
+            self.0.as_ptr()
         }
         /// # Safety
-        /// No concurrent writer (trivially true: single-threaded).
+        /// No concurrent writer (trivially true: single-threaded). Kept
+        /// `unsafe fn` to mirror `bun_core::RacyCell::read` so
+        /// `bun_shim_impl.rs` compiles identically against both.
         #[inline]
         pub unsafe fn read(&self) -> T
         where
             T: Copy,
         {
-            unsafe { *self.0.get() }
+            self.0.get()
         }
         /// # Safety
-        /// No concurrent reader/writer (trivially true: single-threaded).
+        /// No concurrent reader/writer (trivially true: single-threaded). Kept
+        /// `unsafe fn` to mirror `bun_core::RacyCell::write`.
         #[inline]
         pub unsafe fn write(&self, value: T) {
-            unsafe { *self.0.get() = value }
+            self.0.set(value)
         }
     }
 
@@ -248,8 +257,7 @@ pub mod bun_core {
         pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
             if ptr.is_null() {
                 assert!(len == 0, "ffi::slice: null ptr with non-zero len");
-                // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
-                unsafe { core::slice::from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0) }
+                &[]
             } else {
                 // SAFETY: caller contract.
                 unsafe { core::slice::from_raw_parts(ptr, len) }

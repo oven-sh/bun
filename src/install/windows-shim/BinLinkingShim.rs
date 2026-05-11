@@ -413,24 +413,12 @@ impl<'a> BinLinkingShim<'a> {
         debug_assert!(buf.len() == self.encoded_length());
         debug_assert!(self.bin_path[0] != b'/' as u16);
 
-        // SAFETY: caller guarantees buf.len() == encoded_length() which is always
-        // a multiple of 2; Zig used `@alignCast` here. In Rust, constructing a
-        // `&mut [u16]` from an under-aligned `*mut u8` is *instant* language UB
-        // (reference validity invariant), not merely UB-on-deref as in Zig. The
-        // sole caller (`bin.rs`) passes a stack `[u8; 65536]` whose Rust-guaranteed
-        // alignment is 1. We therefore upgrade Zig's safe-build `@alignCast` check
-        // to an unconditional `assert!` so the slice construction below is provably
-        // sound in release builds: if this passes, the pointer *is* 2-aligned and
-        // `from_raw_parts_mut::<u16>` is well-defined; if it ever fails, we panic
-        // instead of invoking UB. (The caller should be changed to a `[u16; N]`
+        // Zig used `@alignCast` here. `bytemuck::cast_slice_mut` performs the same
+        // runtime alignment + size-multiple check and panics on mismatch — no
+        // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
+        // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
         // buffer to make alignment a compile-time guarantee — tracked separately.)
-        assert!(
-            buf.as_ptr() as usize & (core::mem::align_of::<u16>() - 1) == 0,
-            "encode_into: buf must be 2-aligned"
-        );
-        let mut wbuf: &mut [u16] = unsafe {
-            bun_core::ffi::slice_mut(buf.as_mut_ptr().cast::<u16>(), buf.len() / 2)
-        };
+        let mut wbuf: &mut [u16] = bytemuck::cast_slice_mut(buf);
 
         wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);
         wbuf = &mut wbuf[self.bin_path.len()..];
@@ -551,20 +539,13 @@ pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
 
 #[inline]
 fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
-    debug_assert!(bytes.len() % 2 == 0);
     // Zig's `bun.reinterpretSlice` uses `@alignCast(bytes.ptr)` which runtime-checks
-    // alignment in safe builds. In Rust, constructing a `&[u16]` from an
-    // under-aligned pointer is instant language UB regardless of build profile,
-    // and `loose_decode`'s caller (`PackageInstall::is_dangling_windows_bin_link`)
-    // forwards an externally-supplied `&mut [u8]` with no alignment guarantee.
-    // Upgrade to an unconditional `assert!` so the `from_raw_parts::<u16>` below
-    // is provably sound when reached (panic instead of UB on the misaligned path).
-    assert!(
-        bytes.as_ptr() as usize & (core::mem::align_of::<u16>() - 1) == 0,
-        "reinterpret_slice_u16: bytes must be 2-aligned"
-    );
-    // SAFETY: alignment asserted immediately above; even length asserted by caller.
-    unsafe { bun_core::ffi::slice(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
+    // alignment in safe builds. `bytemuck::cast_slice` performs the same alignment
+    // + even-length check and panics on mismatch — no `unsafe` needed.
+    // `loose_decode`'s caller (`PackageInstall::is_dangling_windows_bin_link`)
+    // forwards an externally-supplied `&mut [u8]` with no alignment guarantee, so
+    // the panic-on-misalign behaviour matches the previous explicit `assert!`.
+    bytemuck::cast_slice(bytes)
 }
 } // mod host
 

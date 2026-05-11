@@ -323,13 +323,16 @@ pub mod entry {
         pub entry_hash: u64,
 
         // Zig default: `null`
-        // PORT NOTE: `UnsafeCell` because `Installer::Task::run` writes this slot
+        // PORT NOTE: `Cell` because `Installer::Task::run` writes this slot
         // from a task thread through `&Store` (each Task is the sole writer for
         // its own `entry_id`; see Installer.zig:541/1161). Without interior
         // mutability the only access path is `&Store → &[Option<_>]` and the
         // per-entry write would mutate through shared-reference provenance.
         // Raw `*mut` instead of `Box` so reads don't move out of the cell.
-        pub scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
+        // `Cell` (not `UnsafeCell`): payload is `Copy`, so `.get()/.set()` are
+        // zero-unsafe; `Cell` and `UnsafeCell` have identical `Send`/`!Sync`
+        // auto-traits, so the per-entry single-writer discipline is unchanged.
+        pub scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
     }
 
     bun_collections::multi_array_columns! {
@@ -341,7 +344,7 @@ pub mod entry {
             hoisted: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
-            scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
+            scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
         }
     }
 
@@ -359,7 +362,7 @@ pub mod entry {
                 // Zig default: `0`
                 entry_hash: 0,
                 // Zig default: `null`
-                scripts: core::cell::UnsafeCell::new(None),
+                scripts: core::cell::Cell::new(None),
             }
         }
     }

@@ -280,10 +280,13 @@ struct InstallDirState {
     buf: bun_paths::w_path_buffer_pool::Guard,
     #[cfg(windows)]
     buf2: bun_paths::w_path_buffer_pool::Guard,
+    // PORT NOTE: Zig kept `to_copy_buf: []u16` as a self-referential slice into
+    // `buf`. The Rust port only ever read its `.len()` to recover the offset, so
+    // store the offset directly — no self-referential raw fat pointer needed.
     #[cfg(windows)]
-    to_copy_buf: *mut [u16], // slice into `buf`
+    to_copy_buf_off: usize, // offset into `buf` where the copy-target tail starts
     #[cfg(windows)]
-    to_copy_buf2: *mut [u16], // slice into `buf2`
+    to_copy_buf2_off: usize, // offset into `buf2` where the copy-target tail starts
 }
 
 impl InstallDirState {
@@ -309,9 +312,9 @@ impl Default for InstallDirState {
             #[cfg(windows)]
             buf2: bun_paths::w_path_buffer_pool::get(),
             #[cfg(windows)]
-            to_copy_buf: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
+            to_copy_buf_off: 0,
             #[cfg(windows)]
-            to_copy_buf2: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
+            to_copy_buf2_off: 0,
         }
     }
 }
@@ -1338,13 +1341,7 @@ impl<'a> PackageInstall<'a> {
             let fullpath = unsafe { bun_str::WStr::from_raw(state.buf.as_ptr(), i) };
 
             let _ = mkdir_recursive_os_path(fullpath);
-            // SAFETY: `fullpath.len() <= state.buf.len()` (it's a prefix slice of buf).
-            state.to_copy_buf = unsafe {
-                core::ptr::slice_from_raw_parts_mut(
-                    state.buf.as_mut_ptr().add(fullpath.len()),
-                    state.buf.len() - fullpath.len(),
-                )
-            };
+            state.to_copy_buf_off = fullpath.len();
 
             // SAFETY: FFI — cached_package_dir.fd() is an open handle (opened above);
             // state.buf2 is a valid writable WPathBuffer of the passed length.
@@ -1371,27 +1368,12 @@ impl<'a> PackageInstall<'a> {
             }
             // PORT NOTE: borrowck — Zig held `cache_path = buf2[0..len]` while mutating
             // buf2; index by `cache_path_length` directly so no shared borrow is live.
-            let to_copy_buf2: *mut [u16];
-            if state.buf2[cache_path_length - 1] != u16::from(b'\\') {
+            state.to_copy_buf2_off = if state.buf2[cache_path_length - 1] != u16::from(b'\\') {
                 state.buf2[cache_path_length] = u16::from(b'\\');
-                // SAFETY: `cache_path_length + 1 <= state.buf2.len()` (checked above).
-                to_copy_buf2 = unsafe {
-                    core::ptr::slice_from_raw_parts_mut(
-                        state.buf2.as_mut_ptr().add(cache_path_length + 1),
-                        state.buf2.len() - cache_path_length - 1,
-                    )
-                };
+                cache_path_length + 1
             } else {
-                // SAFETY: `cache_path_length <= state.buf2.len()` (checked above).
-                to_copy_buf2 = unsafe {
-                    core::ptr::slice_from_raw_parts_mut(
-                        state.buf2.as_mut_ptr().add(cache_path_length),
-                        state.buf2.len() - cache_path_length,
-                    )
-                };
-            }
-
-            state.to_copy_buf2 = to_copy_buf2;
+                cache_path_length
+            };
             InstallResult::Success
         }
     }
@@ -1593,24 +1575,15 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        let result = {
-            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
-            // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
-            // so no `dangerous_implicit_autorefs` and no validity requirement
-            // beyond the pointer itself being well-formed.
-            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
-            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
-            copy(
-                state.subdir,
-                state.walker.as_mut().unwrap(),
-                self.progress.as_deref_mut(),
-                to_copy1_off,
-                &mut state.buf[..],
-                to_copy2_off,
-                &mut state.buf2[..],
-            )
-        };
+        let result = copy(
+            state.subdir,
+            state.walker.as_mut().unwrap(),
+            self.progress.as_deref_mut(),
+            state.to_copy_buf_off,
+            &mut state.buf[..],
+            state.to_copy_buf2_off,
+            &mut state.buf2[..],
+        );
         #[cfg(not(windows))]
         let result = copy(
             state.subdir,
@@ -1781,23 +1754,14 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        let result = {
-            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
-            // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
-            // so no `dangerous_implicit_autorefs` and no validity requirement
-            // beyond the pointer itself being well-formed.
-            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
-            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
-            copy(
-                state.subdir,
-                state.walker.as_mut().unwrap(),
-                to_copy1_off,
-                &mut state.buf[..],
-                to_copy2_off,
-                &mut state.buf2[..],
-            )
-        };
+        let result = copy(
+            state.subdir,
+            state.walker.as_mut().unwrap(),
+            state.to_copy_buf_off,
+            &mut state.buf[..],
+            state.to_copy_buf2_off,
+            &mut state.buf2[..],
+        );
         #[cfg(not(windows))]
         let result = copy(state.subdir, state.walker(), (), (), (), ());
 
@@ -1986,23 +1950,14 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        let result = {
-            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
-            // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
-            // so no `dangerous_implicit_autorefs` and no validity requirement
-            // beyond the pointer itself being well-formed.
-            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
-            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
-            copy(
-                state.subdir,
-                state.walker.as_mut().unwrap(),
-                to_copy1_off,
-                &mut state.buf[..],
-                to_copy2_off,
-                &mut state.buf2[..],
-            )
-        };
+        let result = copy(
+            state.subdir,
+            state.walker.as_mut().unwrap(),
+            state.to_copy_buf_off,
+            &mut state.buf[..],
+            state.to_copy_buf2_off,
+            &mut state.buf2[..],
+        );
         #[cfg(not(windows))]
         let result = copy(
             state.subdir,

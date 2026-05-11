@@ -394,11 +394,12 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub queue: TreeFiller,
     pub log: &'a mut bun_ast::Log,
     /// PORT NOTE: Zig stores `*Lockfile` alongside `&mut buffers.resolutions`
-    /// (an aliased subslice of the same struct). Hold as `*const` so the
-    /// construction site (`Lockfile::hoist`) can split-borrow `resolutions`
-    /// mutably without borrowck rejecting the overlap; reads go through
-    /// [`Builder::lockfile()`] which never touches `buffers.resolutions`.
-    pub lockfile: *const Lockfile,
+    /// (an aliased subslice of the same struct). Stored as `ParentRef` (raw
+    /// non-null backref) so the construction site (`Lockfile::hoist`) can
+    /// split-borrow `resolutions` mutably without borrowck rejecting the
+    /// overlap; reads go through [`Builder::lockfile()`] which never touches
+    /// `buffers.resolutions`.
+    pub lockfile: bun_ptr::ParentRef<Lockfile>,
     // Unresolved optional peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
@@ -431,20 +432,18 @@ pub struct CleanResult {
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// Shared read-only view of the lockfile.
     ///
-    /// # Safety
     /// `self.lockfile` is set from `&mut Lockfile` in `Lockfile::hoist`, which
     /// outlives this `Builder` for `'a`. The returned `&Lockfile` MUST NOT be
     /// used to read `buffers.resolutions` while `self.resolutions` (a `&mut`
     /// alias of that same buffer) is live — callers reach resolutions via
     /// `self.resolutions` only.
+    ///
+    /// Callers that need a `&Lockfile` detached from `&self` (so disjoint
+    /// `&mut self.<field>` borrows can coexist) should copy the `ParentRef`
+    /// out first: `let lf = builder.lockfile; lf.get()`.
     #[inline]
-    pub fn lockfile(&self) -> &'a Lockfile {
-        // SAFETY: see field doc — `self.lockfile` is set from a `&'a Lockfile`
-        // (or `&'a mut Lockfile`) at construction in `Lockfile::hoist`, so the
-        // pointee outlives `'a`. Returning `&'a` (not `&'_ self`) lets callers
-        // hold the read-only view while disjoint `&mut self.<field>` borrows
-        // are live (`log`, `sort_buf`, …).
-        unsafe { &*self.lockfile }
+    pub fn lockfile(&self) -> &Lockfile {
+        self.lockfile.get()
     }
 
     pub fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
@@ -688,12 +687,11 @@ impl Tree {
         // PORT NOTE: reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 
-        // SAFETY: `builder.lockfile` points at the `Lockfile` that constructed this
-        // `Builder` in `Lockfile::hoist`; it outlives `builder`. Dereferencing the raw
-        // pointer directly (instead of `builder.lockfile()`) detaches the resulting
-        // `&Lockfile` from `&builder` so subsequent `&mut builder` field borrows in the
-        // loop body do not conflict.
-        let lockfile: &Lockfile = unsafe { &*builder.lockfile };
+        // Copy the `ParentRef` out (it's `Copy`) so the resulting `&Lockfile`
+        // is borrowed from a local, not `&builder` — subsequent `&mut builder`
+        // field borrows in the loop body do not conflict.
+        let lockfile_ref = builder.lockfile;
+        let lockfile: &Lockfile = lockfile_ref.get();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         // PORT NOTE: reshaped for borrowck — copy the `&'a [Dependency]` out of
@@ -1033,10 +1031,10 @@ impl Tree {
                 // PORT NOTE: reshaped for borrowck — `maybe_report_error` takes
                 // `&mut self` but the format args borrow `&self` (via
                 // `package_name`/`package_version`/`buf`). Inline against split
-                // field borrows: deref the raw `*const Lockfile` directly so the
-                // `&Lockfile` is not tied to `&builder`, then write to `builder.log`.
-                // SAFETY: see `Builder::lockfile()` — pointer outlives `builder`.
-                let lockfile: &Lockfile = unsafe { &*builder.lockfile };
+                // field borrows: copy the `ParentRef` out so the `&Lockfile` is
+                // not tied to `&builder`, then write to `builder.log`.
+                let lockfile_ref = builder.lockfile;
+                let lockfile: &Lockfile = lockfile_ref.get();
                 let buf = lockfile.buffers.string_bytes.as_slice();
                 let names = lockfile.packages.items_name();
                 let resolutions = lockfile.packages.items_resolution();

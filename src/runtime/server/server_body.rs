@@ -2381,7 +2381,7 @@ where
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
                         return Ok(JSValue::NULL);
                     };
-                    let mut addr = match SocketAddress::init(address_bytes, port) {
+                    let addr = match SocketAddress::init(address_bytes, port) {
                         Ok(a) => a,
                         Err(_) => {
                             #[cold] fn cold() {}
@@ -2400,7 +2400,7 @@ where
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);
                         };
-                        let mut addr = match SocketAddress::init(address_bytes, port) {
+                        let addr = match SocketAddress::init(address_bytes, port) {
                             Ok(a) => a,
                             Err(_) => {
                                 #[cold] fn cold() {}

@@ -1476,7 +1476,7 @@ impl UDPSocket {
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let mut sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
+        let sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
             Ok(sa) => sa,
             Err(_) => return JSValue::UNDEFINED,
         };

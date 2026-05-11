@@ -366,8 +366,17 @@ pub struct IoRequestLoop {
     #[cfg(target_os = "freebsd")]
     pub kqueue_fd: Fd,
 
-    pub cached_now: libc::timespec,
-    pub active: usize,
+    /// IO-thread-only scratch state. Wrapped in `Cell` so the tick loop can
+    /// run on `&self` (see [`on_spawn_io_thread`]): we must never hold a
+    /// process-lifetime `&mut IoRequestLoop`, because cross-thread
+    /// `schedule()` callers concurrently touch `pending`/`waker` through a
+    /// sibling raw pointer, and a live `&mut` over the whole struct would
+    /// assert `noalias` on those bytes too — UB under Stacked Borrows even
+    /// though the queue itself is lock-free. `Cell` is sound here because the
+    /// `ThreadCell` owner latch (debug-asserted in `LOOP.get()`) confines all
+    /// `tick`-side access to the IO thread.
+    pub cached_now: core::cell::Cell<libc::timespec>,
+    pub active: core::cell::Cell<usize>,
 }
 
 // §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because
@@ -397,8 +406,8 @@ impl IoRequestLoop {
             epoll_fd: Fd::INVALID,
             #[cfg(target_os = "freebsd")]
             kqueue_fd: Fd::INVALID,
-            cached_now: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-            active: 0,
+            cached_now: core::cell::Cell::new(libc::timespec { tv_sec: 0, tv_nsec: 0 }),
+            active: core::cell::Cell::new(0),
         };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -494,11 +503,21 @@ impl IoRequestLoop {
     }
 
     pub fn on_spawn_io_thread() {
-        // From here on, only this thread may take `&mut IoRequestLoop`;
+        // From here on, only this thread may borrow `IoRequestLoop`;
         // `ThreadCell` enforces that in debug builds.
         LOOP.claim();
-        // SAFETY: ONCE guarantees LOOP is initialized before this thread is spawned.
-        unsafe { (*LOOP.get()).assume_init_mut() }.tick();
+        // SAFETY: `ONCE` guarantees `LOOP` is initialized before this thread
+        // is spawned (the spawn in `load()` is sequenced after the store, and
+        // `OnceLock` provides the cross-thread happens-before). We take a
+        // *shared* `&IoRequestLoop` — never `&mut` — because `schedule()` on
+        // other threads concurrently touches `pending`/`waker` through a
+        // sibling raw pointer derived from `LOOP.get_unchecked()`. A `&mut`
+        // here would assert `noalias` over those bytes for the process
+        // lifetime (tick never returns), which is UB under Stacked Borrows
+        // regardless of the queue's internal atomics. All IO-thread-mutable
+        // state lives behind `Cell` so `&self` suffices; thread-confinement
+        // of those `Cell`s is debug-asserted by `ThreadCell::get()` above.
+        unsafe { (*LOOP.get()).assume_init_ref() }.tick();
     }
 
     /// Enqueue `request` for the IO thread to pick up. Safe to call from any
@@ -522,7 +541,7 @@ impl IoRequestLoop {
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&self) {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         let name = bun_core::ZStr::from_static(b"IO Watcher\0");
         bun_core::Output::Source::configure_named_thread(name);
@@ -542,7 +561,7 @@ impl IoRequestLoop {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn tick_epoll(&mut self) {
+    pub fn tick_epoll(&self) {
         self.update_now();
 
         loop {
@@ -570,7 +589,7 @@ impl IoRequestLoop {
                                     (readable.on_error)(readable.ctx, err);
                                 }
                                 Ok(()) => {
-                                    self.active += 1;
+                                    self.active.set(self.active.get() + 1);
                                 }
                             }
                         }
@@ -586,7 +605,7 @@ impl IoRequestLoop {
                                     (writable.on_error)(writable.ctx, err);
                                 }
                                 Ok(()) => {
-                                    self.active += 1;
+                                    self.active.set(self.active.get() + 1);
                                 }
                             }
                         }
@@ -601,7 +620,7 @@ impl IoRequestLoop {
                             // This state can happen if polling for readable/writable previously failed.
                             if close.poll.flags.contains(Flags::WasEverRegistered) {
                                 close.poll.unregister_with_fd(watcher_fd, close.fd);
-                                self.active -= 1;
+                                self.active.set(self.active.get() - 1);
                             }
                             (close.on_done)(close.ctx);
                         }
@@ -677,7 +696,7 @@ impl IoRequestLoop {
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn tick_kqueue(&mut self) {
+    pub fn tick_kqueue(&self) {
         self.update_now();
 
         loop {
@@ -794,8 +813,10 @@ impl IoRequestLoop {
         }
     }
 
-    fn update_now(&mut self) {
-        Self::update_timespec(&mut self.cached_now);
+    fn update_now(&self) {
+        let mut ts = self.cached_now.get();
+        Self::update_timespec(&mut ts);
+        self.cached_now.set(ts);
     }
 
     // PORT NOTE: Zig nests the `extern "c" fn clock_gettime_monotonic` decl

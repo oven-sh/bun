@@ -16,7 +16,9 @@ use crate::bun_json::{Expr, ExprAccessors as _, ExprData};
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
-use bun_install_types::process_exit::{InstallProcessExitTarget, SecurityScanExit};
+use bun_install_types::process_exit::{
+    InstallProcessExitTarget, SecurityScanExit, SecurityScanExitHandle,
+};
 use bun_io::{BufferedReader, BufferedReaderTarget};
 use bun_io::pipe_reader::PosixFlags;
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
@@ -1289,12 +1291,13 @@ impl<'a> SecurityScanSubprocess<'a> {
                 .exit_state
                 .as_mut()
                 .expect("security scan exit state was just initialized");
+            let exit_handle = SecurityScanExitHandle::from_live_state(exit_state);
             (*parent).ipc_reader.set_target(BufferedReaderTarget::SecurityScanIpc {
-                state: core::ptr::NonNull::from(&mut *exit_state),
+                state: exit_handle,
                 event_loop: event_loop.as_event_loop_ctx(),
             });
             (*process).set_exit_target(ProcessExitTarget::Install(
-                InstallProcessExitTarget::SecurityScan(core::ptr::NonNull::from(exit_state)),
+                InstallProcessExitTarget::SecurityScan(exit_handle),
             ));
             (*parent).process = Some(process);
         }

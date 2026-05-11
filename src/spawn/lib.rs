@@ -119,9 +119,7 @@ impl ProcessExitTarget {
                     rusage,
                 )
                 .expect("Process::on_exit passes a live Process pointer");
-                // SAFETY: the target was installed from the owning process state
-                // and is valid until that owner drops its Process ref.
-                unsafe { target.on_process_exit(&ctx) };
+                target.on_process_exit(&ctx);
                 None
             }
             Self::Runtime(target) => {

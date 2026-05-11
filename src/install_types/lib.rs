@@ -10,6 +10,7 @@ pub mod resolver_hooks;
 
 pub use process_exit::{
     LifecycleScriptExit, LifecycleScriptExitAction, SecurityScanExit, SecurityScanExitAction,
+    SecurityScanExitHandle,
 };
 pub use resolver_hooks::{
     Architecture, AutoInstaller, Behavior, Dependency, DependencyGroup, DependencyID,

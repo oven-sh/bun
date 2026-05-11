@@ -80,20 +80,57 @@ pub struct SecurityScanExit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SecurityScanExitHandle(NonNull<SecurityScanExit>);
+
+impl SecurityScanExitHandle {
+    /// # Safety
+    /// `state` must remain live and uniquely owned by the security scanner
+    /// subprocess until the process and IPC reader targets using this handle
+    /// have stopped firing.
+    #[inline]
+    pub unsafe fn from_live_state(state: &mut SecurityScanExit) -> Self {
+        Self(NonNull::from(state))
+    }
+
+    #[inline]
+    fn with_state<R>(self, f: impl FnOnce(&mut SecurityScanExit) -> R) -> R {
+        let mut state = self.0;
+        // SAFETY: upheld by `from_live_state`'s construction contract.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> SecurityScanExitAction {
+        self.with_state(|state| state.on_process_exit(ctx))
+    }
+
+    #[inline]
+    pub fn record_ipc_done(self) -> SecurityScanExitAction {
+        self.with_state(SecurityScanExit::record_ipc_done)
+    }
+
+    #[inline]
+    pub fn record_ipc_reader_closed(self) -> SecurityScanExitAction {
+        self.with_state(SecurityScanExit::record_ipc_reader_closed)
+    }
+
+    #[inline]
+    pub fn record_ipc_chunk(self, chunk: &[u8]) {
+        self.with_state(|state| state.record_ipc_chunk(chunk));
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallProcessExitTarget {
-    SecurityScan(NonNull<SecurityScanExit>),
+    SecurityScan(SecurityScanExitHandle),
 }
 
 impl InstallProcessExitTarget {
-    /// # Safety
-    /// The target must point at the live exit state for the process being
-    /// reported. Its owner must outlive the process exit callback.
     #[inline]
-    pub unsafe fn on_process_exit(mut self, ctx: &ProcessExitContext<'_>) {
-        match &mut self {
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) {
+        match self {
             Self::SecurityScan(state) => {
-                // SAFETY: upheld by the caller's target lifetime contract.
-                unsafe { state.as_mut() }.on_process_exit(ctx);
+                state.on_process_exit(ctx);
             }
         }
     }

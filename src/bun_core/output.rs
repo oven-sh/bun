@@ -277,6 +277,16 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub static bun_stdio_tty: crate::RacyCell<[i32; 3]> = crate::RacyCell::new([0, 0, 0]);
 
+/// Safe read of `bun_stdio_tty[idx]`. One `unsafe` for all `is_std*_tty()`
+/// callers (nonnull-asref reduction: 5 sites → 1).
+#[inline]
+fn stdio_tty_flag(idx: usize) -> bool {
+    // SAFETY: `bun_stdio_tty` is plain `[i32; 3]` data written once at startup
+    // (in `Source::set_init` / `bun_initialize_process`) before any reader
+    // thread is spawned; subsequent access is read-only.
+    unsafe { (*bun_stdio_tty.get())[idx] != 0 }
+}
+
 // TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
 // `AtomicCell` because the SIGWINCH handler writes this from signal context
 // while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
@@ -447,13 +457,12 @@ impl Source {
             STDOUT_STREAM_SET.store(true, Ordering::Relaxed);
             #[cfg(not(target_arch = "wasm32"))]
             {
-                // SAFETY: bun_stdio_tty is plain data written at startup.
-                let is_stdout_tty = unsafe { (*bun_stdio_tty.get())[1] } != 0;
+                let is_stdout_tty = stdio_tty_flag(1);
                 if is_stdout_tty {
                     let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
-                let is_stderr_tty = unsafe { (*bun_stdio_tty.get())[2] } != 0;
+                let is_stderr_tty = stdio_tty_flag(2);
                 if is_stderr_tty {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
@@ -637,17 +646,24 @@ pub mod stdio {
         pub fn bun_restore_stdio();
     }
 
+    /// Safe read of `bun_is_stdio_null[idx]`. One `unsafe` for all
+    /// `is_std*_null()` callers (nonnull-asref reduction: 3 sites → 1).
+    #[inline]
+    fn stdio_null_flag(idx: usize) -> bool {
+        // SAFETY: `bun_is_stdio_null` is plain `[i32; 3]` data written once by
+        // C (`bun_initialize_process`) at startup before threads; subsequent
+        // access from Rust is read-only.
+        unsafe { (*bun_is_stdio_null.get())[idx] == 1 }
+    }
+
     pub fn is_stderr_null() -> bool {
-        // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { (*bun_is_stdio_null.get())[2] == 1 }
+        stdio_null_flag(2)
     }
     pub fn is_stdout_null() -> bool {
-        // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { (*bun_is_stdio_null.get())[1] == 1 }
+        stdio_null_flag(1)
     }
     pub fn is_stdin_null() -> bool {
-        // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { (*bun_is_stdio_null.get())[0] == 1 }
+        stdio_null_flag(0)
     }
 
     pub fn init() {
@@ -840,18 +856,15 @@ pub fn stdout_descriptor_type() -> OutputStreamDescriptor {
 
 #[inline]
 pub fn is_stdout_tty() -> bool {
-    // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { (*bun_stdio_tty.get())[1] != 0 }
+    stdio_tty_flag(1)
 }
 #[inline]
 pub fn is_stderr_tty() -> bool {
-    // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { (*bun_stdio_tty.get())[2] != 0 }
+    stdio_tty_flag(2)
 }
 #[inline]
 pub fn is_stdin_tty() -> bool {
-    // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { (*bun_stdio_tty.get())[0] != 0 }
+    stdio_tty_flag(0)
 }
 
 pub fn is_github_action() -> bool {
@@ -993,27 +1006,32 @@ pub fn raw_error_writer() -> StreamType {
 // `Source` field. The Zig original returned `*Writer` and callers used it
 // briefly. Returning `&'static mut` is *unsound* if two are alive at once, but
 // matches the Zig contract until callers migrate to `with_error_writer(|w| ..)`.
-#[allow(clippy::mut_from_ref)]
-pub fn error_writer() -> &'static mut io::Writer {
+//
+// `source_writer_escape` centralises the escape: one `unsafe` for all five
+// public `*_writer*()` accessors (nonnull-asref reduction: 5 sites → 1).
+#[inline]
+fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.error_stream()));
-    // SAFETY: pointer escapes the RefCell borrow; see TODO(port) above.
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(project(s)));
+    // SAFETY: pointer escapes the RefCell borrow; the thread-local `Source`
+    // backing field has a stable address once `Source::init` has run, and the
+    // returned `&'static mut` is used briefly with no two live at once (see
+    // TODO(port) above — known-unsound shim until callers migrate).
     unsafe { &mut *p }
 }
 
+#[allow(clippy::mut_from_ref)]
+pub fn error_writer() -> &'static mut io::Writer {
+    source_writer_escape(Source::error_stream)
+}
+
 pub fn error_writer_buffered() -> &'static mut io::Writer {
-    debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.buffered_error_stream()));
-    // SAFETY: see TODO(port) above.
-    unsafe { &mut *p }
+    source_writer_escape(Source::buffered_error_stream)
 }
 
 // TODO: investigate returning the buffered_error_stream
 pub fn error_stream() -> &'static mut io::Writer {
-    debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.error_stream()));
-    // SAFETY: see TODO(port) above.
-    unsafe { &mut *p }
+    source_writer_escape(Source::error_stream)
 }
 
 pub fn raw_writer() -> StreamType {
@@ -1022,17 +1040,11 @@ pub fn raw_writer() -> StreamType {
 }
 
 pub fn writer() -> &'static mut io::Writer {
-    debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.stream()));
-    // SAFETY: see TODO(port) above.
-    unsafe { &mut *p }
+    source_writer_escape(Source::stream)
 }
 
 pub fn writer_buffered() -> &'static mut io::Writer {
-    debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.buffered_stream()));
-    // SAFETY: see TODO(port) above.
-    unsafe { &mut *p }
+    source_writer_escape(Source::buffered_stream)
 }
 
 pub fn reset_terminal() {

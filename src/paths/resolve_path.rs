@@ -20,6 +20,22 @@ thread_local! {
     static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
+/// Project `&'static mut` into a thread-local `UnsafeCell<[u8; N]>` scratch
+/// buffer. One `unsafe` site for all `PARSER_BUFFER` / `PARSER_JOIN_INPUT_BUFFER`
+/// / `JOIN_BUF` accessors (nonnull-asref reduction: 6 sites → 1).
+///
+/// The `'static` output lifetime is the honest contract: the buffer is
+/// thread-local storage that lives for the thread's lifetime, and the returned
+/// slice is "valid until the next call on this thread" (Zig threadlocal-var
+/// pointer semantics — see module PORT NOTE above). Callers uphold the
+/// single-live-borrow-per-thread invariant.
+#[inline]
+fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
+    // SAFETY: thread-local UnsafeCell ⇒ this thread is the sole accessor;
+    // callers never re-enter while holding the borrow (see fn doc).
+    unsafe { &mut *b.get() }
+}
+
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     if input.len() > MAX_PATH_BYTES {
         if cfg!(debug_assertions) {
@@ -400,14 +416,22 @@ thread_local! {
         const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
+/// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
+/// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
+/// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> *mut PathBuffer {
+fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
     let mut p = c.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
         c.set(p);
     }
-    p
+    // SAFETY: `p` is non-null after the init branch above and points at a
+    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
+    // lives in a `thread_local!`, so this thread is the sole accessor; callers
+    // uphold the single-live-borrow-per-thread invariant documented at the
+    // thread-local declaration.
+    unsafe { &mut *p }
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow
@@ -627,7 +651,7 @@ pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     to: &'a [u8],
 ) -> &'a [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_normalized_buf::<P, ALWAYS_COPY>(unsafe { &mut *relative_to_common_path_buf() }, from, to)
+    relative_normalized_buf::<P, ALWAYS_COPY>(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
 }
 
 pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
@@ -684,7 +708,7 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
 
 pub fn relative_z(from: &[u8], to: &[u8]) -> &'static ZStr {
     // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_buf_z(unsafe { &mut *relative_to_common_path_buf() }, from, to)
+    relative_buf_z(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
 }
 
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
@@ -701,12 +725,10 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    // SAFETY: thread-local lazily-boxed buffers; RELATIVE_FROM_BUF and RELATIVE_TO_BUF
-    // are independent allocations so the two `&mut` borrows below are disjoint. Single
-    // live borrow per buffer per thread (see invariant on PARSER_BUFFER).
-    let relative_from_buf = unsafe { &mut *RELATIVE_FROM_BUF.with(lazy_path_buf) };
-    // SAFETY: see above — disjoint thread-local allocation.
-    let relative_to_buf = unsafe { &mut *RELATIVE_TO_BUF.with(lazy_path_buf) };
+    // RELATIVE_FROM_BUF and RELATIVE_TO_BUF are independent allocations so the
+    // two `&mut` borrows below are disjoint.
+    let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
+    let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
 
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {
@@ -783,7 +805,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     to: &[u8],
 ) -> &'static [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_platform_buf::<P, ALWAYS_COPY>(unsafe { &mut *relative_to_common_path_buf() }, from, to)
+    relative_platform_buf::<P, ALWAYS_COPY>(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
@@ -1384,19 +1406,14 @@ pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
 ) -> &mut [u8] {
     // PORT NOTE: returns slice into thread-local PARSER_BUFFER; valid until the
     // next call on this thread (Zig threadlocal-var semantics).
-    PARSER_BUFFER.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
-        normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf)
-    })
+    PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
 pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     str: &[u8],
 ) -> &mut ZStr {
     PARSER_BUFFER.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
+        let buf = tl_buf_mut(b);
         let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
         let len = normalized.len();
         buf[len] = 0;
@@ -1504,11 +1521,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // PORT NOTE: result borrows the thread-local buffer ('static) OR returns `cwd`
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
-        join_abs_string_buf::<P>(cwd, buf, parts)
-    })
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
@@ -1517,11 +1530,7 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
-        join_abs_string_buf_z::<P>(cwd, buf, parts)
-    })
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
 
 thread_local! {
@@ -1529,19 +1538,11 @@ thread_local! {
 }
 
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
-    JOIN_BUF.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
-        join_string_buf::<P>(buf, parts)
-    })
+    JOIN_BUF.with(|b| join_string_buf::<P>(tl_buf_mut(b), parts))
 }
 
 pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
-    JOIN_BUF.with(|b| {
-        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-        let buf = unsafe { &mut *b.get() };
-        join_z_buf::<P>(buf, parts)
-    })
+    JOIN_BUF.with(|b| join_z_buf::<P>(tl_buf_mut(b), parts))
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {

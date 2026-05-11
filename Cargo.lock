@@ -1129,6 +1129,7 @@ dependencies = [
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_runtime_types",
  "bun_spawn_sys",
  "bun_string",
  "bun_sys",

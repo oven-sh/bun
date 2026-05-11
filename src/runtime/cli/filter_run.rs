@@ -8,12 +8,13 @@ use crate::cli::run_command::RunCommand;
 use crate::cli::Command;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
-use bun_io::{BufferedReader, ReadState};
+use bun_io::{BufferedReader, BufferedReaderTarget, ReadState};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_runtime_types::reader::RuntimeBufferedReaderTarget;
 use bun_spawn_types::ProcessIdentity;
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
@@ -132,10 +133,6 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
-
-        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
-        handle.stdout.set_parent(handle_ptr);
-        handle.stderr.set_parent(handle_ptr);
 
         #[cfg(windows)]
         {
@@ -258,32 +255,25 @@ pub(crate) unsafe fn on_process_exit_from_mini_context(
     unsafe { (*handle).on_process_exit(process, status) };
 }
 
-// SAFETY: `this` is the `*mut ProcessHandle` registered via `set_parent`; the
-// reader holds no `&mut ProcessHandle` across the callback (it only holds a
-// `&mut` to the embedded `BufferedReader` field, which is disjoint from the
-// fields touched here per the `BufferedReaderParent` aliasing contract).
-bun_io::buffered_reader_parent_link!(FilterRunHandle for ProcessHandle<'static>);
-impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
-    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FilterRunHandle;
-    const HAS_ON_READ_CHUNK: bool = true;
+pub(crate) unsafe fn on_reader_chunk_from_mini_context(
+    context: *mut c_void,
+    index: usize,
+    chunk: &[u8],
+) -> bool {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return false;
+    }
 
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        unsafe { (*this).on_read_chunk(chunk, has_more) }
+    let state = unsafe { &mut *context.cast::<State<'_>>() };
+    if index >= state.handles.len() {
+        debug_assert!(index < state.handles.len());
+        return false;
     }
-    unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { (*this).on_reader_done() }
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        unsafe { (*this).on_reader_error(err) }
-    }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
-        unsafe { (*this).loop_() }
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // SAFETY: state backref valid for the lifetime of the run loop.
-        unsafe { (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx() }
-    }
+
+    let handle = &raw mut state.handles[index];
+    let _ = unsafe { state.read_chunk(&mut *handle, chunk) };
+    true
 }
 
 /// `Output.prettyFmt(str, true)` — comptime ANSI-tag expansion in Zig.
@@ -949,8 +939,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             idx,
             state: state_ptr,
             config: script,
-            stdout: BufferedReader::init::<ProcessHandle>(),
-            stderr: BufferedReader::init::<ProcessHandle>(),
+            stdout: BufferedReader::init_target(BufferedReaderTarget::Runtime {
+                target: RuntimeBufferedReaderTarget::FilterRunHandle { index: idx },
+                event_loop: state.event_loop_handle.as_event_loop_ctx(),
+            }),
+            stderr: BufferedReader::init_target(BufferedReaderTarget::Runtime {
+                target: RuntimeBufferedReaderTarget::FilterRunHandle { index: idx },
+                event_loop: state.event_loop_handle.as_event_loop_ctx(),
+            }),
             buffer: Vec::new(),
             process: None,
             options: SpawnOptions {

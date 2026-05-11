@@ -1720,6 +1720,7 @@ bun_io::link_impl_EventLoopCtx! {
         pipe_read_buffer() => {
             core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
         },
+        current_context() => (*(*this).event_loop()).current_context(),
     }
 }
 

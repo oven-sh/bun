@@ -31,6 +31,7 @@ use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
+use bun_runtime_types::reader::{RuntimeBufferedReaderDelivery, RuntimeBufferedReaderTarget};
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -43,6 +44,13 @@ use bun_sys::ReturnCodeExt as _;
 
 // PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
+
+unsafe extern "Rust" {
+    fn __bun_dispatch_runtime_buffered_reader_delivery(
+        delivery: RuntimeBufferedReaderDelivery<'_>,
+        context: *mut c_void,
+    ) -> bool;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
@@ -62,6 +70,10 @@ pub enum BufferedReaderTarget {
         state: NonNull<SecurityScanExit>,
         event_loop: EventLoopHandle,
     },
+    Runtime {
+        target: RuntimeBufferedReaderTarget,
+        event_loop: EventLoopHandle,
+    },
 }
 
 impl BufferedReaderTarget {
@@ -69,6 +81,7 @@ impl BufferedReaderTarget {
     fn event_loop(self) -> EventLoopHandle {
         match self {
             Self::SecurityScanIpc { event_loop, .. } => event_loop,
+            Self::Runtime { event_loop, .. } => event_loop,
         }
     }
 
@@ -82,6 +95,13 @@ impl BufferedReaderTarget {
                 // SAFETY: Windows uws loop wrapper stores the live uv loop.
                 unsafe { (*event_loop.loop_()).uv_loop }
             }
+            Self::Runtime { event_loop, .. } => {
+                #[cfg(not(windows))]
+                { event_loop.loop_().cast() }
+                #[cfg(windows)]
+                // SAFETY: Windows uws loop wrapper stores the live uv loop.
+                unsafe { (*event_loop.loop_()).uv_loop }
+            }
         }
     }
 
@@ -89,6 +109,7 @@ impl BufferedReaderTarget {
     fn has_on_read_chunk(self) -> bool {
         match self {
             Self::SecurityScanIpc { .. } => true,
+            Self::Runtime { target, .. } => target.has_on_read_chunk(),
         }
     }
 
@@ -111,6 +132,18 @@ impl BufferedReaderTarget {
                 Self::with_security_scan_state(state, |state| state.record_ipc_chunk(chunk));
                 true
             }
+            Self::Runtime { target, event_loop } => {
+                let delivery = target.on_read_chunk(chunk);
+                // SAFETY: `delivery` carries borrowed data valid for this
+                // synchronous call only; the high-tier dispatcher must consume
+                // it before returning.
+                unsafe {
+                    __bun_dispatch_runtime_buffered_reader_delivery(
+                        delivery,
+                        event_loop.current_context(),
+                    )
+                }
+            }
         }
     }
 
@@ -122,6 +155,7 @@ impl BufferedReaderTarget {
                     let _ = state.record_ipc_done();
                 });
             }
+            Self::Runtime { .. } => {}
         }
     }
 
@@ -137,6 +171,7 @@ impl BufferedReaderTarget {
                     let _ = state.record_ipc_done();
                 });
             }
+            Self::Runtime { .. } => {}
         }
     }
 }

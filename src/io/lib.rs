@@ -101,6 +101,7 @@ bun_dispatch::link_interface! {
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
         fn set_after_event_loop_callback(cb: Option<OpaqueCallback>, ctx: *mut core::ffi::c_void);
         fn pipe_read_buffer() -> *mut [u8];
+        fn current_context() -> *mut core::ffi::c_void;
     }
 }
 
@@ -192,7 +193,6 @@ bun_dispatch::link_interface! {
         Terminal,
         CronRegister,
         CronRemove,
-        FilterRunHandle,
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,

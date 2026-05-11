@@ -409,6 +409,7 @@ Remaining owner movement
   │     └─> honest next move
   │           - move the lifecycle owner/effect boundary far enough into bun_install_types that ProcessExitTarget can carry a typed state/handle whose Ready action is directly consumable
   │           - a NonNull<LifecycleScriptExit> target by itself is only reducer state; using it to recover LifecycleScriptSubprocess would be the old owner-pointer coupling under a field-offset disguise
+  │           - a NonNull<LifecycleScriptState> target by itself has the same problem: handle_exit still needs the process ref, stdout/stderr readers and buffers, envp/shell path, heap node, PackageManager effects, and Installer effects
   │           - scanning PackageManager.active_lifecycle_scripts by ProcessIdentity would add the side lookup path this branch is specifically rejecting
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
@@ -424,6 +425,8 @@ Remaining owner movement
   │     │     - may resolve/reject promises, spawn the next cron command, free the job, or continue cron-specific cleanup
   │     └─> honest next move
   │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, and introduce/move any inert JSC handle types before putting promise/global-like fields in that shape
+  │           - a ProcessExitTarget that stores only ProcessState preserves the reducer but loses process-exit-last synchronous owner re-entry
+  │           - a ProcessExitTarget that stores CronRegisterJob*/CronRemoveJob* is the old callback owner pointer under a typed spelling
   │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
   ├─> Bun.spawn Subprocess
   │     ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
@@ -505,6 +508,27 @@ Required deeper type movement
         ├─> Mini shell works because the Mini driver supplies the live Interpreter as typed tick context
         ├─> JS shell has a shared JS event loop with multiple possible interpreters
         └─> the honest shape is per-interpreter typed driver context or sidecar-owned interpreter identity, not ShellSubprocess*/CmdHandle recovery
+```
+
+```
+Typed reader-delivery follow-through
+  ├─> current converted reader path
+  │     └─> SecurityScan IPC reader stores BufferedReaderTarget::SecurityScanIpc
+  │           - bun_io mutates only bun_install_types::SecurityScanExit
+  │           - bun_install still performs scanner parsing/drain/deinit effects
+  ├─> runtime CLI reader paths that are structurally close
+  │     ├─> FilterRunHandle
+  │     ├─> MultiRunPipeReader
+  │     └─> TestParallelWorkerPipe
+  ├─> why they are not the same as SecurityScan
+  │     ├─> read chunks immediately mutate runtime-owned output state
+  │     ├─> the state owner is the active Mini/JS driver context, not inert reducer state
+  │     └─> bun_io cannot name the runtime owner without rebuilding the callback cycle
+  └─> valid next shape
+        ├─> add a typed runtime reader-delivery action in bun_runtime_types
+        ├─> let bun_io store RuntimeBufferedReaderTarget values and emit typed borrowed chunk/done/error deliveries
+        ├─> dispatch through a single high-tier hook carrying typed action data plus the event-loop current context
+        └─> no target may carry ProcessHandle*/WorkerPipe*/PipeReader* back to bun_io
 ```
 
 ## Runtime Tasks

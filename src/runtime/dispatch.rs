@@ -105,6 +105,7 @@ use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 use bun_runtime_types::process_exit::RuntimeProcessExitAction;
+use bun_runtime_types::reader::RuntimeBufferedReaderDelivery;
 
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 
@@ -213,6 +214,18 @@ pub fn __bun_dispatch_process_exit_delivery(
 
 fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
     __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_dispatch_runtime_buffered_reader_delivery(
+    delivery: RuntimeBufferedReaderDelivery<'_>,
+    context: *mut core::ffi::c_void,
+) -> bool {
+    match delivery {
+        RuntimeBufferedReaderDelivery::FilterRunHandleChunk { index, chunk } => unsafe {
+            crate::cli::filter_run::on_reader_chunk_from_mini_context(context, index, chunk)
+        },
+    }
 }
 
 fn process_exit_context(

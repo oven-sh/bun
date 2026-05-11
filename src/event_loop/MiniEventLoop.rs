@@ -578,6 +578,7 @@ bun_io::link_impl_EventLoopCtx! {
             (*this).after_event_loop_callback_ctx = NonNull::new(ctx);
         },
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
+        current_context() => (*this).current_context(),
     }
 }
 

@@ -1177,7 +1177,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // intrusive ref is released in `Subprocess::finalize`.
         process: unsafe { bun_ptr::BackRef::from_raw(process) },
         exit_state: bun_runtime_types::subprocess::SubprocessExitState::new(),
-        pid_rusage: None,
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
         // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /

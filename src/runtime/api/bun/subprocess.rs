@@ -151,7 +151,6 @@ pub struct Subprocess<'a> {
     pub stdout: Readable,
     pub stderr: Readable,
     pub stdio_pipes: Vec<StdioPipeItem>,
-    pub pid_rusage: Option<Rusage>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
     pub terminal: Option<NonNull<Terminal>>,
@@ -398,8 +397,8 @@ impl Subprocess<'_> {
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let rusage_ref = 'brk: {
-            if self.pid_rusage.is_some() {
-                break 'brk self.pid_rusage.as_ref().unwrap();
+            if let Some(rusage) = self.exit_state.rusage() {
+                break 'brk rusage;
             }
 
             #[cfg(windows)]
@@ -411,8 +410,8 @@ impl Subprocess<'_> {
                         None
                     };
                 if let Some(r) = rusage {
-                    self.pid_rusage = Some(r);
-                    break 'brk self.pid_rusage.as_ref().unwrap();
+                    self.exit_state.record_rusage(r);
+                    break 'brk self.exit_state.rusage().unwrap();
                 }
             }
 
@@ -952,7 +951,7 @@ impl Subprocess<'_> {
             ));
             return;
         };
-        if !self.exit_state.matches_process_handle(process_handle) {
+        if !self.exit_state.record_process_exit_rusage(process_handle, *rusage) {
             Output::debug_warn(format_args!(
                 "<d>[Subprocess]<r> onProcessExit called with wrong process"
             ));
@@ -965,7 +964,6 @@ impl Subprocess<'_> {
         let global_this = global_this.get();
         let jsc_vm = global_this.bun_vm().as_mut();
         this_jsvalue.ensure_still_alive();
-        self.pid_rusage = Some(*rusage);
         let is_sync = self.flags.contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 

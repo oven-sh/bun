@@ -264,15 +264,18 @@ to move before
 
 `Bun.spawn` subprocesses now also carry their lower child-process identities in
 `bun_runtime_types::subprocess::SubprocessExitState`: lower `ProcessHandle`,
-stdout `BufferedReaderHandle`, and stderr `BufferedReaderHandle`. The generated
-spawn binding records those handles after the process/readers are created, and
-the current owner callback validates process exit through the sidecar-owned
-`ProcessHandle` before running the existing JS wrapper effects. This is still
-not enough to remove `ProcessExitKind::Subprocess`; the wrapper owns the JSC
-refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer cleanup, and self
-deref edges that have to move or be named through a typed runtime effect
-boundary. `GlobalRef<T>` has been moved into `bun_jsc_types` because it is only
-a copyable raw VM-lifetime pointer wrapper; `bun_jsc` now aliases
+stdout `BufferedReaderHandle`, stderr `BufferedReaderHandle`, and the cached
+`Rusage` snapshot used by `resourceUsage()`. The generated spawn binding
+records those handles after the process/readers are created, and the current
+owner callback validates process exit through the sidecar-owned `ProcessHandle`
+before recording the exit rusage and running the existing JS wrapper effects.
+The Windows live `uv_getrusage` fallback also fills the same sidecar cache.
+This is still not enough to remove `ProcessExitKind::Subprocess`; the wrapper
+owns the JSC refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer
+cleanup, and self deref edges that have to move or be named through a typed
+runtime effect boundary. `GlobalRef<T>` has been moved into `bun_jsc_types`
+because it is only a copyable raw VM-lifetime pointer wrapper; `bun_jsc` now
+aliases
 `GlobalRef<JSGlobalObject>` so existing effect code keeps the same API. `JsRef`,
 `Strong::Optional`, and `JSPromiseStrong` still own JSC handle slots and release
 them on drop. Moving the full `Subprocess`/cron job owner below `bun_runtime`
@@ -323,6 +326,9 @@ Process-exit production shape
   │     │     └─> parsed schedule bitsets; next-occurrence JSC wall-clock conversion stays in bun_runtime
   │     └─> ProcessState
   │           └─> child-process readiness/error state shared below bun_runtime
+  ├─> bun_runtime_types::subprocess
+  │     └─> SubprocessExitState
+  │           └─> lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage; JS wrapper effects stay in bun_runtime
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects
@@ -502,7 +508,7 @@ Remaining owner movement
   └─> Bun.spawn Subprocess
         ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
         │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
-        │     - embeds SubprocessExitState for lower process/stdout/stderr handles
+        │     - embeds SubprocessExitState for lower process/stdout/stderr handles and the cached resource-usage snapshot
         │     - spawn setup still installs ProcessExit::Subprocess after stream/IPC setup and before watch/watch_or_reap
         │     - send_exit_notification currently calls proc.on_exit(...) and ignores the return value because the legacy handler runs inline; a typed target would need explicit delivery consumption there too
         ├─> existing VM process tracking
@@ -527,7 +533,7 @@ What a real next split must change
   │     └─> valid shape: split register/remove into shared cron job state plus runtime effect applier; bun_spawn records exit into the shared state and bun_runtime advances/resolves without recovering CronRegisterJob*
   └─> Bun.spawn
         ├─> current typed data: ProcessIdentity, Status, Rusage, SubprocessExitState
-        ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
+        ├─> current lower handles/state in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle + cached Rusage
         ├─> missing typed consumer: subprocess exit state that contains the JS/stdio/IPC lifetime edges without being the JS wrapper pointer
         └─> valid shape: split the stable subprocess exit state out of the generated JS wrapper enough that ProcessExitTarget names that state and runtime dispatch applies JS effects from it
 ```
@@ -550,7 +556,7 @@ Required deeper type movement
   │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   └─> Bun.spawn needs a separable subprocess exit state
         ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
-        ├─> SubprocessExitState now stores the lower ProcessHandle and stdout/stderr BufferedReaderHandle from the production spawn path
+        ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
         ├─> GlobalRef<T> has moved to bun_jsc_types as an inert pointer wrapper, but JsRef/Strong/JSPromiseStrong bring JSC handle-slot allocation and drop semantics with them

@@ -75,10 +75,11 @@ impl WTFTimer {
     /// `imminent_gc_timer` and remains live; `vm` is the live VM that owns
     /// this timer.
     pub unsafe fn run(this: *mut Self, vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — `this` is live; per-field raw deref so we
-        // don't hold `&mut *this` across `All::remove` (which `&mut`-derefs
-        // `event_loop_timer`).
-        if unsafe { (*this).event_loop_timer.state } == EventLoopTimerState::ACTIVE {
+        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
+        // short-lived `&Self` per Deref so no `&WTFTimer` spans the
+        // `All::remove` raw write to `event_loop_timer`.
+        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: `vm` is the live VM that owns this timer's heap;
             // `event_loop_timer` is an embedded field of a live allocation.
             unsafe {
@@ -86,8 +87,7 @@ impl WTFTimer {
                 (*state).timer.remove(ptr::addr_of_mut!((*this).event_loop_timer));
             }
         }
-        // SAFETY: per fn contract — `this` is live.
-        unsafe { (*this).run_without_removing() };
+        t.run_without_removing();
     }
 
     #[inline]
@@ -127,9 +127,11 @@ impl WTFTimer {
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
         let self_opaque = this.cast::<()>();
-        // SAFETY: per fn contract — `this` is live; copy the `BackRef` out so the
+        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
+        // short-lived `&Self` per Deref. Copy the `BackRef` out so the
         // subsequent `&AtomicPtr` borrow is detached from `*this`.
-        let imminent_br = unsafe { (*this).imminent };
+        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let imminent_br = t.imminent;
         let imminent = imminent_br.get();
 
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
@@ -166,35 +168,36 @@ impl WTFTimer {
             interval.nsec -= NS_PER_S;
         }
 
-        // SAFETY: `(*this).vm` is the VM that owns this timer's heap (captured
-        // at `WTFTimer__create`); `event_loop_timer` is an embedded field of a
+        // SAFETY: `t.vm` is the VM that owns this timer's heap (captured at
+        // `WTFTimer__create`); `event_loop_timer` is an embedded field of a
         // live allocation. May be called off the JS thread — `All::update`
-        // takes its own lock.
+        // takes its own lock. The `repeat` write is the only field write here;
+        // no `&Self` from `t` is live across it.
         unsafe {
-            let state = crate::jsc_hooks::runtime_state_of((*this).vm.as_ptr());
+            let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
             (*state)
                 .timer
                 .update(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
+            (*this).repeat = repeat;
         }
-        // SAFETY: per fn contract.
-        unsafe { (*this).repeat = repeat };
     }
 
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn cancel(this: *mut Self) {
-        // SAFETY: per fn contract — `this` outlives this scope. `lock_guard`
-        // stores `*const Mutex` (no borrow of `*this` is held), so the
-        // `addr_of_mut!` below remains legal.
-        let _g = unsafe { (*this).lock.lock_guard() };
+        // SAFETY: per fn contract — `this` outlives this scope. `ThisPtr` vends
+        // only fresh short-lived `&Self` per Deref; `lock_guard` stores a
+        // `BackRef<Mutex>` (no `&Self` held in `_g`), so the `addr_of_mut!`
+        // below stays legal under Stacked Borrows.
+        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _g = t.lock.lock_guard();
 
-        // SAFETY: per fn contract.
-        if unsafe { (*this).script_execution_context_id }.valid() {
+        if t.script_execution_context_id.valid() {
             // Only clear imminent if this timer was the one that set it.
             let self_opaque = this.cast::<()>();
-            // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
-            // into the VM's event loop, which outlives this timer.
-            let imminent_br = unsafe { (*this).imminent };
+            // `imminent` is a `BackRef` into the VM's event loop, which
+            // outlives this timer.
+            let imminent_br = t.imminent;
             let _ = imminent_br.compare_exchange(
                 self_opaque,
                 ptr::null_mut(),
@@ -202,12 +205,13 @@ impl WTFTimer {
                 Ordering::SeqCst,
             );
 
-            // SAFETY: per fn contract.
-            if unsafe { (*this).event_loop_timer.state } == EventLoopTimerState::ACTIVE {
-                // SAFETY: `(*this).vm` is the VM that owns this timer's heap;
-                // may be called off the JS thread — `All::remove` locks.
+            if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+                // SAFETY: `t.vm` is the VM that owns this timer's heap; may be
+                // called off the JS thread — `All::remove` locks.
+                // `addr_of_mut!` through the original `*mut` preserves write
+                // provenance for the heap-node mutation inside `remove`.
                 unsafe {
-                    let state = crate::jsc_hooks::runtime_state_of((*this).vm.as_ptr());
+                    let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
                     (*state)
                         .timer
                         .remove(ptr::addr_of_mut!((*this).event_loop_timer));
@@ -223,21 +227,23 @@ impl WTFTimer {
     /// `this` is the container of an `EventLoopTimer` just popped from
     /// `All.timers`; `_vm` is the live per-thread VM.
     pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, _vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — `this` is live.
+        // SAFETY: per fn contract — `this` is live. Single raw write to
+        // `event_loop_timer.state` precedes the `ThisPtr` borrow; subsequent
+        // field reads via `t` create fresh short-lived `&Self`.
         unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
+        let t = unsafe { bun_ptr::ThisPtr::new(this) };
         // Only clear imminent if this timer was the one that set it.
         let self_opaque = this.cast::<()>();
-        // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
-        // into the VM's event loop, which outlives this timer.
-        let imminent_br = unsafe { (*this).imminent };
+        // `imminent` is a `BackRef` into the VM's event loop, which outlives
+        // this timer.
+        let imminent_br = t.imminent;
         let _ = imminent_br.compare_exchange(
             self_opaque,
             ptr::null_mut(),
             Ordering::SeqCst,
             Ordering::SeqCst,
         );
-        // SAFETY: per fn contract — `this` is live.
-        unsafe { (*this).run_without_removing() };
+        t.run_without_removing();
     }
 
     /// # Safety

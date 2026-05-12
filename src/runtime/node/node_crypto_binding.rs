@@ -271,12 +271,10 @@ pub mod random {
         }
 
         fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-            let vm = global.bun_vm();
-            // SAFETY: `vm` is the singleton JS VM; `event_loop()` returns its live event loop.
-            unsafe {
-                (*(*vm).event_loop())
-                    .run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::NULL, self.value]);
-            }
+            // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor;
+            // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+            global.bun_vm().event_loop_mut()
+                .run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::NULL, self.value]);
         }
 
         fn deinit(&mut self) {

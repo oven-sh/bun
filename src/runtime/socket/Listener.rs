@@ -527,13 +527,14 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: NewSocket::new returns a valid heap pointer.
-        unsafe { (*this_socket).ref_() };
+        // SAFETY: `NewSocket::new` returns a non-null live heap pointer
+        // (refcount==1); single JS thread, no other borrow exists yet.
+        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.get().global_object;
             NewSocket::<SSL>::data_set_cached(
-                // SAFETY: this_socket just allocated above.
-                unsafe { (*this_socket).get_this_value(&global) },
+                s.get_this_value(&global),
                 &global,
                 default_data,
             );
@@ -572,14 +573,15 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: NewSocket::new returns a valid heap pointer
-        unsafe { (*this_socket).ref_() };
+        // SAFETY: `NewSocket::new` returns a non-null live heap pointer
+        // (refcount==1); single JS thread, no other borrow exists yet.
+        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        s.ref_();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.get().global_object;
             NewSocket::<SSL>::data_set_cached(
-                // SAFETY: this_socket just allocated above.
-                unsafe { (*this_socket).get_this_value(&global) },
+                s.get_this_value(&global),
                 &global,
                 default_data,
             );
@@ -1025,12 +1027,12 @@ impl Listener {
 
                 let mut handlers_box = Box::new(handlers_moved);
                 handlers_box.mode = SocketMode::Client;
-                let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
-                // SAFETY: handlers_ptr was just heap-allocated; exclusive access.
-                unsafe { &*handlers_ptr }.promise.with_mut(|p| p.set(global, promise_value));
+                // Set on the `Box` before `into_raw` so no raw-deref is needed.
+                handlers_box.promise.with_mut(|p| p.set(global, promise_value));
+                let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
@@ -1223,12 +1225,12 @@ impl Listener {
 
         let mut handlers_box = Box::new(handlers_moved);
         handlers_box.mode = SocketMode::Client;
-        let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
-        // SAFETY: handlers_ptr was just heap-allocated above; exclusive access
-        unsafe { &*handlers_ptr }.promise.with_mut(|p| p.set(global, promise_value));
+        // Set on the `Box` before `into_raw` so no raw-deref is needed.
+        handlers_box.promise.with_mut(|p| p.set(global, promise_value));
+        let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
         let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);
@@ -1499,7 +1501,9 @@ pub struct WindowsNamedPipeListeningContext {
     /// `NonNull::as_ref`.
     pub listener: Option<bun_ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
-    pub vm: *mut VirtualMachine,
+    /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
+    /// `self.vm.is_shutting_down()` without a raw-pointer deref.
+    pub vm: &'static VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }
 
@@ -1522,8 +1526,7 @@ impl WindowsNamedPipeListeningContext {
         // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
         // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
         let this_ref = unsafe { &mut *this };
-        // SAFETY: `vm` is the per-thread VirtualMachine; valid until process exit.
-        let shutting_down = unsafe { (*this_ref.vm).is_shutting_down() };
+        let shutting_down = this_ref.vm.is_shutting_down();
         if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
             // connection dropped or vm is shutting down or we are deiniting/closing
             return;
@@ -1608,7 +1611,7 @@ impl WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
-            vm: global_this.bun_vm_ptr(),
+            vm: global_this.bun_vm(),
             ctx: None,
         }));
         // SAFETY: just allocated, non-null, exclusive.
@@ -1639,10 +1642,9 @@ impl WindowsNamedPipeListeningContext {
             }
         }
 
-        // SAFETY: vm.uv_loop() returns the process-wide libuv loop.
         let init_result = this_ref
             .uv_pipe
-            .init(unsafe { (*this_ref.vm).uv_loop() }.cast(), false);
+            .init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
             return Err(bun_core::err!("FailedToInitPipe"));
         }

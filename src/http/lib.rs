@@ -1386,7 +1386,9 @@ pub(crate) mod body_out {
     use super::{MutableString, NonNull};
 
     /// Upgrade the body-out NonNull to `&mut MutableString`.
-    /// INVARIANT (module): `p` was obtained from `state.body_out_str`.
+    /// INVARIANT (module): `p` was obtained from `state.body_out_str` (or its
+    /// upstream source, `AsyncHTTP.response_buffer`, which `start()` forwards
+    /// into `body_out_str`).
     #[inline]
     pub(crate) fn as_mut<'a>(mut p: NonNull<MutableString>) -> &'a mut MutableString {
         // SAFETY: see module-level invariant.
@@ -2542,17 +2544,18 @@ impl<'a> HTTPClient<'a> {
         // call that takes `&mut self`. The stream is re-borrowed only at the
         // `detach()` sites via `request_stream_detach`.
         let upgrade_state = self.flags.upgrade_state;
-        let (mut stream_buffer_ptr, ended) = {
+        let (stream_buffer_ptr, ended) = {
             let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
                 return;
             };
             let Some(buf) = stream.buffer else { return };
             (buf, stream.ended)
         };
-        // SAFETY: ThreadSafeStreamBuffer is owned by the JS-side request body
-        // stream and outlives this call (intrusive-refcounted; independent
-        // heap allocation, so `&mut` here does not alias `self`).
-        let stream_buffer = unsafe { stream_buffer_ptr.as_mut() };
+        // ThreadSafeStreamBuffer is owned by the JS-side request body stream
+        // and outlives this call (intrusive-refcounted; independent heap
+        // allocation, so `&mut` here does not alias `self`). Route through the
+        // shared `from_attached` accessor (one centralised unsafe).
+        let stream_buffer = ThreadSafeStreamBuffer::from_attached(stream_buffer_ptr);
         if upgrade_state == HTTPUpgradeState::Pending {
             // cannot drain yet, upgrade is waiting for upgrade
             return;

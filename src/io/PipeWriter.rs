@@ -320,9 +320,7 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
         self.handle.get_fd()
     }
     fn get_buffer(&self) -> &[u8] {
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        // Raw-ptr dispatch — no `&Parent` materialized.
-        unsafe { Parent::get_buffer(self.parent()) }
+        self.get_buffer_internal()
     }
     fn on_write(&mut self, written: usize, status: WriteStatus) {
         self._on_write(written, status);
@@ -354,13 +352,35 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent.map_or(core::ptr::null_mut(), bun_ptr::ParentRef::as_mut_ptr)
     }
 
+    /// Single nonnull-asref dispatch for the set-once `parent` backref.
+    ///
+    /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
+    /// [`set_parent`](Self::set_parent) before any method that reaches this
+    /// accessor, and the writer is an intrusive field of `*parent` so the
+    /// pointee strictly outlives `self`. Collapses N identical
+    /// `unsafe { Parent::event_loop(self.parent()) }` blocks into one.
+    #[inline]
+    fn parent_event_loop(&self) -> EventLoopHandle {
+        // SAFETY: type invariant — see doc comment above.
+        unsafe { Parent::event_loop(self.parent()) }
+    }
+
+    /// See [`parent_event_loop`](Self::parent_event_loop) for the encapsulated
+    /// type invariant. `on_error` may re-enter via the parent's intrusive
+    /// `writer` field; callers that read `self` afterwards must launder
+    /// (R-2 noalias) — this accessor does not.
+    #[inline]
+    fn parent_on_error(&self, err: sys::Error) {
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_error(self.parent(), err) }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>()
     }
 
     pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
-        FilePollRef::init(// SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::event_loop(self.parent()) }, fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()))
+        FilePollRef::init(self.parent_event_loop(), fd, Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()))
     }
 
     pub fn get_poll(&self) -> Option<FilePollRef> {
@@ -379,8 +399,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     fn _on_error(&mut self, err: sys::Error) {
         debug_assert!(!err.is_retry());
 
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::on_error(self.parent(), err) };
+        self.parent_on_error(err);
 
         self.close();
     }
@@ -433,12 +452,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) }.loop_();
+        let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(self.parent(), err) };
+                self.parent_on_error(err);
             }
             sys::Result::Ok(()) => {}
         }
@@ -551,16 +568,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 p
             }
         };
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) }.loop_();
+        let loop_ = self.parent_event_loop().loop_();
 
         match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                // SAFETY: parent BACKREF valid.
-                let event_loop = unsafe { Parent::event_loop(self.parent()) };
+                let event_loop = self.parent_event_loop();
                 self.enable_keeping_process_alive(event_loop);
             }
         }
@@ -669,6 +684,24 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.parent
     }
 
+    /// Single nonnull-asref dispatch for the set-once `parent` backref.
+    ///
+    /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
+    /// [`set_parent`](Self::set_parent) before any write path is reached, and
+    /// the writer is an intrusive field of `*parent` so the pointee strictly
+    /// outlives `self`. Collapses the N identical
+    /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
+    /// `WriteResult` arm) into one. `on_write` may re-enter via the parent's
+    /// intrusive `writer` field; callers that read `self` afterwards must
+    /// launder (R-2 noalias) — the existing laundered sites in `_on_write` /
+    /// `register_poll` keep their raw-pointer dispatch and do **not** route
+    /// through this accessor.
+    #[inline]
+    fn parent_on_write(&self, amount: usize, status: WriteStatus) {
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_write(self.parent(), amount, status) }
+    }
+
     pub fn get_force_sync(&self) -> bool {
         self.force_sync
     }
@@ -729,8 +762,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             self.outgoing.list.clear();
         }
 
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::on_write(self.parent(), written, status) };
+        self.parent_on_write(written, status);
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -826,8 +858,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         debug_assert!(!self.is_done);
 
         if self.should_buffer(0) {
-            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::on_write(self.parent(), buf_len, WriteStatus::Drained) };
+            self.parent_on_write(buf_len, WriteStatus::Drained);
             Self::register_poll(self);
 
             return WriteResult::Wrote(buf_len);
@@ -851,25 +882,21 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             WriteResult::Wrote(amt) => {
                 if amt == self.outgoing.size() {
                     self.outgoing.reset();
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Drained) };
+                    self.parent_on_write(amt, WriteStatus::Drained);
                 } else {
                     self.outgoing.wrote(amt);
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Pending) };
+                    self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
                     return WriteResult::Pending(amt);
                 }
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_write(self.parent(), amt, WriteStatus::EndOfFile) };
+                self.parent_on_write(amt, WriteStatus::EndOfFile);
             }
             WriteResult::Pending(amt) => {
                 self.outgoing.wrote(amt);
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Pending) };
+                self.parent_on_write(amt, WriteStatus::Pending);
                 Self::register_poll(self);
             }
 
@@ -894,8 +921,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
             // noop, but need this to have a chance
             // to register deferred tasks (onAutoFlush)
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_write(self.parent(), buf.len(), WriteStatus::Drained) };
+            self.parent_on_write(buf.len(), WriteStatus::Drained);
             Self::register_poll(self);
 
             // it's buffered, but should be reported as written to
@@ -919,8 +945,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 if self.outgoing.write(&buf[amt..]).is_err() {
                     return WriteResult::Err(oom_err());
                 }
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Pending) };
+                self.parent_on_write(amt, WriteStatus::Pending);
                 Self::register_poll(self);
             }
             WriteResult::Wrote(amt) => {
@@ -928,19 +953,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                     if self.outgoing.write(&buf[amt..]).is_err() {
                         return WriteResult::Err(oom_err());
                     }
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Pending) };
+                    self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
                 } else {
                     self.outgoing.reset();
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_write(self.parent(), amt, WriteStatus::Drained) };
+                    self.parent_on_write(amt, WriteStatus::Drained);
                 }
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_write(self.parent(), amt, WriteStatus::EndOfFile) };
+                self.parent_on_write(amt, WriteStatus::EndOfFile);
                 return WriteResult::Done(amt);
             }
             _ => {}
@@ -1455,6 +1477,18 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         self.parent
     }
 
+    /// Single nonnull-asref dispatch for the set-once `parent` backref.
+    /// Type invariant (encapsulated `unsafe`): see
+    /// [`PosixBufferedWriter::parent_on_error`] — same shape, same proof.
+    /// Laundered (`(*this)`) sites in `on_write_complete` /
+    /// `on_fs_write_complete` keep their raw-pointer dispatch and do **not**
+    /// route through this accessor.
+    #[inline]
+    fn parent_on_error(&self, err: sys::Error) {
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_error(self.parent(), err) }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.write_buffer.len as usize
     }
@@ -1625,8 +1659,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             {
                 file.complete(false);
                 self.close();
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(self.parent(), err) };
+                self.parent_on_error(err);
             }
         } else {
             // the buffered version should always have a stable ptr
@@ -1643,8 +1676,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 .to_error(sys::Tag::write)
             {
                 self.close();
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(self.parent(), write_err) };
+                self.parent_on_error(write_err);
             }
         }
     }

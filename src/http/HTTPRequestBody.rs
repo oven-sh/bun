@@ -33,8 +33,9 @@ impl Stream {
     /// the sole live borrow on this side of the lock.
     #[inline]
     pub fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
-        // SAFETY: see INVARIANT above.
-        self.buffer.map(|mut b| unsafe { b.as_mut() })
+        // Route through the shared `from_attached` accessor (one centralised
+        // unsafe); see INVARIANT above.
+        self.buffer.map(ThreadSafeStreamBuffer::from_attached)
     }
 
     pub fn detach(&mut self) {

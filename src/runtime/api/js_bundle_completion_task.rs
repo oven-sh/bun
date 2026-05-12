@@ -59,7 +59,9 @@ use crate::server::html_bundle;
 pub struct JSBundleCompletionTask {
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
-    pub jsc_event_loop: *mut EventLoop,
+    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
+    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
+    pub jsc_event_loop: BackRef<EventLoop>,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -115,7 +117,9 @@ pub fn create_and_schedule_completion_task(
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        jsc_event_loop: event_loop,
+        // `event_loop` is the live JS-thread loop (caller derives it from
+        // `vm.event_loop()`); never null once `Bun.build` is reachable.
+        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -775,12 +779,10 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
         matches!(unsafe { &(*c.as_ptr().cast::<JSBundleCompletionTask>()).result }, BundleV2Result::Err(_))
     },
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `c` is a live backref; `jsc_event_loop` is valid for the
-        // process lifetime once `Bun.build` is reachable.
-        unsafe {
-            (*(*c.as_ptr().cast::<JSBundleCompletionTask>()).jsc_event_loop)
-                .enqueue_task_concurrent(task)
-        }
+        // SAFETY: `c` is a live backref the bundler set in `BundleThread`.
+        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
+        unsafe { (*c.as_ptr().cast::<JSBundleCompletionTask>()).jsc_event_loop }
+            .enqueue_task_concurrent(task)
     },
 };
 
@@ -971,11 +973,10 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // SAFETY: jsc_event_loop is the JS-thread EventLoop; valid for process lifetime.
-        unsafe {
-            (*self.jsc_event_loop)
-                .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
-        }
+        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref;
+        // `enqueue_task_concurrent` takes `&self`.
+        self.jsc_event_loop
+            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

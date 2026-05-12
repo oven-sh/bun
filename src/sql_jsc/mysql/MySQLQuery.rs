@@ -412,8 +412,8 @@ impl MySQLQuery {
         // intrusive ref in `self.statement`; separate heap allocation (never
         // aliases `*self`). `ParentRef` collapses the read-only `(*stmt).status`
         // / `(*stmt).error_response` derefs below into one safe `Deref`; the
-        // single write site (`.Pending` arm) keeps its own `unsafe` because
-        // `status` is a plain field (no interior mutability).
+        // `.Pending` arm's status write goes through `get_statement()` (the
+        // single audited intrusive-pointer accessor).
         let stmt_ref = bun_ptr::ParentRef::from(
             core::ptr::NonNull::new(stmt).expect("self.statement set above"),
         );
@@ -461,8 +461,13 @@ impl MySQLQuery {
                         let _ = global_object.throw_error(err, "failed to prepare query");
                         return Err(bun_core::err!("JSError"));
                     }
-                    // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
-                    unsafe { (*stmt).status = my_sql_statement::Status::Parsing };
+                    // `self.statement` was set in both branches above; route
+                    // through the single-unsafe accessor instead of a raw
+                    // `(*stmt)` deref so the write goes via the same audited
+                    // intrusive-pointer path as every other status mutation.
+                    self.get_statement()
+                        .expect("self.statement set above")
+                        .status = my_sql_statement::Status::Parsing;
                 }
             }
         }

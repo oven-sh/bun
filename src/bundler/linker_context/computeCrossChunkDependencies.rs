@@ -54,7 +54,12 @@ pub fn compute_cross_chunk_dependencies(
         let ctx_ref = bun_ptr::BackRef::from(
             core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
         );
-        let symbols_ptr: *const _ = &raw const c.graph.symbols;
+        // `BackRef` from raw place addr (not `BackRef::new(&…)`) so no
+        // intermediate `&` borrow is pushed before the `split_mut()` calls
+        // below — matches the `ctx_ref` construction pattern just above.
+        let symbols_ref = bun_ptr::BackRef::from(
+            core::ptr::NonNull::from(&mut c.graph.symbols),
+        );
         let parse_graph = c.parse_graph;
 
         let ast = c.graph.ast.split_mut();
@@ -74,7 +79,7 @@ pub fn compute_cross_chunk_dependencies(
             sorted_and_filtered_export_aliases: meta.sorted_and_filtered_export_aliases,
             resolved_exports: meta.resolved_exports,
             ctx: ctx_ref,
-            symbols: symbols_ptr,
+            symbols: symbols_ref,
         };
 
         // SAFETY: `parse_graph` backref valid for the link pass.
@@ -123,11 +128,12 @@ pub struct CrossChunkDependencies<'a> {
     // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
     // to the LinkerContext's own invariant lifetime parameter.
     ctx: bun_ptr::BackRef<LinkerContext<'static>>,
-    // `*const` — `walk` runs concurrently across worker threads; each touches
+    // `BackRef` — `walk` runs concurrently across worker threads; each touches
     // disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`,
     // which is a Relaxed store to `Symbol.chunk_index: AtomicU32`. Holding
-    // `&mut Map` here would assert whole-map exclusivity per thread = aliasing UB.
-    symbols: *const bun_ast::symbol::Map,
+    // `&mut Map` here would assert whole-map exclusivity per thread = aliasing
+    // UB; `BackRef::Deref` yields the shared `&Map` each task needs.
+    symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
 }
 
 // SAFETY: `CrossChunkDependencies` is shared across worker threads via
@@ -157,10 +163,10 @@ impl<'a> CrossChunkDependencies<'a> {
         // partitioning (see PORT NOTE on the struct fields). `chunks` aliases the
         // `each_ptr` slice but is only read here.
         let ctx: &LinkerContext<'_> = deps.ctx.get();
-        // SAFETY: `symbols` is a backref into `LinkerContext` valid for the link
+        // `BackRef` into `LinkerContext.graph.symbols`, valid for the link
         // pass. Shared `&Map` across threads — per-slot writes go through
         // `Symbol.chunk_index: AtomicU32`; no `&mut Map` is materialized.
-        let symbols: &bun_ast::symbol::Map = unsafe { &*deps.symbols };
+        let symbols: &bun_ast::symbol::Map = deps.symbols.get();
         let _chunks: &[Chunk] = deps.chunks.get();
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`

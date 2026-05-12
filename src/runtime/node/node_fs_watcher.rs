@@ -92,10 +92,11 @@ impl FSWatcher {
     }
 
     pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
-        // SAFETY: `event_loop()` returns the live JS-thread loop (BACKREF via
-        // `ctx`); `enqueue_task_concurrent` is the documented cross-thread
-        // entry point and only touches the lock-free queue.
-        unsafe { (*self.event_loop()).enqueue_task_concurrent(task) }
+        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
+        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
+        // documented cross-thread entry point and only touches the lock-free
+        // queue.
+        self.vm().event_loop_shared().enqueue_task_concurrent(task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -417,9 +418,13 @@ impl FSWatchTaskWindows {
             count: 0,
         }));
 
-        // SAFETY: event_loop() is the live JS-thread loop (BACKREF via `ctx`);
-        // ownership of `task` transfers to the queue (drained on the same thread).
-        unsafe { (*(*self.ctx_ptr()).event_loop()).enqueue_task(Task::init(task)) };
+        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
+        // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+        // Ownership of `task` transfers to the queue (drained on the same thread).
+        ctx.expect("FSWatchTask.ctx unset")
+            .vm()
+            .event_loop_mut()
+            .enqueue_task(Task::init(task));
     }
 
     /// this runs on JS Context Thread
@@ -562,9 +567,10 @@ impl FSWatcher {
             event,
             count: 0,
         }));
-        // SAFETY: event_loop() is the live JS-thread loop; ownership of `task`
-        // transfers to the queue.
-        unsafe { (*this.event_loop()).enqueue_task(Task::init(task)) };
+        // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
+        // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
+        // queue.
+        this.vm().event_loop_mut().enqueue_task(Task::init(task));
         let _ = is_file;
     }
 
@@ -1032,6 +1038,9 @@ impl FSWatcher {
             Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
 
         let vm = args.global_this.bun_vm_ptr();
+        // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor —
+        // single deref site so the four uses below stay safe.
+        let vm_ref = args.global_this.bun_vm();
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
@@ -1073,17 +1082,15 @@ impl FSWatcher {
             // those parameters (only one valid value each), so the call is
             // cfg-split by arity.
             #[cfg(windows)]
-            // SAFETY: `vm` is the live per-thread VirtualMachine returned by `bun_vm()`.
             let r = path_watcher::watch(
-                unsafe { &*vm },
+                vm_ref,
                 file_path,
                 args.recursive,
                 ctx as *mut c_void,
             );
             #[cfg(not(windows))]
-            // SAFETY: `vm` is the live per-thread VirtualMachine returned by `bun_vm()`.
             let r = path_watcher::watch(
-                unsafe { &*vm },
+                vm_ref,
                 file_path,
                 args.recursive,
                 FSWatcher::ON_PATH_UPDATE,
@@ -1115,9 +1122,10 @@ impl FSWatcher {
                 args.listener.with_async_context_if_needed(args.global_this),
             )
         };
-        // SAFETY: `vm` is the live per-thread VirtualMachine.
-        if unsafe { (*vm).test_isolation_enabled } {
-            unsafe { &mut *vm }.rare_data().add_fs_watcher_for_isolation(
+        if vm_ref.test_isolation_enabled {
+            // `as_mut()` routes through the thread-local `*mut VM` (write
+            // provenance) so `rare_data()`'s `&mut self` borrow is sound.
+            vm_ref.as_mut().rare_data().add_fs_watcher_for_isolation(
                 ctx.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
                 // (ptr, close-fn) so it can fire detach without naming FSWatcher.

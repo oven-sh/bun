@@ -1854,18 +1854,20 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 dev.plugin_state = PluginState::Loaded;
                             } else {
                                 // TODO: implement a proper solution here
-                                dev.has_tailwind_plugin_hack =
-                                    if let Some(serve_plugins) =
-                                        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                                        unsafe { &(*dev.vm).transpiler.options.serve_plugins }
-                                    {
-                                        serve_plugins
-                                            .iter()
-                                            .find(|p| strings::includes(p, b"tailwind"))
-                                            .map(|_| Default::default())
-                                    } else {
-                                        None
-                                    };
+                                // `vm()` is the centralized JSC_BORROW accessor (one
+                                // `unsafe` site for the field); the borrow is dropped
+                                // before the assignment so no overlap with `&mut dev`.
+                                let has_tailwind = if let Some(serve_plugins) =
+                                    &dev.vm().transpiler.options.serve_plugins
+                                {
+                                    serve_plugins
+                                        .iter()
+                                        .find(|p| strings::includes(p, b"tailwind"))
+                                        .map(|_| Default::default())
+                                } else {
+                                    None
+                                };
+                                dev.has_tailwind_plugin_hack = has_tailwind;
 
                                 let load_result: crate::server::GetOrStartLoadResult =
                                     dev.server.as_ref().expect("infallible: server bound").get_or_load_plugins(

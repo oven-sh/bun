@@ -73,8 +73,9 @@ impl ConcurrentCppTask {
         // Extract all the info we need from `self` and `cpp_task` before we call functions that
         // free them.
         let cpp_task = self.cpp_task;
-        // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext until `run` consumes it below.
-        let maybe_vm = unsafe { (*cpp_task).get_vm() };
+        // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
+        // is the centralised non-null deref proof. Valid until `run` consumes it.
+        let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
         drop(self);
         EventLoopTaskNoContext::run(cpp_task);
         if let Some(vm) = maybe_vm {
@@ -86,8 +87,9 @@ impl ConcurrentCppTask {
 #[unsafe(no_mangle)]
 pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
-    // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext freshly handed over from C++.
-    if let Some(vm) = unsafe { (*cpp_task).get_vm() } {
+    // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
+    // the centralised non-null deref proof. C++ just handed it over.
+    if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
         vm.event_loop_shared().ref_concurrently();
     }
     WorkPool::schedule_new(ConcurrentCppTask {

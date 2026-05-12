@@ -1039,8 +1039,9 @@ impl<'a> TablePrinter<'a> {
                         "tabular_data must be an object or array"
                     )));
                 };
-                // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
-                let row_obj = unsafe { &*cell }.to_object(global_object);
+                // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+                // centralised non-null deref proof (live JSC heap cell).
+                let row_obj = jsc::JSCell::opaque_ref(cell).to_object(global_object);
                 let mut rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     row_obj,
@@ -4013,8 +4014,9 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            // SAFETY: this tag is only produced for cell values.
-            let cell = unsafe { &*value.to_cell().expect("GetterSetter is a cell") };
+            // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+            // centralised non-null deref proof (tag only produced for cells).
+            let cell = jsc::JSCell::opaque_ref(value.to_cell().expect("GetterSetter is a cell"));
             let (has_getter, has_setter) = if CUSTOM {
                 let gs = cell.get_custom_getter_setter();
                 (!gs.is_getter_null(), !gs.is_setter_null())
@@ -4052,9 +4054,10 @@ pub mod formatter {
             writer.write_all(b"Promise { ");
             writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
 
-            // SAFETY: value is a Promise (Tag::Promise).
+            // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+            // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
             let promise: &JSPromise =
-                unsafe { &*(value.as_object_ref() as *const JSPromise) };
+                JSPromise::opaque_ref(value.as_object_ref() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),

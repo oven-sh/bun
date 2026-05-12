@@ -244,13 +244,11 @@ impl ModuleInfoDeserialized {
 
     #[inline]
     fn eat_c<'a, const N: usize>(rem: &mut &'a [u8]) -> Result<&'a [u8; N], ModuleInfoError> {
-        if rem.len() < N {
-            return Err(ModuleInfoError::BadModuleInfo);
-        }
-        // SAFETY: bounds checked above; first N bytes form a [u8; N].
-        let res = unsafe { &*rem.as_ptr().cast::<[u8; N]>() };
-        *rem = &rem[N..];
-        Ok(res)
+        let (head, tail) = rem
+            .split_first_chunk::<N>()
+            .ok_or(ModuleInfoError::BadModuleInfo)?;
+        *rem = tail;
+        Ok(head)
     }
 
     pub fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {

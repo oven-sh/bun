@@ -240,13 +240,13 @@ impl RuntimeTranspilerStore {
     /// payload. Zig's `Store.init()` left `buffer` `undefined` and only
     /// zeroed the bitset — this restores that.
     ///
-    /// # Safety
-    /// `out` must be valid for writes and properly aligned. On return,
-    /// `*out` is fully initialized.
-    pub unsafe fn init_in_place(out: *mut Self) {
+    /// On return, `*out` is fully initialized.
+    pub fn init_in_place(out: &mut core::mem::MaybeUninit<Self>) {
         use core::ptr::addr_of_mut;
-        // SAFETY: per fn contract; each `addr_of_mut!` projects a valid
-        // in-bounds field place without forming an intermediate reference.
+        let out = out.as_mut_ptr();
+        // SAFETY: `out` is `&mut MaybeUninit<Self>::as_mut_ptr()` — valid for
+        // writes and properly aligned by type; each `addr_of_mut!` projects a
+        // valid in-bounds field place without forming an intermediate reference.
         unsafe {
             addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
             // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —

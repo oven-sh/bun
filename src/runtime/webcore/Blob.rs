@@ -2393,22 +2393,23 @@ impl BlobExt for Blob {
         // not alias any outstanding borrow (other `StoreRef`s only hold raw
         // `NonNull<Store>`, never a long-lived `&Store`; JS execution is
         // single-threaded).
-        let (base, len) = match store_ref.data_mut() {
+        match store_ref.data_mut() {
             store::Data::Bytes(bytes) => {
-                let v = bytes.as_array_list_leak();
-                (v.as_mut_ptr(), v.len())
+                let v: &mut [u8] = bytes.as_array_list_leak();
+                let len = v.len();
+                if len == 0 {
+                    return empty();
+                }
+                // Defensive: `offset` may originate from untrusted structured-clone data.
+                let off = (self.offset.get() as usize).min(len);
+                let clamped = (len - off).min(self.size.get() as usize);
+                // `v` already carries mutable provenance (derived through
+                // `StoreRef::data_mut`); safe sub-slicing then raw-ptr coercion
+                // preserves it without `from_raw_parts_mut`/`ptr::add`.
+                core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
             }
-            _ => return empty(),
-        };
-        if len == 0 {
-            return empty();
+            _ => empty(),
         }
-        // Defensive: `offset` may originate from untrusted structured-clone data.
-        let off = (self.offset.get() as usize).min(len);
-        let clamped = (len - off).min(self.size.get() as usize);
-        // SAFETY: `off <= len` and `clamped <= len - off`; `base[..len]` is the
-        // initialized prefix of the Store's `Vec<u8>`.
-        core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, clamped)
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {

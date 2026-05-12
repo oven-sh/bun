@@ -356,18 +356,19 @@ impl MySQLConnection {
 
         let js_connection = self.get_js_connection();
         let new_socket = new_socket.as_ptr();
-        // SAFETY: ext storage was sized for `Option<NonNull<JSMySQLConnection>>`
-        // above and `new_socket` is a live us_socket_t. Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
-        unsafe {
-            *(*new_socket).ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-                core::ptr::NonNull::new(js_connection);
-        }
+        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
+        // `adopt_tls`; ext storage was sized for
+        // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
+        // drives both safe inherent methods (`ext` / `start_tls_handshake`).
+        // Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
+        let sock = unsafe { &mut *new_socket };
+        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
+            core::ptr::NonNull::new(js_connection);
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
-        unsafe { (*new_socket).start_tls_handshake() };
+        sock.start_tls_handshake();
         Ok(())
     }
 

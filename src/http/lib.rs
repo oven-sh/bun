@@ -3943,15 +3943,12 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — raw ptr so later self.state.* compile.
-        let decoder: *mut picohttp::phr_chunked_decoder = &raw mut self.state.chunked_decoder;
         let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
         // set consume_trailer to 1 to discard the trailing header
         // using content-encoding per chunk is not supported
-        // SAFETY: decoder points at self.state.chunked_decoder; sole live borrow.
-        unsafe { (*decoder).consume_trailer = 1 };
+        self.state.chunked_decoder.consume_trailer = 1;
 
         // Capture the length up front so no `&[u8]` aliases the live `&mut [u8]` below.
         let in_len = incoming_data.len();
@@ -3973,10 +3970,12 @@ impl<'a> HTTPClient<'a> {
         let mut bytes_decoded = in_len;
         // phr_decode_chunked mutates in-place
         // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
-        // len - in_len == 0 is trivially in bounds.
+        // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
+        // disjoint field of `self.state` (no live borrow of `self` at this
+        // point — `buffer` is raw-derived or borrows `small`).
         let pret = unsafe {
             picohttp::phr_decode_chunked(
-                &raw mut *decoder,
+                &raw mut self.state.chunked_decoder,
                 buffer
                     .as_mut_ptr()
                     .add(buffer.len().saturating_sub(in_len)),

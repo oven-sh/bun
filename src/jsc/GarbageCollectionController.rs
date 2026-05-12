@@ -66,6 +66,23 @@ pub enum GcRepeatSetting {
 }
 
 impl GarbageCollectionController {
+    /// Recover `&mut Self` from a uws timer's ext slot. Single audited deref
+    /// for the two `extern "C"` callbacks below so they stay safe-bodied.
+    ///
+    /// `timer` is the live uws timer whose ext data was set to
+    /// `*mut GarbageCollectionController` in [`Self::init`]; the controller is
+    /// a BACKREF that strictly outlives the timer (`deinit()` closes the timer
+    /// before `self` is dropped). `Timer` is an `opaque_ffi!` ZST handle, so
+    /// [`uws::Timer::opaque_mut`] is the centralised non-null deref proof for
+    /// the handle itself; only the recovered `*mut Self` needs the audited
+    /// deref below.
+    #[inline]
+    fn from_timer_ext<'a>(timer: *mut uws::Timer) -> &'a mut Self {
+        let ptr = uws::Timer::opaque_mut(timer).as_::<*mut Self>();
+        // SAFETY: BACKREF — see doc comment above.
+        unsafe { &mut *ptr }
+    }
+
     /// Accessor for the init-once `gc_timer` handle. Consolidates the four
     /// open-coded `(*self.<field>.unwrap().as_ptr())` deref sites into one
     /// SAFETY block so call sites are safe.
@@ -269,10 +286,7 @@ impl Drop for GarbageCollectionController {
 }
 
 pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
-    // SAFETY: `timer` is the live uws timer whose ext data was set to
-    // `*mut GarbageCollectionController` in `init()`; the controller is a
-    // BACKREF that outlives the timer (deinit() closes the timer first).
-    let this = unsafe { &mut *(*timer).as_::<*mut GarbageCollectionController>() };
+    let this = GarbageCollectionController::from_timer_ext(timer);
     if this.disabled {
         return;
     }
@@ -280,10 +294,7 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
 }
 
 pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
-    // SAFETY: `timer` is the live uws timer whose ext data was set to
-    // `*mut GarbageCollectionController` in `init()`; the controller is a
-    // BACKREF that outlives the timer (deinit() closes the timer first).
-    let this = unsafe { &mut *(*timer).as_::<*mut GarbageCollectionController>() };
+    let this = GarbageCollectionController::from_timer_ext(timer);
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.perform_gc();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;

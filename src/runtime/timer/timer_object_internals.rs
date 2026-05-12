@@ -220,9 +220,9 @@ impl TimerObjectInternals {
         // `&Self` (NOT `&mut`) — fields are `Cell`/`JsCell` so re-entrant JS
         // touching this object via another `&Self` is sound (no `noalias`).
         let s = unsafe { &*this };
-        // SAFETY: `global_this` is `vm.global`, live for the call. JSGlobalObject
-        // is an opaque `UnsafeCell` ZST so `&` carries write provenance for FFI.
-        let global = unsafe { &*global_this };
+        // `JSGlobalObject` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
+        // deref (panics on null; `vm.global` is never null).
+        let global = JSGlobalObject::opaque_ref(global_this);
         // SAFETY: `vm` is the live per-thread VM (hook contract).
         if unsafe { (*vm).is_inspector_enabled() } {
             Debugger::will_dispatch_async_call(
@@ -515,8 +515,8 @@ impl TimerObjectInternals {
             // SAFETY: `vm`/`global_this` live per hook contract.
             if unsafe { (*vm).is_inspector_enabled() } {
                 Debugger::did_cancel_async_call(
-                    // SAFETY: `global_this` is `vm.global`, live for the call.
-                    unsafe { &*global_this },
+                    // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
+                    JSGlobalObject::opaque_ref(global_this),
                     Debugger::AsyncCallType::DOMTimer,
                     async_id.async_id(),
                 );
@@ -705,10 +705,10 @@ impl TimerObjectInternals {
         };
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
-        // SAFETY: `global` is `vm.global`, live for the call.
-        JSTimeout::idle_timeout_set_cached(timer, unsafe { &*global }, repeat);
-        // SAFETY: as above.
-        self.this_value.with_mut(|r| r.set_strong(timer, unsafe { &*global }));
+        // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
+        let global_ref = JSGlobalObject::opaque_ref(global);
+        JSTimeout::idle_timeout_set_cached(timer, global_ref, repeat);
+        self.this_value.with_mut(|r| r.set_strong(timer, global_ref));
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.reschedule(timer, vm, global);
@@ -776,8 +776,8 @@ impl TimerObjectInternals {
         // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was scheduled
         JSTimeout::idle_start_set_cached(
             timer,
-            // SAFETY: `global_this` is `vm.global`, live for the call.
-            unsafe { &*global_this },
+            // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
+            JSGlobalObject::opaque_ref(global_this),
             JSValue::js_number(now.ms_unsigned() as f64),
         );
 

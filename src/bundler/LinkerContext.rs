@@ -1299,20 +1299,21 @@ impl SourceMapDataTask {
     // (per-row disjoint), `ctx.pending_task_count` (atomic),
     // `ctx.source_maps.line_offset_wait_group` (atomic). Reads
     // `ctx.parse_graph.input_files[source_index].source` shared. Never forms
-    // `&mut LinkerContext` — `compute_line_offsets` takes `*mut` and writes the
-    // single SoA cell via raw per-row pointer.
+    // `&mut LinkerContext` — `compute_line_offsets` takes a `ParentRef` (yields
+    // `&LinkerContext` only) and writes the single SoA cell via raw per-row
+    // pointer.
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
-        let ctx: *mut LinkerContext = task.ctx.expect("SourceMapDataTask.ctx").as_mut_ptr();
+        // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
+        // pointee outlives every task (joined via `line_offset_wait_group`).
+        let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // SAFETY: ctx backref valid for task lifetime
-            unsafe {
-                (*ctx).mark_pending_task_done();
-                (*ctx).source_maps.line_offset_wait_group.finish();
-            }
+            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
+            ctx.mark_pending_task_done();
+            ctx.source_maps.line_offset_wait_group.finish();
         }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
@@ -1321,7 +1322,7 @@ impl SourceMapDataTask {
         // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx) };
+        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
@@ -1332,25 +1333,26 @@ impl SourceMapDataTask {
     // `source_index`. Writes: `ctx.graph.files[source_index].quoted_source_contents`
     // (per-row disjoint), `ctx.pending_task_count` (atomic),
     // `ctx.source_maps.quoted_contents_wait_group` (atomic). Never forms
-    // `&mut LinkerContext` — `compute_quoted_source_contents` takes `*mut` and
-    // writes the single SoA cell via raw per-row pointer.
+    // `&mut LinkerContext` — `compute_quoted_source_contents` takes a
+    // `ParentRef` (yields `&LinkerContext` only) and writes the single SoA cell
+    // via raw per-row pointer.
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
-        let ctx: *mut LinkerContext = task.ctx.expect("SourceMapDataTask.ctx").as_mut_ptr();
+        // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
+        // pointee outlives every task (joined via `quoted_contents_wait_group`).
+        let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // SAFETY: ctx backref
-            unsafe {
-                (*ctx).mark_pending_task_done();
-                (*ctx).source_maps.quoted_contents_wait_group.finish();
-            }
+            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
+            ctx.mark_pending_task_done();
+            ctx.source_maps.quoted_contents_wait_group.finish();
         }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx) };
+        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
         // Use the default arena when using DevServer and the file
@@ -1374,27 +1376,30 @@ impl SourceMapDataTask {
 
 impl SourceMapData {
     /// Runs concurrently across the worker pool (one task per `source_index`).
-    /// Takes `*mut LinkerContext` (not `&mut`) because Zig's `*LinkerContext`
-    /// freely aliases across threads — materializing `&mut LinkerContext` here
-    /// while peer tasks hold the same pointer would be aliased-mut UB. Each
-    /// task writes only `graph.files[source_index].line_offset_table`
-    /// (disjoint by `source_index`); all other access is read-only.
-    pub fn compute_line_offsets(this: *mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
+    /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
+    /// because Zig's `*LinkerContext` freely aliases across threads —
+    /// materializing `&mut LinkerContext` here while peer tasks hold the same
+    /// pointer would be aliased-mut UB. `ParentRef::Deref` yields
+    /// `&LinkerContext` (SharedReadOnly) for all SoA-header reads; each task
+    /// writes only `graph.files[source_index].line_offset_table` (disjoint by
+    /// `source_index`) via a raw column pointer.
+    pub fn compute_line_offsets(this: bun_ptr::ParentRef<LinkerContext<'_>>, alloc: &Bump, source_index: crate::IndexInt) {
         debug!("Computing LineOffsetTable: {}", source_index);
-        // SAFETY: `this` is a backref to `BundleV2.linker`, valid for the link
-        // step. We only take transient `&` (autoref) to read SoA column base
-        // pointers via `Slice::items_raw`; the underlying `MultiArrayList`
-        // header is not mutated for the duration of these tasks. The write
-        // target is the per-source_index slot, addressed by raw pointer —
-        // disjoint across concurrent tasks.
+        // `ParentRef::Deref` → `&LinkerContext` (backref to `BundleV2.linker`,
+        // valid for the link step). We only take transient `&` to read SoA
+        // column base pointers via `Slice::items_raw`; the underlying
+        // `MultiArrayList` header is not mutated for the duration of these
+        // tasks. The write target is the per-source_index slot, addressed by
+        // raw pointer — disjoint across concurrent tasks.
+        // SAFETY: `add` offset is in-bounds (`source_index < files.len()`).
         let line_offset_table: *mut SourceMap::line_offset_table::List = unsafe {
-            (*this).graph.files.slice()
+            this.graph.files.slice()
                 .items_raw::<"line_offset_table", SourceMap::line_offset_table::List>()
                 .add(source_index as usize)
         };
 
-        // SAFETY: parse_graph backref; read-only across all tasks.
-        let parse_graph = unsafe { &*(*this).parse_graph };
+        // `parse_graph` backref accessor — read-only across all tasks.
+        let parse_graph = this.parse_graph();
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
 
@@ -1405,9 +1410,9 @@ impl SourceMapData {
             return;
         }
 
-        // SAFETY: `graph.ast` is read-only for the duration of these tasks.
+        // `graph.ast` is read-only for the duration of these tasks.
         let approximate_line_count =
-            unsafe { (*this).graph.ast.items_approximate_newline_count()[source_index as usize] };
+            this.graph.ast.items_approximate_newline_count()[source_index as usize];
 
         // SAFETY: sole writer to this slot (disjoint by source_index).
         let _ = alloc;
@@ -1422,21 +1427,22 @@ impl SourceMapData {
     }
 
     /// Runs concurrently across the worker pool — see `compute_line_offsets`
-    /// for the raw-pointer aliasing contract.
-    pub fn compute_quoted_source_contents(this: *mut LinkerContext, _alloc: &Bump, source_index: crate::IndexInt) {
+    /// for the `ParentRef` aliasing contract.
+    pub fn compute_quoted_source_contents(this: bun_ptr::ParentRef<LinkerContext<'_>>, _alloc: &Bump, source_index: crate::IndexInt) {
         debug!("Computing Quoted Source Contents: {}", source_index);
-        // SAFETY: see `compute_line_offsets` — transient `&` to read the SoA
-        // column base, then raw-ptr offset to the per-source_index slot. Sole
-        // writer to this slot (disjoint across concurrent tasks).
+        // SAFETY: see `compute_line_offsets` — transient `&` (via
+        // `ParentRef::Deref`) to read the SoA column base, then raw-ptr offset
+        // to the per-source_index slot. Sole writer to this slot (disjoint
+        // across concurrent tasks); `add` offset is in-bounds.
         let quoted_source_contents = unsafe {
-            &mut *(*this).graph.files.slice()
+            &mut *this.graph.files.slice()
                 .items_raw::<"quoted_source_contents", Option<Box<[u8]>>>()
                 .add(source_index as usize)
         };
         *quoted_source_contents = None;
 
-        // SAFETY: parse_graph backref; read-only across all tasks.
-        let parse_graph = unsafe { &*(*this).parse_graph };
+        // `parse_graph` backref accessor — read-only across all tasks.
+        let parse_graph = this.parse_graph();
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
         if !loader.can_have_source_map() {
             return;

@@ -36,6 +36,17 @@ impl<'a> ArrayListCtx<'a> {
     pub fn new(array: &'a mut Vec<u8>) -> Self {
         Self { array: bun_ptr::BackRef::new_mut(array), _p: core::marker::PhantomData }
     }
+
+    /// One audited `BackRef::get_mut` so the `WriterContext` impl below stays
+    /// `unsafe`-free at the call sites (nonnull-asref accessor pattern).
+    #[inline]
+    fn array_mut(&mut self) -> &mut Vec<u8> {
+        // SAFETY: 'a guarantees the Vec outlives this ctx; constructed via
+        // `new_mut` (write provenance); `WriterContext` is used single-threaded
+        // with no overlapping `&`/`&mut` to the same Vec while the returned
+        // borrow is live.
+        unsafe { self.array.get_mut() }
+    }
 }
 
 impl<'a> WriterContext for ArrayListCtx<'a> {
@@ -43,15 +54,11 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
         self.array.len()
     }
     fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
-        // SAFETY: 'a guarantees the Vec outlives this ctx; constructed via
-        // `new_mut` (write provenance); `WriterContext` is used single-threaded
-        // with no overlapping `&`/`&mut` to the same Vec.
-        unsafe { self.array.get_mut() }.extend_from_slice(bytes);
+        self.array_mut().extend_from_slice(bytes);
         Ok(())
     }
     fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        // SAFETY: same as `write` above.
-        let arr = unsafe { self.array.get_mut() };
+        let arr = self.array_mut();
         arr[i..i + bytes.len()].copy_from_slice(bytes);
         Ok(())
     }

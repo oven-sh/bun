@@ -368,10 +368,9 @@ impl SplitBundlerOptions {
                 }
             };
 
-            // SAFETY: `plugin` is a live opaque FFI handle held in
-            // `self.plugin` (protected JSCell); reborrowed uniquely for the
-            // duration of this call.
-            let plugin_result = unsafe { &mut *plugin.as_ptr() }.add_plugin(
+            // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+            // deref. Handle held live in `self.plugin` (protected JSCell).
+            let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
                 function,
                 empty_object,
                 JSValue::NULL,

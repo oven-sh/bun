@@ -91,11 +91,11 @@ where
     Ok(protocol::valkey_error_to_js(global, message, err.into()))
 }
 
-/// `JSValkeyClient::send` returns a `*mut JSPromise`; raw pointers don't
-/// auto-deref, so call `JSPromise::to_js` through an explicit unsafe deref.
+/// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the
+/// `opaque_ffi!` ZST accessor instead of an open-coded raw deref.
 #[inline]
 fn promise_to_js(p: *mut JSPromise) -> JSValue {
-    unsafe { (*p).to_js() }
+    JSPromise::opaque_ref(p).to_js()
 }
 
 /// Shared epilog for every Valkey prototype method: build a `Command`,

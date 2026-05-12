@@ -1173,10 +1173,10 @@ impl Interpreter {
         if g.is_null() {
             return None;
         }
-        // SAFETY: `global_this` is set exactly once by `create_shell_interpreter`
-        // from a live `&JSGlobalObject`; the global is process-lifetime and
-        // outlives the interpreter (held by the JS wrapper).
-        Some(unsafe { &*g })
+        // `JSGlobalObject` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
+        // deref. `global_this` is set exactly once by `create_shell_interpreter`
+        // from a live `&JSGlobalObject`; the global is process-lifetime.
+        Some(crate::jsc::JSGlobalObject::opaque_ref(g))
     }
 
     /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints

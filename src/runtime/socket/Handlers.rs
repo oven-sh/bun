@@ -36,16 +36,18 @@ impl AnyPromiseExt for bun_jsc::AnyPromise {
             bun_jsc::AnyPromise::Normal(p) => p,
             bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
         };
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        unsafe { Ok((*p).resolve(global, value)?) }
+        // `JSPromise` is an `opaque_ffi!` ZST handle — `opaque_mut` is the
+        // const-asserted safe `*mut → &mut` accessor (variants hold a live
+        // JSC heap cell from `as_any_promise`).
+        Ok(bun_jsc::JSPromise::opaque_mut(p).resolve(global, value)?)
     }
     fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         let p: *mut bun_jsc::JSPromise = match self {
             bun_jsc::AnyPromise::Normal(p) => p,
             bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
         };
-        // SAFETY: see `resolve`.
-        unsafe { Ok((*p).reject(global, Ok(value))?) }
+        // See `resolve` — `opaque_mut` is the safe ZST-handle accessor.
+        Ok(bun_jsc::JSPromise::opaque_mut(p).reject(global, Ok(value))?)
     }
 }
 

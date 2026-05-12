@@ -1113,17 +1113,18 @@ impl<'a> PackageInstall<'a> {
                         let _ = sys::mkdirat(destination_dir_.fd(), entry.path, 0o755);
                     }
                     EntryKind::File => {
-                        stackpath[..entry.path.len()].copy_from_slice(entry.path.as_bytes());
-                        stackpath[entry.path.len()] = 0;
-                        // SAFETY: NUL written above.
-                        let path_ =
-                            unsafe { ZStr::from_raw_mut(stackpath.as_mut_ptr(), entry.path.len()) };
-                        let basename = unsafe {
-                            ZStr::from_raw_mut(
-                                stackpath.as_mut_ptr().add(entry.path.len() - entry.basename.len()),
-                                entry.basename.len(),
-                            )
-                        };
+                        let path_len = entry.path.len();
+                        let base_len = entry.basename.len();
+                        stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
+                        stackpath[path_len] = 0;
+                        // `stackpath[path_len] == 0` written above; both views are
+                        // shared-only (used for `.as_ptr()` into FFI), so the
+                        // overlapping borrows of `stackpath` are sound — replaces
+                        // two raw `from_raw_mut` reconstructions over the same
+                        // buffer (which were UB-adjacent as aliased `&mut`s).
+                        let path_ = ZStr::from_buf(&stackpath, path_len);
+                        let basename =
+                            ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         // SAFETY: FFI — basename/path_ are valid NUL-terminated ZStr buffers
                         // built into stackpath above; fds are open for the loop iteration.
                         match unsafe {

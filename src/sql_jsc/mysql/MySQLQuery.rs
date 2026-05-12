@@ -191,50 +191,21 @@ impl MySQLQuery {
         // buffer and force GC. Root every borrowed JSValue in a stack-scoped
         // MarkedArgumentBuffer so the wrapper (and its RefPtr<ArrayBuffer>)
         // survives until execute.deinit() has unpinned and released the borrow.
-        struct Ctx<'a, C: WriterContext> {
-            this: &'a mut MySQLQuery,
-            writer: NewWriter<C>,
-            statement: *mut MySQLStatement,
-            global_object: &'a JSGlobalObject,
-            binding_value: JSValue,
-            columns_value: JSValue,
-            result: Result<(), AnyMySQLError>,
-        }
-
-        // TODO(port): `MarkedArgumentBuffer::run` expects an `extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer)`.
-        // A generic `extern "C" fn` is fine (monomorphized per `C`), but Phase B must confirm the
-        // bun_jsc API shape — it may instead take a Rust closure and handle the trampoline internally.
-        extern "C" fn run<C: WriterContext>(ctx: *mut Ctx<'_, C>, roots: *mut MarkedArgumentBuffer) {
-            // SAFETY (single-owner): `ctx` points at the caller's stack-local `Ctx`; the only
-            // Rust borrow of it was the ephemeral `&mut ctx as *mut _` used to derive this
-            // pointer at the `MarkedArgumentBuffer::run` call site, so no other `&mut` aliases
-            // it for the duration of this callback. `roots` points at a C++-stack-allocated
-            // `JSC::MarkedArgumentBuffer` that the trampoline hands exclusively to this
-            // callback and never re-enters; both outlive this call.
-            let ctx = unsafe { &mut *ctx };
-            let roots = unsafe { &mut *roots };
-            ctx.result = MySQLQuery::bind_and_execute_impl(
-                ctx.this,
-                ctx.writer,
-                ctx.statement,
-                ctx.global_object,
-                ctx.binding_value,
-                ctx.columns_value,
+        //
+        // `MarkedArgumentBuffer::new` is the safe closure trampoline — the
+        // `*mut Ctx` / `*mut MarkedArgumentBuffer` backref derefs are
+        // centralised in `bun_jsc`, so no per-site `Ctx` struct + `extern "C"`
+        // thunk is needed here.
+        MarkedArgumentBuffer::new(|roots| {
+            self.bind_and_execute_impl(
+                writer,
+                statement,
+                global_object,
+                binding_value,
+                columns_value,
                 roots,
-            );
-        }
-
-        let mut ctx = Ctx {
-            this: self,
-            writer,
-            statement,
-            global_object,
-            binding_value,
-            columns_value,
-            result: Ok(()),
-        };
-        MarkedArgumentBuffer::run(&mut ctx, run::<C>);
-        ctx.result
+            )
+        })
     }
 
     fn bind_and_execute_impl<C: WriterContext>(

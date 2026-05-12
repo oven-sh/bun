@@ -556,12 +556,11 @@ impl FSEventsLoop {
 
         for watcher in loop_.watchers.slice() {
             let Some(handle) = *watcher else { continue };
-            // SAFETY: handle is alive while held under mutex (see comment above)
-            let handle = unsafe { &mut *handle.as_ptr() };
-            // Copy the `RawSlice` (it is `Copy`) so the re-borrow is not tied
-            // to `handle` — `handle.emit` below needs `&mut *handle`.
-            let path_ref = handle.path;
-            let handle_path = path_ref.slice();
+            // `handle` is alive while held under the mutex (see comment above);
+            // `BackRef` invariant (pointee outlives holder) holds for this
+            // scope. `emit`/`flush` take `&self`, so a shared borrow suffices.
+            let handle = bun_ptr::BackRef::from(handle);
+            let handle_path = handle.path.slice();
 
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
@@ -851,8 +850,10 @@ impl Drop for FSEventsLoop {
         if self.watcher_count > 0 {
             while let Some(watcher) = self.watchers.pop() {
                 if let Some(w) = watcher {
-                    // SAFETY: w is a valid watcher pointer (registered, not yet freed)
-                    unsafe { (*w.as_ptr()).loop_ = None };
+                    // `w` is a registered, not-yet-freed watcher; `BackRef`
+                    // invariant holds. `loop_` is a `Cell`, so the write goes
+                    // through a shared `&FSEventsWatcher` safely.
+                    bun_ptr::BackRef::from(w).loop_.set(None);
                 }
             }
         }
@@ -875,8 +876,10 @@ pub struct FSEventsWatcher {
     // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
     // shared with the CFRunLoop thread and mutated through `unregister_watcher`
     // on drop; holding a `&'static FSEventsLoop` and casting it to `*mut` would
-    // be UB (write through pointer derived from shared ref).
-    pub loop_: Option<NonNull<FSEventsLoop>>,
+    // be UB (write through pointer derived from shared ref). `Cell` so
+    // `FSEventsLoop::drop` can null it through a shared `BackRef` (the watcher
+    // is otherwise only read via `&self` on the CF thread under the mutex).
+    pub loop_: core::cell::Cell<Option<NonNull<FSEventsLoop>>>,
     pub recursive: bool,
     pub ctx: *mut c_void,
 }
@@ -897,7 +900,7 @@ impl FSEventsWatcher {
             path: bun_ptr::RawSlice::new(path),
             callback,
             flush_callback: update_end,
-            loop_: NonNull::new(loop_),
+            loop_: core::cell::Cell::new(NonNull::new(loop_)),
             recursive,
             ctx,
         });
@@ -909,11 +912,11 @@ impl FSEventsWatcher {
         this
     }
 
-    pub fn emit(&mut self, event: Event, is_file: bool) {
+    pub fn emit(&self, event: Event, is_file: bool) {
         (self.callback)(self.ctx, event, is_file);
     }
 
-    pub fn flush(&mut self) {
+    pub fn flush(&self) {
         (self.flush_callback)(self.ctx);
     }
 
@@ -921,7 +924,7 @@ impl FSEventsWatcher {
 
 impl Drop for FSEventsWatcher {
     fn drop(&mut self) {
-        if let Some(loop_) = self.loop_ {
+        if let Some(loop_) = self.loop_.get() {
             // SAFETY: `loop_` is the heap-allocated global default loop (see
             // FSEventsLoop::init); it outlives every watcher, and is only set to
             // None here by FSEventsLoop::drop *after* draining watchers. Mutable

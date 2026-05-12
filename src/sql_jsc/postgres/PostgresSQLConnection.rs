@@ -462,16 +462,16 @@ impl PostgresSQLConnection {
             return;
         };
         let new_socket = new_socket.as_ptr();
-        // SAFETY: ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
-        // above and `new_socket` is a live us_socket_t. Zig: `ext(?*PostgresSQLConnection).* = this`.
-        unsafe {
-            *(*new_socket).ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
-                core::ptr::NonNull::new(self.as_ctx_ptr());
-        }
+        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
+        // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
+        // above. One `&mut` reborrow drives both safe inherent methods
+        // (`ext` / `start_tls_handshake`). Zig: `ext(?*PostgresSQLConnection).* = this`.
+        let sock = unsafe { &mut *new_socket };
+        *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
+            core::ptr::NonNull::new(self.as_ctx_ptr());
         self.socket.set(Socket::SocketTls(uws::SocketTLS { socket: uws::InternalSocket::Connected(new_socket) }));
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
-        unsafe { (*new_socket).start_tls_handshake() };
+        sock.start_tls_handshake();
         self.start();
     }
 

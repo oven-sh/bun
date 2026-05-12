@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/18047
-// Calling a macro as a tagged template literal used to panic with
-// "TODO: support template literals in macros".
+// Calling a macro as a tagged template literal used to panic because the
+// e_template caller case in Macro.Runner.run was unimplemented.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 

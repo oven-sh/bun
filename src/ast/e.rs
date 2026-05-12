@@ -1694,34 +1694,20 @@ impl EString {
     /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
     pub fn clone_rope_nodes(s: &EString) -> EString {
         let mut root = s.shallow_clone();
-        if root.next.is_some() {
-            let mut current: *mut EString = &raw mut root;
-            let last: *mut EString;
-            loop {
-                // SAFETY: `current` is either `&mut root` (first iter) or a
-                // freshly Store-appended node (subsequent iters) — both live
-                // and unaliased here.
-                let node = unsafe { &mut *current };
-                match node.next {
-                    Some(next) => {
-                        let new_next = crate::expr::data::Store::append(
-                            next.get().shallow_clone(),
-                        );
-                        node.next = Some(new_next);
-                        current = new_next.as_ptr();
-                    }
-                    None => {
-                        last = current;
-                        break;
-                    }
-                }
+        if let Some(first) = root.next {
+            // Clone the first link, then walk the freshly-cloned chain via
+            // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
+            // cursor. Each cloned node's `next` still points at the original
+            // chain (shallow clone), so re-clone link-by-link.
+            let mut tail: StoreRef<EString> =
+                crate::expr::data::Store::append(first.get().shallow_clone());
+            root.next = Some(tail);
+            while let Some(next) = tail.next {
+                let cloned = crate::expr::data::Store::append(next.get().shallow_clone());
+                tail.next = Some(cloned);
+                tail = cloned;
             }
-            // The loop always advances past `root` (root.next was Some), so
-            // `last` is a Store-owned node with a stable address — wrap via the
-            // safe `From<NonNull>` ctor (StoreRef invariant upheld by Store).
-            root.end = Some(StoreRef::from(
-                core::ptr::NonNull::new(last).expect("last non-null"),
-            ));
+            root.end = Some(tail);
         }
         root
     }

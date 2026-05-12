@@ -1432,12 +1432,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 };
 
                 if is_dead {
-                    // PORT NOTE: reshaped for borrowck — Zig passed `part` by
-                    // value to `clearSymbolUsagesFromDeadPart`; reborrow via
-                    // raw ptr so `parts_[i]` can be reused below.
-                    let part_ptr: *const js_ast::Part = &raw const parts_[i];
-                    // SAFETY: arena-backed slice element valid for parser 'a.
-                    self.clear_symbol_usages_from_dead_part(unsafe { &*part_ptr });
+                    // `parts_` is the caller-owned `&'a mut [Part]` (taken via
+                    // `mem::take(parts)` above), disjoint from `*self`, so a
+                    // shared reborrow of `parts_[i]` coexists with `&mut self`
+                    // here — no raw-ptr roundtrip needed.
+                    self.clear_symbol_usages_from_dead_part(&parts_[i]);
                     continue;
                 }
 
@@ -3376,18 +3375,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         is_spread: bool,
     ) -> ExprBindingTuple {
         let mut initializer: Option<ExprNodeIndex> = None;
-        let mut expr = _expr;
-        // zig syntax is sometimes painful
+        // `Expr` is `Copy`; read it by value so the `EBinary` arm can switch
+        // `expr` to `bin.left` via `StoreRef::Deref` (safe arena read) instead
+        // of forging a `&mut` through `as_ptr()`. The result is only ever read.
+        let mut expr = *_expr;
         if let js_ast::ExprData::EBinary(bin) = expr.data {
             if bin.op == js_ast::op::Code::BinAssign {
                 initializer = Some(bin.right);
-                // SAFETY: StoreRef points into the AST arena (lifetime 'a); reborrow
-                // bin.left mutably so the &mut on `_expr.data` above can end.
-                expr = unsafe { &mut (*bin.as_ptr()).left };
+                expr = bin.left;
             }
         }
 
-        let bind = self.convert_expr_to_binding(*expr, invalid_log);
+        let bind = self.convert_expr_to_binding(expr, invalid_log);
         if let Some(initial) = initializer {
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {

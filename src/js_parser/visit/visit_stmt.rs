@@ -1718,11 +1718,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // fn lowerUsingDeclarationInForOf()
                     let loc = data.init.loc;
                     let binding = init2.decls.at(0).binding;
-                    // SAFETY: arena-owned B::Identifier ptr, valid for 'a. Go through
-                    // `as_ptr()` so the `&mut` borrow is rooted in the arena, not the
-                    // match-local `StoreRef` temporary (which drops at arm end).
-                    let id: &mut B::Identifier = match binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => unsafe { &mut *b.as_ptr() },
+                    // `StoreRef<B::Identifier>` is `Copy` + `Deref`/`DerefMut` over the
+                    // arena node, so hoisting it to a local lets every read/write below
+                    // go through the safe accessor instead of a raw `as_ptr()` deref.
+                    let mut id = match binding.data {
+                        js_ast::binding::Data::BIdentifier(b) => b,
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
                     let id_original_name =

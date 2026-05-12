@@ -502,12 +502,12 @@ pub fn out_of_memory() -> ! {
     #[cfg(not(test))]
     {
         unsafe extern "Rust" {
-            fn __bun_crash_handler_out_of_memory() -> !;
+            // Defined `#[no_mangle] extern "Rust"` in `bun_crash_handler` and
+            // linked into every binary that depends on this crate; no args, no
+            // preconditions — `safe fn` discharges the link-time proof here.
+            safe fn __bun_crash_handler_out_of_memory() -> !;
         }
-        // SAFETY: `__bun_crash_handler_out_of_memory` is defined
-        // `#[no_mangle] extern "Rust"` in `bun_crash_handler` and linked into
-        // every binary that depends on this crate; it has no preconditions.
-        unsafe { __bun_crash_handler_out_of_memory() }
+        __bun_crash_handler_out_of_memory()
     }
     #[cfg(test)]
     {

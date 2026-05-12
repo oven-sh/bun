@@ -2870,9 +2870,16 @@ pub mod sync {
     #[cfg(unix)]
     unsafe extern "C" {
         // TODO(port): move to runtime_sys
+        // All by-value c_int/pid_t args; the kernel validates fd/pid/signal —
+        // no memory-safety preconditions, so `safe fn` (Rust 2024) discharges
+        // the link-time proof here and callers need no unsafe block.
         safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
         safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
         safe fn getpgrp() -> libc::pid_t;
+        safe fn getppid() -> libc::pid_t;
+        safe fn isatty(fd: c_int) -> c_int;
+        safe fn raise(sig: c_int) -> c_int;
+        safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
     }
 
     #[cfg(unix)]
@@ -2883,8 +2890,7 @@ pub mod sync {
 
         fn give(&mut self, pgid: libc::pid_t) {
             self.script_pgid = pgid;
-            // SAFETY: libc isatty
-            if unsafe { libc::isatty(0) } == 0 {
+            if isatty(0) == 0 {
                 return;
             }
             let fg = tcgetpgrp(0);
@@ -2922,14 +2928,12 @@ pub mod sync {
             Self::ttou_blocked(self.prev);
             // SIGTSTP is not in `Bun__registerSignalsForForwarding`'s set, so
             // default disposition (stop) applies and we suspend right here.
-            // SAFETY: libc raise
-            let _ = unsafe { libc::raise(libc::SIGTSTP) };
+            let _ = raise(libc::SIGTSTP);
             // — resumed by the shell's SIGCONT —
             if tcgetpgrp(0) == getpgrp() {
                 Self::ttou_blocked(self.script_pgid);
             }
-            // SAFETY: libc kill
-            let _ = unsafe { libc::kill(-self.script_pgid, libc::SIGCONT) };
+            let _ = kill(-self.script_pgid, libc::SIGCONT);
         }
 
         /// `tcsetpgrp` from a background pgroup raises SIGTTOU (default: stop);
@@ -3262,8 +3266,7 @@ pub mod sync {
                 array_list.clear();
                 array_list.shrink_to_fit();
             }
-            // SAFETY: libc kill
-            let _ = unsafe { libc::kill(process.pid, 1) };
+            let _ = kill(process.pid, 1);
         }
 
         for &fd in out_fds {
@@ -3395,8 +3398,7 @@ pub mod sync {
             Bun__noOrphans_onExit(child);
             return None;
         }
-        // SAFETY: libc getppid
-        if ppid > 1 && unsafe { libc::getppid() } != ppid {
+        if ppid > 1 && getppid() != ppid {
             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
         // Initial scan: `child` may have forked between `posix_spawn`
@@ -3576,8 +3578,7 @@ pub mod sync {
                 let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
             }
         }
-        // SAFETY: libc getppid
-        if ppid > 1 && unsafe { libc::getppid() } != ppid {
+        if ppid > 1 && getppid() != ppid {
             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
 
@@ -3666,7 +3667,7 @@ pub mod sync {
             }
 
             if (ppid_fd.fd() != Fd::INVALID && buf[ppid_idx].revents != 0)
-                || (need_ppid_fallback && unsafe { libc::getppid() } != ppid)
+                || (need_ppid_fallback && getppid() != ppid)
             {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }

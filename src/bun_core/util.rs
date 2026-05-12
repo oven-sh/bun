@@ -1604,29 +1604,31 @@ pub struct Version {
 /// for scratch buffers and FFI-shaped globals where the Zig already proved
 /// thread-affinity.
 #[repr(transparent)]
-pub struct RacyCell<T: ?Sized>(core::cell::UnsafeCell<T>);
+pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // SAFETY: by construction, callers promise external synchronization or
 // single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
 // `Sync` on `T: Sync`), this impl is intentionally unconditional: many
 // payloads ported from `static mut` are `!Sync` only by auto-trait inference
 // (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
 // because all access is single-threaded or externally synchronized — the
-// exact contract `static mut` already imposed. **Do not** wrap types whose
-// `!Sync` is load-bearing (`Cell<T>`, `Rc<T>`, `RefCell<T>`); use
-// `thread_local!` or a real lock for those.
+// exact contract `static mut` already imposed. **Do not** wrap *payloads*
+// whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
+// `thread_local!` or a real lock for those. (The inner storage here is
+// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
+// hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
-        Self(core::cell::UnsafeCell::new(value))
+        Self(core::cell::Cell::new(value))
     }
     /// Raw pointer to the contained value. Never produces a reference; callers
     /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
     #[inline]
     pub const fn get(&self) -> *mut T {
-        self.0.get()
+        self.0.as_ptr()
     }
     /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
     ///
@@ -1637,7 +1639,7 @@ impl<T> RacyCell<T> {
     where
         T: Copy,
     {
-        unsafe { *self.0.get() }
+        self.0.get()
     }
     /// Convenience: overwrite the value.
     ///
@@ -1645,7 +1647,7 @@ impl<T> RacyCell<T> {
     /// Caller guarantees no concurrent reader/writer on another thread.
     #[inline]
     pub unsafe fn write(&self, value: T) {
-        unsafe { *self.0.get() = value; }
+        self.0.set(value)
     }
 }
 impl<T: Default> Default for RacyCell<T> {

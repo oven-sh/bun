@@ -747,21 +747,24 @@ pub mod api {
                 path: &BunString,
                 is_on_load: bool,
             ) -> bool;
+            // `context` is an opaque cookie C++ round-trips back to a Rust
+            // callback without dereferencing, so the only pointer validity
+            // obligations are on `this`/`BunString` — discharged by `&`.
             #[link_name = "JSBundlerPlugin__matchOnLoad"]
-            fn JSBundlerPlugin__matchOnLoad(
-                this: *mut Plugin,
-                namespace_string: *const BunString,
-                path: *const BunString,
+            safe fn JSBundlerPlugin__matchOnLoad(
+                this: &mut Plugin,
+                namespace_string: &BunString,
+                path: &BunString,
                 context: *mut core::ffi::c_void,
                 default_loader: u8,
                 is_server_side: bool,
             );
             #[link_name = "JSBundlerPlugin__matchOnResolve"]
-            fn JSBundlerPlugin__matchOnResolve(
-                this: *mut Plugin,
-                namespace_string: *const BunString,
-                path: *const BunString,
-                importer: *const BunString,
+            safe fn JSBundlerPlugin__matchOnResolve(
+                this: &mut Plugin,
+                namespace_string: &BunString,
+                path: &BunString,
+                importer: &BunString,
                 context: *mut core::ffi::c_void,
                 kind: u8,
             );
@@ -853,17 +856,14 @@ pub mod api {
                     BunString::clone_utf8(namespace)
                 };
                 let path_string = BunString::clone_utf8(path);
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-                unsafe {
-                    JSBundlerPlugin__matchOnLoad(
-                        self,
-                        &raw const namespace_string,
-                        &raw const path_string,
-                        context,
-                        default_loader as u8,
-                        is_server_side,
-                    );
-                }
+                JSBundlerPlugin__matchOnLoad(
+                    self,
+                    &namespace_string,
+                    &path_string,
+                    context,
+                    default_loader as u8,
+                    is_server_side,
+                );
             }
 
             pub fn match_on_resolve(
@@ -882,17 +882,14 @@ pub mod api {
                 };
                 let path_string = BunString::clone_utf8(path);
                 let importer_string = BunString::clone_utf8(importer);
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-                unsafe {
-                    JSBundlerPlugin__matchOnResolve(
-                        self,
-                        &raw const namespace_string,
-                        &raw const path_string,
-                        &raw const importer_string,
-                        context,
-                        import_record_kind as u8,
-                    );
-                }
+                JSBundlerPlugin__matchOnResolve(
+                    self,
+                    &namespace_string,
+                    &path_string,
+                    &importer_string,
+                    context,
+                    import_record_kind as u8,
+                );
             }
         }
 
@@ -1437,6 +1434,10 @@ pub mod dispatch {
     #[inline]
     pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
         // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
+        // Not `safe fn`: the callee re-types the erased `*mut ()` as
+        // `*mut BundleV2<'static>` and dereferences it, so `bv2` must point to
+        // a live `BundleV2` whose backing allocation outlives the watcher
+        // (sole caller is `BundleV2::init` with the leaked CLI arena).
         unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2.cast()) }
     }
 

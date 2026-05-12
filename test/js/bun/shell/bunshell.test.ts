@@ -401,6 +401,86 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  // https://github.com/oven-sh/bun/issues/18262
+  describe("redirect stdin from ReadableStream", () => {
+    // Use a spawned bun process (not the `cat` builtin, which is only a builtin on
+    // Windows) so the redirect always goes through the subprocess path.
+    const catStdin = `process.stdout.write(await Bun.stdin.text())`;
+
+    test("subprocess stdout", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.stdout.write("hello from subprocess")`],
+        env: bunEnv,
+        stdout: "pipe",
+      });
+      const { stdout } = await $`${BUN} -e ${catStdin} < ${proc.stdout}`.env(bunEnv).quiet();
+      expect(stdout.toString()).toBe("hello from subprocess");
+    });
+
+    test("JS ReadableStream", async () => {
+      const stream = new ReadableStream({
+        async pull(controller) {
+          controller.enqueue(new TextEncoder().encode("chunk1 "));
+          await Bun.sleep(1);
+          controller.enqueue(new TextEncoder().encode("chunk2"));
+          controller.close();
+        },
+      });
+      const { stdout } = await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet();
+      expect(stdout.toString()).toBe("chunk1 chunk2");
+    });
+
+    test("larger than pipe buffer", async () => {
+      const producer = `const b = Buffer.alloc(128 * 1024, "a"); process.stdout.write(b); process.stdout.write(b)`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", producer],
+        env: bunEnv,
+        stdout: "pipe",
+      });
+      const { stdout } = await $`${BUN} -e ${catStdin} < ${proc.stdout}`.env(bunEnv).quiet();
+      expect(stdout.toString()).toBe(Buffer.alloc(256 * 1024, "a").toString());
+    });
+
+    test("rejects ReadableStream as stdout", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("x"));
+        },
+      });
+      expect(async () => {
+        await $`${BUN} -e ${"process.exit(0)"} > ${stream}`.env(bunEnv).quiet().throws(true);
+      }).toThrow("ReadableStream can only be redirected to stdin");
+    });
+
+    test("rejects disturbed ReadableStream", async () => {
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("abc"));
+          controller.close();
+        },
+      });
+      const reader = stream.getReader();
+      await reader.read();
+      reader.releaseLock();
+      expect(async () => {
+        await $`${BUN} -e ${catStdin} < ${stream}`.env(bunEnv).quiet().throws(true);
+      }).toThrow("ReadableStream has already been used");
+    });
+
+    test("builtin rejects ReadableStream with a clear error", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("abc"));
+          controller.close();
+        },
+      });
+      // `echo` is always a builtin.
+      expect(async () => {
+        await $`echo hi < ${stream}`.quiet().throws(true);
+      }).toThrow(/ReadableStream cannot be redirected to a builtin command/);
+    });
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);

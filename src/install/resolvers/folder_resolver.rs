@@ -423,9 +423,9 @@ pub fn get_or_put(
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
         (
-            // SAFETY: normalize_package_json_path wrote `joined[abs_len] = 0`;
-            // the separator rewrite above never touches the NUL.
-            unsafe { ZStr::from_raw(joined.as_ptr(), abs_len) },
+            // `normalize_package_json_path` wrote `joined[abs_len] = 0`; the
+            // separator rewrite above never touches the NUL.
+            ZStr::from_buf(&joined[..], abs_len),
             &rel_buf[..rel_len],
         )
     };

@@ -1898,14 +1898,17 @@ pub fn install_isolated_packages(
         let entry_hoisted = entries.items_hoisted();
 
         // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
-        // also keeping immutable column slices into it. Reborrow through a raw
-        // pointer so `string_buf` / `pkgs` don't tie up `&mut lockfile` for the
-        // `Installer { lockfile, .. }` move below.
+        // also keeping immutable column slices into it. Reborrow through a
+        // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
+        // the `Installer { lockfile, .. }` move below. `BackRef` is the
+        // canonical non-owning back-pointer wrapper; the lockfile lives for
+        // the full scope and the column buffers sliced here are read-only
+        // across the install loop (never mutated through `installer.lockfile`).
         let lockfile_ptr: *mut Lockfile = lockfile;
-        // SAFETY: lockfile lives for the full scope; the column buffers sliced
-        // here are read-only across the install loop and are never mutated
-        // through `installer.lockfile`.
-        let lockfile_ro: &Lockfile = unsafe { &*lockfile_ptr };
+        let lockfile_ref = bun_ptr::BackRef::<Lockfile>::from(
+            core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
+        );
+        let lockfile_ro: &Lockfile = lockfile_ref.get();
         let string_buf = &lockfile_ro.buffers.string_bytes[..];
 
         let pkgs = lockfile_ro.packages.slice();

@@ -1612,6 +1612,9 @@ impl Task {
                         };
 
                         if let Some(list) = scripts_list {
+                            // Snapshot before boxing so the post-publish
+                            // `first_index` check needs no raw-pointer deref.
+                            let first_index = list.first_index;
                             let clone: *mut package::scripts::List =
                                 bun_core::heap::into_raw(Box::new(list));
                             // Each Task is the sole writer for its own `entry_id`'s
@@ -1659,9 +1662,7 @@ impl Task {
                                     .insert(truncated_dep_name_hash, ());
                             }
 
-                            // SAFETY: clone was just allocated above
-                            let list_ref = unsafe { &*clone };
-                            if list_ref.first_index != 0 {
+                            if first_index != 0 {
                                 // has scripts but not a preinstall
                                 step = self.next_step(current_step);
                                 continue 'step;

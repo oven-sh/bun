@@ -245,6 +245,13 @@ pub fn install_hoisted_packages(
                 bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
             )
         };
+        // Safe `BackRef` view of the same heap `Lockfile` as `lockfile_ptr`
+        // (BACKREF — outlives this install pass). `From<NonNull>` is the
+        // safe constructor; the read-only column projections below go
+        // through `Deref` instead of a per-site raw deref.
+        let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
+            core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
+        );
 
         // BACKREF — slices live for the duration of this block; `filter()` (the
         // only buffer mutator) has already run.
@@ -328,11 +335,12 @@ pub fn install_hoisted_packages(
             // without keeping a borrow live — no `&'a → &'a` detach
             // round-trip needed. Derive through `lockfile_ptr` so the
             // provenance root matches `installer.lockfile`/`installer.manager`.
-            // SAFETY (RawSlice invariant): `lockfile_ptr` derived from
-            // `mgr_ptr`; the packages column buffers are not freed for the
-            // lifetime of `installer` (only grow, which is why
-            // `fix_cached_lockfile_package_slices` re-snapshots).
-            let parts = unsafe { (*lockfile_ptr).packages.slice() };
+            // RawSlice invariant: `lockfile_ref` derived from `mgr_ptr`;
+            // the packages column buffers are not freed for the lifetime of
+            // `installer` (only grow, which is why
+            // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
+            // projection via the safe `BackRef::Deref`.
+            let parts = lockfile_ref.packages.slice();
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());
             let names = bun_ptr::RawSlice::new(parts.items_name());

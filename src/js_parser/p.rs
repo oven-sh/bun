@@ -2183,23 +2183,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // `StmtData` stores `StoreRef<S::*>` (Copy NonNull); matching by value yields
         // an owned `StoreRef` whose `DerefMut` reaches the same arena slot Zig wrote
         // through, so writing to `*expr` below mutates the AST in place.
-        let expr: *mut Expr = 'brk: {
+        let mut expr: js_ast::StoreRef<Expr> = 'brk: {
             match stmt.data {
-                js_ast::StmtData::SExpr(mut exp) => break 'brk &raw mut exp.value,
-                js_ast::StmtData::SThrow(mut throw) => break 'brk &raw mut throw.value,
+                js_ast::StmtData::SExpr(mut exp) => break 'brk js_ast::StoreRef::from_bump(&mut exp.value),
+                js_ast::StmtData::SThrow(mut throw) => break 'brk js_ast::StoreRef::from_bump(&mut throw.value),
                 js_ast::StmtData::SReturn(mut ret) => {
                     if let Some(value) = ret.value.as_mut() {
-                        break 'brk std::ptr::from_mut::<Expr>(value);
+                        break 'brk js_ast::StoreRef::from_bump(value);
                     }
                 }
-                js_ast::StmtData::SIf(mut if_stmt) => break 'brk &raw mut if_stmt.test_,
-                js_ast::StmtData::SSwitch(mut switch_stmt) => break 'brk &raw mut switch_stmt.test_,
+                js_ast::StmtData::SIf(mut if_stmt) => break 'brk js_ast::StoreRef::from_bump(&mut if_stmt.test_),
+                js_ast::StmtData::SSwitch(mut switch_stmt) => break 'brk js_ast::StoreRef::from_bump(&mut switch_stmt.test_),
                 js_ast::StmtData::SLocal(mut local) => {
                     if local.decls.len_u32() > 0 {
                         let first = &mut local.decls.slice_mut()[0];
                         if matches!(first.binding.data, js_ast::b::B::BIdentifier(_)) {
                             if let Some(value) = first.value.as_mut() {
-                                break 'brk std::ptr::from_mut::<Expr>(value);
+                                break 'brk js_ast::StoreRef::from_bump(value);
                             }
                         }
                     }
@@ -2208,9 +2208,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             return false;
         };
-        // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access
-        // during the single-threaded visit pass (same contract as Zig `*Expr`).
-        let expr = unsafe { &mut *expr };
+        // `StoreRef<Expr>: DerefMut` — arena-owned slot, parser holds exclusive
+        // access during the single-threaded visit pass (same contract as Zig `*Expr`).
+        let expr = &mut *expr;
 
         // Only continue trying to insert this replacement into sub-expressions
         // after the first one if the replacement has no side effects:
@@ -6440,36 +6440,36 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     bun_ast::Loc::EMPTY,
                 );
 
-                let mut current_expr: *mut Expr = &raw mut dots.data.e_dot_mut().expect("infallible: variant checked").target;
+                // `StoreRef<Expr>` (safe `Deref`/`DerefMut`) tracks the arena slot
+                // being patched, so the chain walk stays in safe code per hop.
+                let mut current_expr = js_ast::StoreRef::from_bump(
+                    &mut dots.data.e_dot_mut().expect("infallible: variant checked").target,
+                );
                 let mut i: usize = refs.len() - 2;
                 while i > 0 {
-                    // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
-                    unsafe {
-                        *current_expr = self.new_expr(
-                            E::Dot {
-                                name: ref_name!(refs[i]),
-                                name_loc: bun_ast::Loc::EMPTY,
-                                target: Expr::default(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        current_expr = &raw mut (*current_expr).data.e_dot_mut().expect("infallible: variant checked").target;
-                    }
+                    *current_expr = self.new_expr(
+                        E::Dot {
+                            name: ref_name!(refs[i]),
+                            name_loc: bun_ast::Loc::EMPTY,
+                            target: Expr::default(),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let next = js_ast::StoreRef::from_bump(
+                        &mut current_expr.data.e_dot_mut().expect("infallible: variant checked").target,
+                    );
+                    current_expr = next;
                     i -= 1;
                 }
 
-                // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
-                unsafe {
-                    if self.is_import_item.contains_key(&refs[0]) {
-                        *current_expr = self.new_expr(E::ImportIdentifier { ref_: refs[0], ..Default::default() }, bun_ast::Loc::EMPTY);
-                    } else {
-                        *current_expr = self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
-                    }
+                if self.is_import_item.contains_key(&refs[0]) {
+                    *current_expr = self.new_expr(E::ImportIdentifier { ref_: refs[0], ..Default::default() }, bun_ast::Loc::EMPTY);
+                } else {
+                    *current_expr = self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
                 }
 
-                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit.
-                let dot_identifier = unsafe { *current_expr };
+                let dot_identifier = *current_expr;
                 let mut current_dot = dots;
 
                 let right0 = self.check_if_defined_helper(current_dot)?;
@@ -6485,30 +6485,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if i < refs.len() - 2 {
                     current_dot = current_dot.data.e_dot().expect("infallible: variant checked").target;
                 }
-                current_expr = &raw mut maybe_defined_dots.data.e_binary_mut().expect("infallible: variant checked").left;
+                current_expr = js_ast::StoreRef::from_bump(
+                    &mut maybe_defined_dots.data.e_binary_mut().expect("infallible: variant checked").left,
+                );
 
                 while i < refs.len() - 2 {
                     let right_n = self.check_if_defined_helper(current_dot)?;
-                    // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
-                    unsafe {
-                        *current_expr = self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinLogicalOr,
-                                right: right_n,
-                                left: Expr::default(),
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        current_expr = &raw mut (*current_expr).data.e_binary_mut().expect("infallible: variant checked").left;
-                    }
+                    *current_expr = self.new_expr(
+                        E::Binary {
+                            op: js_ast::OpCode::BinLogicalOr,
+                            right: right_n,
+                            left: Expr::default(),
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let next = js_ast::StoreRef::from_bump(
+                        &mut current_expr.data.e_binary_mut().expect("infallible: variant checked").left,
+                    );
+                    current_expr = next;
                     i += 1;
                     if i < refs.len() - 2 {
                         current_dot = current_dot.data.e_dot().expect("infallible: variant checked").target;
                     }
                 }
 
-                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit.
-                unsafe { *current_expr = self.check_if_defined_helper(dot_identifier)? };
+                *current_expr = self.check_if_defined_helper(dot_identifier)?;
 
                 let yes = ident!(b"Object");
                 let root = self.new_expr(

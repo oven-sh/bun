@@ -500,8 +500,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
 
                     // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
-                    // a spread object's properties via raw arena pointer. Track as a raw ptr here.
-                    let mut props: *mut G::PropertyList = &raw mut e_.properties;
+                    // a spread object's properties via raw arena pointer. Track as a
+                    // `StoreRef` (safe `Deref`/`DerefMut`) so the spread-collapse walk
+                    // and the `push`/`take` calls below stay in safe code.
+                    let mut props_handle = js_ast::StoreRef::from_bump(&mut e_.properties);
 
                     // arguments needs to be like
                     // {
@@ -543,33 +545,35 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // <div {{...foo}} />
                     // jsx("div", {...foo})
                     loop {
-                        // SAFETY: `props` is a live arena ptr at every step (either
-                        // `&mut e_.properties` or `&mut <spread object>.properties`
-                        // deeper in the same arena).
-                        let props_ref = unsafe { &mut *props };
-                        if !(props_ref.len_u32() == 1
-                            && props_ref.slice()[0].kind == G::PropertyKind::Spread
+                        // `StoreRef<PropertyList>: Deref` — safe arena-backed read.
+                        if !(props_handle.len_u32() == 1
+                            && props_handle.slice()[0].kind == G::PropertyKind::Spread
                             && matches!(
-                                props_ref.slice()[0].value.unwrap().data,
+                                props_handle.slice()[0].value.unwrap().data,
                                 Data::EObject(..)
                             ))
                         {
                             break;
                         }
                         // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point
-                        // inside the spread object's properties; do the same via raw access.
-                        let inner = props_ref.slice_mut()[0]
-                            .value
-                            .as_mut()
-                            .unwrap()
-                            .data
-                            .e_object_mut()
-                            .unwrap();
-                        props = &raw mut inner.properties;
+                        // inside the spread object's properties. Compute the next handle in
+                        // a block so the `DerefMut` borrow of `props_handle` ends before
+                        // reassignment.
+                        let next = {
+                            let inner = props_handle.slice_mut()[0]
+                                .value
+                                .as_mut()
+                                .unwrap()
+                                .data
+                                .e_object_mut()
+                                .unwrap();
+                            js_ast::StoreRef::from_bump(&mut inner.properties)
+                        };
+                        props_handle = next;
                     }
-                    // SAFETY: `props` is the final arena ptr from the walk above; no
-                    // aliasing `&mut` outstanding for the remainder of this arm.
-                    let props = unsafe { &mut *props };
+                    // `StoreRef: DerefMut` — safe arena-backed handle; no aliasing
+                    // `&mut` outstanding for the remainder of this arm.
+                    let props = &mut *props_handle;
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340

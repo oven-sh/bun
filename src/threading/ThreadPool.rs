@@ -185,6 +185,18 @@ impl AtomicSync {
 
 pub struct ThreadPool {
     pub sleep_on_idle_network_thread: bool,
+    /// When `true` (default), each worker calls
+    /// [`Output::Source::configure_named_thread`] on startup, which initializes
+    /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
+    /// Pools whose tasks never recurse through `StackCheck` (e.g. the package
+    /// manager's network/extract pool, the HTTP client) should clear this so
+    /// their workers use the `_no_js` variant and avoid faulting in the
+    /// otherwise-cold WTF/JSC `.text` pages on paths like `bun install`.
+    ///
+    /// Left as a public field (not in [`Config`]) so existing
+    /// `Config { max_threads, stack_size }` literals keep compiling; callers
+    /// flip it after [`ThreadPool::init`].
+    pub needs_stack_bounds: bool,
     pub stack_size: u32,
     pub max_threads: u32,
     sync: AtomicSync,
@@ -221,6 +233,7 @@ impl ThreadPool {
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
             sleep_on_idle_network_thread: true,
+            needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -709,11 +722,37 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
+/// Pre-warm mimalloc's process-wide NUMA-node-count cache from the *spawning*
+/// thread before the first worker is created.
+///
+/// Every worker's `mi_thread_set_in_threadpool()` → heap-init path calls
+/// `_mi_os_numa_node_count()`. mimalloc caches the answer in a process-wide
+/// atomic (`mi_numa_node_count`), but on `bun install` we spawn 2+ workers
+/// near-simultaneously and each one races into the uncached slow path —
+/// walking `/sys/devices/system/node/node%u` via `_mi_vsnprintf` (the #1
+/// sampled symbol on the install/fastify cold path) — before any of them has
+/// published the result. Resolving it once here, on the main thread, makes
+/// every subsequent worker take the single-atomic-load fast path.
+#[cold]
+fn prewarm_mimalloc_numa() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // Internal mimalloc symbol with external (non-`static`) linkage;
+        // mimalloc is linked as a static archive, so this resolves at link
+        // time despite the archive being built with `-fvisibility=hidden`
+        // (hidden visibility only affects dynamic export, not static-archive
+        // symbol resolution). No preconditions; idempotent.
+        unsafe extern "C" { safe fn _mi_os_numa_node_count() -> core::ffi::c_int; }
+        let _ = _mi_os_numa_node_count();
+    });
+}
+
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // PORT NOTE: Zig used u14; Rust has no u14, using u16 and truncating to 14 bits.
+        prewarm_mimalloc_numa();
         self.is_running.store(true, Ordering::Relaxed);
         let target = count.min((self.max_threads & 0x3FFF) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
@@ -790,6 +829,7 @@ impl ThreadPool {
 
                     // We signaled to spawn a new thread
                     if can_wake && (sync.spawned() as u32) < self.max_threads {
+                        prewarm_mimalloc_numa();
                         let stack_size = self.stack_size as usize;
                         // `BackRef<ThreadPool>: Send`; see `warm()`.
                         let pool = bun_ptr::BackRef::new(self);
@@ -1099,6 +1139,8 @@ impl Thread {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
+        // The NUMA-count slow path this would otherwise trigger has already
+        // been resolved on the spawning thread by `prewarm_mimalloc_numa()`.
         unsafe extern "C" { safe fn mi_thread_set_in_threadpool(); }
         mi_thread_set_in_threadpool();
 
@@ -1126,7 +1168,17 @@ impl Thread {
                     bun_core::ZStr::from_raw(b"Bun Pool\0".as_ptr(), 8)
                 }
             };
-            Output::Source::configure_named_thread(named);
+            // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
+            // out via `needs_stack_bounds = false` so we don't pull in
+            // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
+            // JSC `.text` pages on the `bun install` cold path. Bundler/parser
+            // pools leave it `true` (the parser's recursion guard reads the
+            // WTF stack-end this initializes).
+            if thread_pool.get().needs_stack_bounds {
+                Output::Source::configure_named_thread(named);
+            } else {
+                Output::Source::configure_named_thread_no_js(named);
+            }
         }
 
         let mut self_ = Thread {

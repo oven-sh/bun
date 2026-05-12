@@ -692,7 +692,10 @@ pub fn load(
     {
         var forced: ?Api.NpmRegistry = null;
 
-        if (env.get("BUN_CONFIG_FORCE_REGISTRY")) |registry_| {
+        // Read from the real process environment, not the DotEnv loader — a
+        // project-checked-in `.env` file must not be able to inject
+        // `BUN_CONFIG_FORCE_REGISTRY` and override the admin's global bunfig.
+        if (bun.env_var.BUN_CONFIG_FORCE_REGISTRY.get()) |registry_| {
             if (registry_.len > 0 and
                 (strings.startsWith(registry_, "https://") or
                     strings.startsWith(registry_, "http://")))

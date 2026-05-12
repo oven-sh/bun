@@ -6,8 +6,7 @@
 //! `printHelp()`) live in `src/cli/cli.zig` as free fns; only the pure enum,
 //! `char()`, classifier predicates, and the `EnumArray` flag tables are here.
 
-use enum_map::{enum_map, Enum, EnumMap};
-use std::sync::LazyLock;
+use enum_map::Enum;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Enum, core::marker::ConstParamTy)]
 pub enum Tag {
@@ -123,6 +122,10 @@ impl Tag {
         }
     }
 
+    /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
+    /// tables below can size themselves without naming the trait at every use.
+    pub const COUNT: usize = <Self as Enum>::LENGTH;
+
     // Heavy methods that pull in `Arguments` / help text live in `cli/cli.zig`.
     // In Zig these were aliased here (`params`, `printHelp`) relying on lazy
     // decl resolution so `options_types/` did not compile-depend on `cli/`
@@ -133,73 +136,80 @@ impl Tag {
     // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
-// PERF(port): Zig `pub const ... std.EnumArray(...).initDefault(...)` was a
-// compile-time table; `enum_map!` is not const-evaluable so we use LazyLock.
-// Phase B may flatten these into `const fn` matches if the lazy init matters.
+/// `.rodata` flag table indexed by [`Tag`] discriminant. Replaces the
+/// `LazyLock<EnumMap<Tag, _>>` Phase-A scaffolding so these tables cost zero
+/// init code on the startup path (matches Zig `std.EnumArray.initDefault`).
+#[repr(transparent)]
+pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);
 
-pub static LOADS_CONFIG: LazyLock<EnumMap<Tag, bool>> = LazyLock::new(|| {
-    enum_map! {
-        Tag::BuildCommand => true,
-        Tag::TestCommand => true,
-        Tag::InstallCommand => true,
-        Tag::AddCommand => true,
-        Tag::RemoveCommand => true,
-        Tag::UpdateCommand => true,
-        Tag::PatchCommand => true,
-        Tag::PatchCommitCommand => true,
-        Tag::PackageManagerCommand => true,
-        Tag::BunxCommand => true,
-        Tag::AutoCommand => true,
-        Tag::RunCommand => true,
-        Tag::RunAsNodeCommand => true,
-        Tag::OutdatedCommand => true,
-        Tag::UpdateInteractiveCommand => true,
-        Tag::PublishCommand => true,
-        Tag::AuditCommand => true,
-        _ => false,
+impl<V> core::ops::Index<Tag> for TagTable<V> {
+    type Output = V;
+    #[inline]
+    fn index(&self, tag: Tag) -> &V {
+        &self.0[tag as usize]
     }
+}
+
+pub static LOADS_CONFIG: TagTable<bool> = TagTable({
+    let mut a = [false; Tag::COUNT];
+    a[Tag::BuildCommand as usize] = true;
+    a[Tag::TestCommand as usize] = true;
+    a[Tag::InstallCommand as usize] = true;
+    a[Tag::AddCommand as usize] = true;
+    a[Tag::RemoveCommand as usize] = true;
+    a[Tag::UpdateCommand as usize] = true;
+    a[Tag::PatchCommand as usize] = true;
+    a[Tag::PatchCommitCommand as usize] = true;
+    a[Tag::PackageManagerCommand as usize] = true;
+    a[Tag::BunxCommand as usize] = true;
+    a[Tag::AutoCommand as usize] = true;
+    a[Tag::RunCommand as usize] = true;
+    a[Tag::RunAsNodeCommand as usize] = true;
+    a[Tag::OutdatedCommand as usize] = true;
+    a[Tag::UpdateInteractiveCommand as usize] = true;
+    a[Tag::PublishCommand as usize] = true;
+    a[Tag::AuditCommand as usize] = true;
+    a
 });
 
-pub static ALWAYS_LOADS_CONFIG: LazyLock<EnumMap<Tag, bool>> = LazyLock::new(|| {
-    enum_map! {
-        Tag::BuildCommand => true,
-        Tag::TestCommand => true,
-        Tag::InstallCommand => true,
-        Tag::AddCommand => true,
-        Tag::RemoveCommand => true,
-        Tag::UpdateCommand => true,
-        Tag::PatchCommand => true,
-        Tag::PatchCommitCommand => true,
-        Tag::PackageManagerCommand => true,
-        Tag::BunxCommand => true,
-        Tag::OutdatedCommand => true,
-        Tag::UpdateInteractiveCommand => true,
-        Tag::PublishCommand => true,
-        Tag::AuditCommand => true,
-        _ => false,
-    }
+pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
+    let mut a = [false; Tag::COUNT];
+    a[Tag::BuildCommand as usize] = true;
+    a[Tag::TestCommand as usize] = true;
+    a[Tag::InstallCommand as usize] = true;
+    a[Tag::AddCommand as usize] = true;
+    a[Tag::RemoveCommand as usize] = true;
+    a[Tag::UpdateCommand as usize] = true;
+    a[Tag::PatchCommand as usize] = true;
+    a[Tag::PatchCommitCommand as usize] = true;
+    a[Tag::PackageManagerCommand as usize] = true;
+    a[Tag::BunxCommand as usize] = true;
+    a[Tag::OutdatedCommand as usize] = true;
+    a[Tag::UpdateInteractiveCommand as usize] = true;
+    a[Tag::PublishCommand as usize] = true;
+    a[Tag::AuditCommand as usize] = true;
+    a
 });
 
-pub static USES_GLOBAL_OPTIONS: LazyLock<EnumMap<Tag, bool>> = LazyLock::new(|| {
-    enum_map! {
-        Tag::AddCommand => false,
-        Tag::AuditCommand => false,
-        Tag::BunxCommand => false,
-        Tag::CreateCommand => false,
-        Tag::InfoCommand => false,
-        Tag::InstallCommand => false,
-        Tag::LinkCommand => false,
-        Tag::OutdatedCommand => false,
-        Tag::UpdateInteractiveCommand => false,
-        Tag::PackageManagerCommand => false,
-        Tag::PatchCommand => false,
-        Tag::PatchCommitCommand => false,
-        Tag::PublishCommand => false,
-        Tag::RemoveCommand => false,
-        Tag::UnlinkCommand => false,
-        Tag::UpdateCommand => false,
-        _ => true,
-    }
+pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
+    let mut a = [true; Tag::COUNT];
+    a[Tag::AddCommand as usize] = false;
+    a[Tag::AuditCommand as usize] = false;
+    a[Tag::BunxCommand as usize] = false;
+    a[Tag::CreateCommand as usize] = false;
+    a[Tag::InfoCommand as usize] = false;
+    a[Tag::InstallCommand as usize] = false;
+    a[Tag::LinkCommand as usize] = false;
+    a[Tag::OutdatedCommand as usize] = false;
+    a[Tag::UpdateInteractiveCommand as usize] = false;
+    a[Tag::PackageManagerCommand as usize] = false;
+    a[Tag::PatchCommand as usize] = false;
+    a[Tag::PatchCommitCommand as usize] = false;
+    a[Tag::PublishCommand as usize] = false;
+    a[Tag::RemoveCommand as usize] = false;
+    a[Tag::UnlinkCommand as usize] = false;
+    a[Tag::UpdateCommand as usize] = false;
+    a
 });
 
 // ported from: src/options_types/CommandTag.zig

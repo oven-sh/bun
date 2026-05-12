@@ -1475,6 +1475,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
 
     const text = await Bun.file(result.outputs[0].path).text();
     const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
     const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
     expect(parsed.sources.some((s: string) => s.endsWith("authored.ts"))).toBe(true);
   });
@@ -1510,6 +1511,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
 
     const text = await Bun.file(result.outputs[0].path).text();
     const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
     const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
     expect(parsed.sources.some((s: string) => s.endsWith("component.vue?script"))).toBe(true);
     expect(parsed.sources.some((s: string) => s.endsWith("component.vue?template"))).toBe(true);
@@ -1558,6 +1560,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
     expect(result.success).toBe(true);
     const text = await Bun.file(result.outputs[0].path).text();
     const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
     const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
     // No inner chain. The intermediate should be in sources[], not some
     // phantom "authored.ts".
@@ -1611,6 +1614,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
 
     const text = await Bun.file(result.outputs[0].path).text();
     const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
     const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
 
     // The authored-source slot (distinct filename) must be present and

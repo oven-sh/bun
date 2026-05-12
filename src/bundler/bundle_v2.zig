@@ -2876,6 +2876,11 @@ pub const BundleV2 = struct {
             // build before link time, so saving the AST is safe.
             this.graph.ast.items(.import_records)[source_index.get()] = result.ast.import_records;
 
+            // Free the parsed inline `//# sourceMappingURL=` allocation
+            // that won't reach the graph — the `.err` overwrite below
+            // would otherwise drop the pointer on the floor.
+            if (result.input_source_map) |ism| ism.deinit();
+
             parse_result.value = .{
                 .err = .{
                     .err = err,
@@ -3674,7 +3679,17 @@ pub const BundleV2 = struct {
 
                 // Move ownership of the parsed inline `//# sourceMappingURL=`
                 // onto the input file so the linker can chain through it.
-                graph.input_files.items(.input_source_map)[result.source.index.get()] = result.input_source_map;
+                // Incremental reparses (dev server, watch mode) hit this
+                // slot more than once per source index, so an existing
+                // map must be freed before the new one takes its place —
+                // otherwise each reparse leaks the prior `ParsedSourceMap`
+                // and its `sourcesContent` copies.
+                {
+                    const slot = &graph.input_files.items(.input_source_map)[result.source.index.get()];
+                    if (slot.*) |old| old.deinit();
+                    slot.* = result.input_source_map;
+                    result.input_source_map = null;
+                }
 
                 debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                     result.source.index.get(),

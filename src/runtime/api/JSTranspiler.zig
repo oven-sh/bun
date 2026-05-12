@@ -536,7 +536,11 @@ pub const TransformTask = struct {
             return;
         };
 
-        if (parse_result.empty) {
+        const want_source_map = this.source_map != .none;
+
+        // Fast path: empty parse with no source map requested. Matches
+        // the old behaviour for common empty / type-only TS inputs.
+        if (parse_result.empty and !want_source_map) {
             this.output_code = bun.String.empty;
             return;
         }
@@ -547,13 +551,12 @@ pub const TransformTask = struct {
 
         var printer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        const want_source_map = this.source_map != .none;
         var capture = SourceMapCapture.init(bun.default_allocator);
         defer capture.deinit();
 
-        const printed = blk: {
+        if (!parse_result.empty) {
             if (want_source_map) {
-                break :blk this.transpiler.printWithSourceMap(
+                _ = this.transpiler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -564,24 +567,33 @@ pub const TransformTask = struct {
                     this.err = err;
                     return;
                 };
+            } else {
+                _ = this.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
+                    this.err = err;
+                    return;
+                };
             }
-            break :blk this.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
+        } else {
+            // `parse_result.empty == true` and we want a source map.
+            // No AST to print, but we still need a valid v3 JSON map
+            // to honour the `{ code, map }` contract for `.external`
+            // / `.linked`, and to build a well-formed inline footer
+            // for `.@"inline"`. Synthesize an empty-mappings map.
+            capture.writeEmpty(&parse_result.source) catch |err| {
                 this.err = err;
                 return;
             };
-        };
-
-        if (printed == 0) {
-            this.output_code = bun.String.empty;
-            return;
         }
 
+        // Pick up any mutations the printer made to its local copy of
+        // `buffer_writer`. After this, `printer.ctx.buffer.list.items`
+        // holds the printed bytes (or is empty if the printer was
+        // skipped for `parse_result.empty`).
         buffer_writer = printer.ctx;
-        buffer_writer.buffer.list.items = buffer_writer.written;
 
         switch (this.source_map) {
             .none => {
-                this.output_code = bun.String.cloneUTF8(buffer_writer.written);
+                this.output_code = bun.String.cloneUTF8(buffer_writer.buffer.list.items);
             },
             .@"inline" => {
                 // Append the inline data URL and stash the full string.
@@ -598,12 +610,12 @@ pub const TransformTask = struct {
                 this.output_map = bun.String.cloneUTF8(capture.json.list.items);
             },
             .external => {
-                this.output_code = bun.String.cloneUTF8(buffer_writer.written);
+                this.output_code = bun.String.cloneUTF8(buffer_writer.buffer.list.items);
                 this.output_map = bun.String.cloneUTF8(capture.json.list.items);
             },
             _ => {
                 // Unknown future variant — fall back to the no-map string.
-                this.output_code = bun.String.cloneUTF8(buffer_writer.written);
+                this.output_code = bun.String.cloneUTF8(buffer_writer.buffer.list.items);
             },
         }
     }
@@ -636,8 +648,17 @@ pub const TransformTask = struct {
     }
 
     fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
+        // Branch on the configured sourcemap mode, NOT on
+        // `output_map.isEmpty()`. For `.external` / `.linked` the map
+        // is documented to be present in the returned object even when
+        // the code is empty (type-only TS inputs, empty inputs), so we
+        // must not fall back to the plain-string shape there.
+        const returns_object = switch (this.source_map) {
+            .external, .linked => true,
+            else => false,
+        };
         const value = brk: {
-            if (this.output_map.isEmpty()) {
+            if (!returns_object) {
                 break :brk this.output_code.transferToJS(this.global) catch |e| {
                     return promise.reject(this.global, this.global.takeException(e));
                 };
@@ -1034,6 +1055,16 @@ const SourceMapCapture = struct {
         // `printSourceMapContents` directly.
         try chunk.printSourceMapContents(source, &this.json, true, false);
     }
+
+    /// Emit a valid but empty v3 map for `source` — used when there is
+    /// no AST to print (e.g. `parse_result.empty`) but the caller still
+    /// asked for a source map. Matches the JSON shape
+    /// `printSourceMapContents` produces for a zero-mapping chunk.
+    pub fn writeEmpty(this: *SourceMapCapture, source: *const logger.Source) !void {
+        var empty_chunk: bun.SourceMap.Chunk = .initEmpty();
+        defer empty_chunk.deinit();
+        try empty_chunk.printSourceMapContents(source, &this.json, true, false);
+    }
 };
 
 pub fn transformSync(
@@ -1244,14 +1275,20 @@ fn sourceMapURLFor(source_path: []const u8, buf: *bun.PathBuffer) []const u8 {
     return buf[0..total];
 }
 
-/// Append `\n//# sourceMappingURL=data:application/json;base64,<base64>` to
-/// `buf`. Shared by the sync and async transform paths.
+/// Append `\n//# sourceMappingURL=data:application/json;base64,<base64>\n`
+/// to `buf`. Shared by the sync and async transform paths. The trailing
+/// newline matches both the `.linked` branch in this file and
+/// `Bun.build`'s inline emitter (src/bundler/linker_context/
+/// generateChunksInParallel.zig), so two inline outputs can be safely
+/// concatenated without the second one being swallowed by the line
+/// comment.
 fn appendInlineSourceMap(buf: *bun.MutableString, map_json: []const u8) void {
     const prefix = "\n//# sourceMappingURL=data:application/json;base64,";
     const encode_len = bun.base64.encodeLen(map_json);
-    const dest = bun.handleOom(buf.writableNBytes(prefix.len + encode_len));
+    const dest = bun.handleOom(buf.writableNBytes(prefix.len + encode_len + 1));
     @memcpy(dest[0..prefix.len], prefix);
     _ = bun.base64.encode(dest[prefix.len..][0..encode_len], map_json);
+    dest[prefix.len + encode_len] = '\n';
 }
 
 fn createCodeMapObject(

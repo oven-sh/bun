@@ -3877,6 +3877,10 @@ const y: number = 10;`;
 
     expect(typeof out).toBe("string");
     expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+    // Match `Bun.build`'s inline emitter — the footer terminates with a
+    // newline so two inline outputs can be safely concatenated without
+    // the second one being swallowed by the `//#` line comment.
+    expect(out.endsWith("\n")).toBe(true);
 
     // Decode the embedded map and sanity-check v3 shape.
     const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
@@ -3991,5 +3995,59 @@ const y: number = 10;`;
     const out = await t.transform(input);
     expect(typeof out).toBe("string");
     expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+    // Parity with the sync path: trailing newline after the data URL.
+    expect(out.endsWith("\n")).toBe(true);
   });
+
+  // --- empty-input parity between sync and async ---
+  //
+  // Type-only TypeScript files (`interface Foo {}`, `type X = number;`,
+  // `.d.ts`-style sources) and empty inputs produce zero output bytes.
+  // The documented contract for `sourcemap: "external"` / `"linked"` is
+  // `{ code, map }` regardless, and the sync and async paths must agree.
+  const emptyInputs = [
+    { name: "empty input", src: "" },
+    { name: "type-only input", src: "interface Foo { x: number }" },
+  ];
+
+  for (const { name, src } of emptyInputs) {
+    it(`'external' returns { code, map } for ${name} (sync)`, () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+      const out = t.transformSync(src);
+      expect(typeof out).toBe("object");
+      expect(out.code).toBe("");
+      expect(typeof out.map).toBe("string");
+      const map = JSON.parse(out.map);
+      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
+    });
+
+    it(`'external' returns { code, map } for ${name} (async)`, async () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+      const out = await t.transform(src);
+      // Pre-fix, the async path silently fell back to `""` for empty
+      // output while the sync path returned `{ code, map }` — see
+      // oven-sh/bun#30540 review.
+      expect(typeof out).toBe("object");
+      expect(out.code).toBe("");
+      expect(typeof out.map).toBe("string");
+      const map = JSON.parse(out.map);
+      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
+    });
+
+    it(`'linked' returns { code, map } for ${name} (async)`, async () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "linked" });
+      const out = await t.transform(src);
+      expect(typeof out).toBe("object");
+      expect(out.code).toMatch(/\/\/# sourceMappingURL=[^\s]+\.map/);
+      expect(typeof out.map).toBe("string");
+    });
+
+    it(`'inline' returns a string with a trailing newline for ${name} (async)`, async () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+      const out = await t.transform(src);
+      expect(typeof out).toBe("string");
+      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+      expect(out.endsWith("\n")).toBe(true);
+    });
+  }
 });

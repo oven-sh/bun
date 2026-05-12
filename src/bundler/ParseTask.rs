@@ -69,6 +69,8 @@ mod EventLoop {
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(bun_core::EnumTag)]
+#[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
     // TODO(port): arena lifetime — contents may be arena-owned, plugin-owned,
@@ -80,15 +82,6 @@ pub enum ContentsOrFd {
 pub enum ContentsOrFdTag {
     Fd,
     Contents,
-}
-
-impl ContentsOrFd {
-    pub fn tag(&self) -> ContentsOrFdTag {
-        match self {
-            ContentsOrFd::Fd { .. } => ContentsOrFdTag::Fd,
-            ContentsOrFd::Contents(_) => ContentsOrFdTag::Contents,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

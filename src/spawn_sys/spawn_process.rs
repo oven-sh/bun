@@ -258,13 +258,19 @@ impl PosixSpawnOptions {
 }
 
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
-/// the spawn-sys layer leaf. The `bun_spawn::subprocess` module re-exports this.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+/// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →
+/// `bun_runtime::api::{bun_process, JscSubprocess}` → `shell::subproc`.
+///
+/// `EnumSetType` is load-bearing for `closed: EnumSet<StdioKind>` on both
+/// `Subprocess` and `ShellSubprocess`; `IntoStaticStr` for close-IO logging.
+/// (`EnumSetType` auto-supplies `Copy + Clone + Eq + PartialEq`; do not add
+/// `#[repr(u8)]` — the derive forbids it, and no caller casts `as u8`.)
+#[derive(enumset::EnumSetType, Debug, strum::IntoStaticStr)]
+#[enumset(repr = "u8")]
 pub enum StdioKind {
-    Stdin = 0,
-    Stdout = 1,
-    Stderr = 2,
+    Stdin,
+    Stdout,
+    Stderr,
 }
 
 impl StdioKind {

@@ -229,7 +229,12 @@ impl<'a> Shebang<'a> {
         })
     }
 
-    /// std.fs.path.basename but utf16
+    /// std.fs.path.basename but utf16.
+    ///
+    /// Intentional local copy of `bun_paths::basename_windows::<u16>`.
+    /// `bun_shim_impl` is freestanding `#![no_std]` and may depend only on
+    /// `bun_windows_sys`; see Cargo.toml header. Zig has the same local copy
+    /// (BinLinkingShim.zig:115).
     fn basename_w(path: &[u16]) -> &[u16] {
         if path.is_empty() {
             return &[];

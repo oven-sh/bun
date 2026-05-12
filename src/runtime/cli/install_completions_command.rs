@@ -682,18 +682,6 @@ impl InstallCompletionsCommand {
     }
 }
 
-/// Helper: write `args` into `buf` and return the written subslice.
-/// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
-#[inline]
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
-    bun_core::fmt::buf_print(buf, args).expect("unreachable")
-}
-
-/// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.
-/// Mirrors `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
-#[inline]
-pub(crate) fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
-    bun_core::fmt::buf_print_z(buf, args).expect("unreachable")
-}
+use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
 
 // ported from: src/cli/install_completions_command.zig

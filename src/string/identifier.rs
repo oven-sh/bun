@@ -16,6 +16,64 @@ pub fn is_identifier_part(codepoint: i32) -> bool {
     }
 }
 
+use crate::strings::{CodePoint, CodepointIterator, Cursor};
+
+/// Whole-string ES identifier check over WTF-8 bytes.
+///
+/// Port of `js_lexer.isIdentifier` (src/js_parser/lexer.zig:3058). Zig has
+/// exactly one impl; the Rust port had triplicated it across `bun_string`,
+/// `bun_ast`, and `bun_js_parser` during the move-down layering pass. This is
+/// the canonical home: it sits next to the per-codepoint predicates and the
+/// two-stage Unicode tables it bottoms out in, and `CodepointIterator` lives
+/// in this crate.
+pub fn is_identifier(text: &[u8]) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let iter = CodepointIterator::init(text);
+    let mut cursor = Cursor::default();
+    if !iter.next(&mut cursor) || !is_identifier_start(cursor.c) {
+        return false;
+    }
+    while iter.next(&mut cursor) {
+        if !is_identifier_part(cursor.c) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whole-string ES identifier check over WTF-16. Port of
+/// `src/js_parser/lexer.zig:isIdentifierUTF16`.
+///
+/// Surrogate decoding is open-coded on purpose: an unpaired high surrogate
+/// (0xD800..=0xDBFF not followed by a low surrogate) advances ONE unit and is
+/// fed raw to `is_identifier_start/part` — exactly matching Zig
+/// `lexer.zig:3091-3096`. `crate::strings::utf16_codepoint` would advance
+/// TWO units in that case (see immutable.rs:1644 PORT NOTE), so do NOT swap it
+/// in here.
+pub fn is_identifier_utf16(text: &[u16]) -> bool {
+    let n = text.len();
+    if n == 0 {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < n {
+        let is_start = i == 0;
+        let (cp, adv) = crate::strings::decode_wtf16_raw(&text[i..]);
+        i += adv as usize;
+        let codepoint = cp as CodePoint;
+        if is_start {
+            if !is_identifier_start(codepoint) {
+                return false;
+            }
+        } else if !is_identifier_part(codepoint) {
+            return false;
+        }
+    }
+    true
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // The remainder of this file is auto-generated. Do not edit.
 // TODO(port): re-run the identifier-table generator with .rs output instead

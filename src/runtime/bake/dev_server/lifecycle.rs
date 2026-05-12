@@ -80,12 +80,4 @@ pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
     Some(u64::from_ne_bytes(out))
 }
 
-#[inline]
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
+use bun_core::fmt::hex_digit_value as hex_nibble;

@@ -1012,18 +1012,7 @@ lexer_impl_header! {
 
             match iter.c {
                 -1 => return self.add_default_error(b"Unexpected end of file"),
-                0..=0xFFFF => {
-                    buf.push(u16::try_from(iter.c).expect("int cast"));
-                }
-                _ => {
-                    iter.c -= 0x10000;
-                    buf.reserve(2);
-                    // PERF(port): was assume_capacity
-                    buf.push(
-                        u16::try_from(0xD800 + ((iter.c >> 10) & 0x3FF)).unwrap(),
-                    );
-                    buf.push(u16::try_from(0xDC00 + (iter.c & 0x3FF)).expect("int cast"));
-                }
+                c => strings::push_codepoint_utf16(buf, c as u32),
             }
         }
         Ok(())
@@ -3444,17 +3433,7 @@ lexer_impl_header! {
                 self.maybe_decode_jsx_entity(text, &mut cursor);
             }
 
-            if cursor.c <= 0xFFFF {
-                out.push(u16::try_from(cursor.c).expect("int cast"));
-            } else {
-                cursor.c -= 0x10000;
-                out.reserve(2);
-                // PERF(port): was assume_capacity (raw ptr write + len bump in Zig)
-                out.push(
-                    ((0xD800i32 + ((cursor.c >> 10) & 0x3FF)) as u32) as u16,
-                );
-                out.push(((0xDC00i32 + (cursor.c & 0x3FF)) as u32) as u16);
-            }
+            strings::push_codepoint_utf16(out, cursor.c as u32);
         }
         Ok(())
     }
@@ -3950,90 +3929,12 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
 }
 
 pub fn is_whitespace(codepoint: CodePoint) -> bool {
-    matches!(
-        codepoint,
-        0x000B // line tabulation
-            | 0x0009 // character tabulation
-            | 0x000C // form feed
-            | 0x0020 // space
-            | 0x00A0 // no-break space
-            // Unicode "Space_Separator" code points
-            | 0x1680 // ogham space mark
-            | 0x2000 // en quad
-            | 0x2001 // em quad
-            | 0x2002 // en space
-            | 0x2003 // em space
-            | 0x2004 // three-per-em space
-            | 0x2005 // four-per-em space
-            | 0x2006 // six-per-em space
-            | 0x2007 // figure space
-            | 0x2008 // punctuation space
-            | 0x2009 // thin space
-            | 0x200A // hair space
-            | 0x202F // narrow no-break space
-            | 0x205F // medium mathematical space
-            | 0x3000 // ideographic space
-            | 0xFEFF // zero width non-breaking space
-    )
+    // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
+    matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
+        || strings::is_unicode_space_separator(codepoint as u32)
 }
 
-pub fn is_identifier(text: &[u8]) -> bool {
-    if text.is_empty() {
-        return false;
-    }
-
-    let iter = CodepointIterator::init(text);
-    let mut cursor = strings::Cursor::default();
-    if !iter.next(&mut cursor) {
-        return false;
-    }
-
-    if !is_identifier_start(cursor.c) {
-        return false;
-    }
-
-    while iter.next(&mut cursor) {
-        if !is_identifier_continue(cursor.c) {
-            return false;
-        }
-    }
-
-    true
-}
-
-pub fn is_identifier_utf16(text: &[u16]) -> bool {
-    let n = text.len();
-    if n == 0 {
-        return false;
-    }
-
-    let mut i: usize = 0;
-    while i < n {
-        let is_start = i == 0;
-        let mut codepoint = text[i] as CodePoint;
-        i += 1;
-
-        if (0xD800..=0xDBFF).contains(&codepoint) && i < n {
-            let surrogate = text[i] as CodePoint;
-            if (0xDC00..=0xDFFF).contains(&surrogate) {
-                codepoint = (codepoint << 10) + surrogate
-                    + (0x10000 - (0xD800 << 10) - 0xDC00);
-                i += 1;
-            }
-        }
-        if is_start {
-            if !is_identifier_start(codepoint) {
-                return false;
-            }
-        } else {
-            if !is_identifier_continue(codepoint) {
-                return false;
-            }
-        }
-    }
-
-    true
-}
+pub use bun_string::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     let contents = &source.contents;

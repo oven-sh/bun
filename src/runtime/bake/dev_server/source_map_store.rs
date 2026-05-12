@@ -446,12 +446,8 @@ pub struct LocateWeakRefResult {
 }
 
 /// `bun.GenericIndex(u32, Entry)`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct EntryIndex(pub u32);
-impl EntryIndex {
-    #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-}
+pub enum SmEntryMarker {}
+pub type EntryIndex = bun_core::GenericIndex<u32, SmEntryMarker>;
 
 pub struct GetResult<'a> {
     pub index: EntryIndex,

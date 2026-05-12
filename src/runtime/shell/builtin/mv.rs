@@ -5,7 +5,7 @@ use bun_core::{ZBox, ZStr};
 use bun_ptr::BackRef;
 use bun_paths::{resolve_path, PathBuffer};
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{closefd, shell_openat, Interpreter, NodeId, ShellTask};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -390,14 +390,6 @@ impl Mv {
             }
         }
         MvFlag::ContinueParsing
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Mv {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Mv(m) => &mut **m,
-            _ => unreachable!(),
-        }
     }
 }
 

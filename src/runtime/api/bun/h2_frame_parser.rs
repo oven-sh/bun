@@ -141,17 +141,9 @@ pub mod JSH2FrameParser {
     }
 
     // `H2FrameParser__getConstructor` — emitted by generate-classes.ts
-    // (`symbolName(typeName, "getConstructor")`). `jsc.conv` = sysv64 on
-    // win-x64, C otherwise.
-    // `*mut JSGlobalObject` to match `generated_classes.rs` (avoids
-    // `clashing_extern_declarations`).
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "H2FrameParser__getConstructor"]
-        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
+    // (`symbolName(typeName, "getConstructor")`). `*mut JSGlobalObject` to
+    // match `generated_classes.rs` (avoids `clashing_extern_declarations`).
+    bun_jsc::jsc_abi_extern! {
         #[link_name = "H2FrameParser__getConstructor"]
         safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
@@ -406,7 +398,7 @@ impl UInt31WithReserved {
             value |= 0x8000_0000;
         }
         value = value.swap_bytes();
-        writer.write(&value.to_ne_bytes()).unwrap_or(0) != 0
+        writer.write_all(&value.to_ne_bytes()).is_ok()
     }
 }
 
@@ -429,7 +421,7 @@ impl StreamPriority {
     fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write(bytemuck::bytes_of(&swap)).unwrap_or(0) != 0
+        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
     #[inline]
     fn from(dst: &mut StreamPriority, src: &[u8]) {
@@ -476,7 +468,7 @@ impl FrameHeader {
         buf[3] = self.type_;
         buf[4] = self.flags;
         buf[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
-        writer.write(&buf).unwrap_or(0) != 0
+        writer.write_all(&buf).is_ok()
     }
     /// Decode a complete 9-byte big-endian frame header.
     ///
@@ -622,18 +614,13 @@ impl FullSettingsPayload {
         swap.max_header_list_size = swap.max_header_list_size.swap_bytes();
         swap._enable_connect_protocol_type = swap._enable_connect_protocol_type.swap_bytes();
         swap.enable_connect_protocol = swap.enable_connect_protocol.swap_bytes();
-        writer.write(bytemuck::bytes_of(&swap)).unwrap_or(0) != 0
+        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
 }
 
-/// Minimal writer trait used for `(comptime Writer: type, writer: Writer)` params.
-/// All call sites use either a fixed-buffer cursor or `DirectWriterStruct`.
-pub trait WireWriter {
-    fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error>;
-    fn write_int_u16_be(&mut self, v: u16) -> Result<(), bun_core::Error> {
-        self.write(&v.to_be_bytes()).map(|_| ())
-    }
-}
+/// Writer trait used for `(comptime Writer: type, writer: Writer)` params.
+/// All call sites use either a `FixedBufferStream` cursor or `DirectWriterStruct`.
+use bun_io::Write as WireWriter;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Static header maps
@@ -1144,47 +1131,7 @@ pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
 /// thunk in `generated_js2native.rs` (the generator snake-cases the Zig export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
-// ──────────────────────────────────────────────────────────────────────────
-// FixedBufferStream — replacement for std.io.fixedBufferStream
-// ──────────────────────────────────────────────────────────────────────────
-
-struct FixedBufferStream<'a> {
-    buffer: &'a mut [u8],
-    pos: usize,
-}
-impl<'a> FixedBufferStream<'a> {
-    fn new(buffer: &'a mut [u8]) -> Self {
-        Self { buffer, pos: 0 }
-    }
-    fn seek_to(&mut self, p: usize) {
-        self.pos = p;
-    }
-    fn get_pos(&self) -> usize {
-        self.pos
-    }
-    fn reset(&mut self) {
-        self.pos = 0;
-    }
-    fn read_int_u16_be(&mut self) -> Result<u16, bun_core::Error> {
-        if self.pos + 2 > self.buffer.len() {
-            return Err(bun_core::err!("EndOfStream"));
-        }
-        let v = u16::from_be_bytes([self.buffer[self.pos], self.buffer[self.pos + 1]]);
-        self.pos += 2;
-        Ok(v)
-    }
-}
-impl<'a> WireWriter for FixedBufferStream<'a> {
-    fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        let avail = self.buffer.len() - self.pos;
-        if data.len() > avail {
-            return Err(bun_core::err!("NoSpaceLeft"));
-        }
-        self.buffer[self.pos..self.pos + data.len()].copy_from_slice(data);
-        self.pos += data.len();
-        Ok(data.len())
-    }
-}
+use bun_io::FixedBufferStream;
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser
@@ -1216,6 +1163,8 @@ thread_local! {
 // shim still emits `this: &mut H2FrameParser` until Phase 1 lands —
 // `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::deinit_raw)]
 pub struct H2FrameParser {
     strong_this: JsCell<JsRef>,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
@@ -1274,21 +1223,18 @@ pub struct H2FrameParser {
     padding_strategy: Cell<PaddingStrategy>,
 }
 
-// IntrusiveRc — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-impl bun_ptr::RefCounted for H2FrameParser {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: refcount reached zero; sole owner of the `heap::alloc`
-        // allocation. `deinit` performs final teardown and frees `this` via
-        // `heap::take`; `this` is not used after.
+impl H2FrameParser {
+    /// `RefCounted` destructor thunk: `deinit` takes `&self`, not `*mut Self`.
+    ///
+    /// # Safety
+    /// Refcount must have reached zero; `this` is the sole owner of the
+    /// `heap::alloc` allocation. `deinit` frees `this` via `heap::take`.
+    #[inline]
+    unsafe fn deinit_raw(this: *mut Self) {
+        // SAFETY: caller contract.
         unsafe { (*this).deinit() };
     }
-}
-impl H2FrameParser {
+
     /// Safe accessor for the JSC_BORROW global.
     #[inline]
     fn global(&self) -> GlobalRef {
@@ -1675,10 +1621,10 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
-                            writer.write(&buffer[0..payload_size]).unwrap_or(0) != 0
+                            writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
-                        break 'brk writer.write(able_to_send).unwrap_or(0) != 0;
+                        break 'brk writer.write_all(able_to_send).is_ok();
                     }
                 } else {
                     // flush with some payload
@@ -1720,10 +1666,10 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
-                            writer.write(&buffer[0..payload_size]).unwrap_or(0) != 0
+                            writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
-                        break 'brk writer.write(frame_slice).unwrap_or(0) != 0;
+                        break 'brk writer.write_all(frame_slice).is_ok();
                     }
                 }
             }
@@ -2206,7 +2152,7 @@ impl H2FrameParser {
         let mut value: u32 = ErrorCode::CANCEL.0;
         stream.rst_code = value;
         value = value.swap_bytes();
-        let _ = writer_stream.write(&value.to_ne_bytes());
+        let _ = writer_stream.write_all(&value.to_ne_bytes());
         let old_state = stream.state;
         stream.state = StreamState::CLOSED;
         let identifier = stream.get_identifier();
@@ -2234,7 +2180,7 @@ impl H2FrameParser {
         let mut value: u32 = rst_code.0;
         stream.rst_code = value;
         value = value.swap_bytes();
-        let _ = writer_stream.write(&value.to_ne_bytes());
+        let _ = writer_stream.write_all(&value.to_ne_bytes());
 
         stream.state = StreamState::CLOSED;
         let identifier = stream.get_identifier();
@@ -2276,7 +2222,7 @@ impl H2FrameParser {
         let _ = last_id.write(&mut stream);
         let mut value: u32 = rst_code.0;
         value = value.swap_bytes();
-        let _ = stream.write(&value.to_ne_bytes());
+        let _ = stream.write_all(&value.to_ne_bytes());
 
         let _ = self.write(&buffer);
         if !debug_data.is_empty() {
@@ -2321,7 +2267,7 @@ impl H2FrameParser {
             length: u32::try_from(origin_str.len() + alt.len() + 2).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
-        let _ = stream.write_int_u16_be(u16::try_from(origin_str.len()).expect("int cast"));
+        let _ = stream.write_all(&u16::try_from(origin_str.len()).expect("int cast").to_be_bytes());
         let _ = self.write(&buffer);
         if !origin_str.is_empty() {
             let _ = self.write(origin_str);
@@ -2346,7 +2292,7 @@ impl H2FrameParser {
             length: 8,
         };
         let _ = frame.write(&mut stream);
-        let _ = stream.write(payload);
+        let _ = stream.write_all(payload);
         let _ = self.write(&buffer);
     }
 
@@ -2355,7 +2301,7 @@ impl H2FrameParser {
         // PREFACE + Settings Frame
         let mut preface_buffer = [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
         let mut preface_stream = FixedBufferStream::new(&mut preface_buffer);
-        let _ = preface_stream.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+        let _ = preface_stream.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
         let mut settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: 0,
@@ -3783,9 +3729,9 @@ impl H2FrameParser {
 struct DirectWriterStruct {
     writer: bun_ptr::BackRef<H2FrameParser>,
 }
-impl WireWriter for DirectWriterStruct {
-    fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        Ok(if self.writer.write(data) { data.len() } else { 0 })
+impl bun_io::Write for DirectWriterStruct {
+    fn write_all(&mut self, data: &[u8]) -> bun_io::Result<()> {
+        if self.writer.write(data) { Ok(()) } else { Err(bun_core::err!("SocketClosed")) }
     }
 }
 
@@ -4089,7 +4035,7 @@ impl H2FrameParser {
                 length: u32::try_from(slice.len() + 2).expect("int cast"),
             };
             let _ = frame.write(&mut stream);
-            let _ = stream.write_int_u16_be(u16::try_from(slice.len()).expect("int cast"));
+            let _ = stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
             let _ = this.write(&buffer);
             if !slice.is_empty() {
                 let _ = this.write(slice);
@@ -4107,18 +4053,18 @@ impl H2FrameParser {
                 }
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
-                if stream.write_int_u16_be(u16::try_from(slice.len()).expect("int cast")).is_err() {
+                if stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes()).is_err() {
                     let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                     return Err(global_object.throw_value(exception));
                 }
 
-                if stream.write(slice).is_err() {
+                if stream.write_all(slice).is_err() {
                     let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                     return Err(global_object.throw_value(exception));
                 }
             }
 
-            let total_length: u32 = u32::try_from(stream.get_pos()).expect("int cast");
+            let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
             let mut frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
@@ -4398,25 +4344,6 @@ impl H2FrameParser {
     }
 }
 
-struct MemoryWriter<'a> {
-    buffer: &'a mut [u8],
-    offset: usize,
-}
-impl<'a> MemoryWriter<'a> {
-    pub fn slice(&self) -> &[u8] {
-        &self.buffer[0..self.offset]
-    }
-}
-impl<'a> WireWriter for MemoryWriter<'a> {
-    fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        let pending = &mut self.buffer[self.offset..];
-        debug_assert!(pending.len() >= data.len());
-        pending[0..data.len()].copy_from_slice(data);
-        self.offset += data.len();
-        Ok(data.len())
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — JS host fns (part 2)
 // ──────────────────────────────────────────────────────────────────────────
@@ -4515,10 +4442,10 @@ impl H2FrameParser {
                                 core::ptr::copy(slice.as_ptr(), buffer.as_mut_ptr().add(1), slice.len());
                             }
                             buffer[0] = padding;
-                            let _ = writer.write(&buffer[0..payload_size]);
+                            let _ = writer.write_all(&buffer[0..payload_size]);
                         });
                     } else {
-                        let _ = writer.write(slice);
+                        let _ = writer.write_all(slice);
                     }
                 }
             }
@@ -4812,7 +4739,7 @@ impl H2FrameParser {
                 length: u32::try_from(encoded_size).expect("int cast"),
             };
             let _ = frame.write(&mut writer);
-            let _ = writer.write(encoded_data);
+            let _ = writer.write_all(encoded_data);
         } else {
             bun_output::scoped_log!(H2FrameParser, "Using CONTINUATION frames for trailers: encoded_size={} max_frame_size={}", encoded_size, actual_max_frame_size);
 
@@ -4825,7 +4752,7 @@ impl H2FrameParser {
                 length: u32::try_from(first_chunk_size).expect("int cast"),
             };
             let _ = headers_frame.write(&mut writer);
-            let _ = writer.write(&encoded_data[0..first_chunk_size]);
+            let _ = writer.write_all(&encoded_data[0..first_chunk_size]);
 
             let mut offset: usize = first_chunk_size;
             while offset < encoded_size {
@@ -4840,7 +4767,7 @@ impl H2FrameParser {
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
                 let _ = cont_frame.write(&mut writer);
-                let _ = writer.write(&encoded_data[offset..offset + chunk_size]);
+                let _ = writer.write_all(&encoded_data[offset..offset + chunk_size]);
 
                 offset += chunk_size;
             }
@@ -5519,9 +5446,9 @@ impl H2FrameParser {
                 // memmove: shift right by 1 to make room for the pad-length byte
                 buffer.copy_within(0..encoded_size, 1);
                 buffer[0] = padding;
-                let _ = writer.write(buffer);
+                let _ = writer.write_all(buffer);
             } else {
-                let _ = writer.write(&encoded_headers);
+                let _ = writer.write_all(&encoded_headers);
             }
         } else {
             bun_output::scoped_log!(H2FrameParser, "Using CONTINUATION frames: encoded_size={} max_frame_payload={}", encoded_size, actual_max_frame_size);
@@ -5547,7 +5474,7 @@ impl H2FrameParser {
             }
 
             // Write first chunk of header block fragment
-            let _ = writer.write(&encoded_headers[0..first_chunk_size]);
+            let _ = writer.write_all(&encoded_headers[0..first_chunk_size]);
 
             let mut offset: usize = first_chunk_size;
             while offset < encoded_size {
@@ -5562,7 +5489,7 @@ impl H2FrameParser {
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
                 let _ = cont_frame.write(&mut writer);
-                let _ = writer.write(&encoded_headers[offset..offset + chunk_size]);
+                let _ = writer.write_all(&encoded_headers[offset..offset + chunk_size]);
 
                 offset += chunk_size;
             }
@@ -5969,13 +5896,8 @@ impl H2FrameParser {
 
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        // Refcounted: release the JS wrapper's +1; the allocation outlives this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        this.strong_this.set(JsRef::empty());
-        this.deref();
+        bun_ptr::finalize_js_box(self, |this| this.strong_this.set(JsRef::empty()));
     }
 }
 

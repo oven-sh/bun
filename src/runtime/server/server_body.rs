@@ -780,8 +780,8 @@ impl AnyRoute {
                     allow_layouts: true,
                 });
 
-                // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's MAX.
-                let limit = FrameworkRouter::TypeIndex::MAX as usize;
+                // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
+                let limit = u8::MAX as usize;
                 if init_ctx.framework_router_list.len() > limit {
                     return Err(global.throw_invalid_arguments(
                         format_args!("Too many framework routers. Maximum is {}.", limit),
@@ -1318,10 +1318,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the per-transport `RequestContext` bounds.
     pub(super) fn notify_inspector_server_stopped(&mut self) {
         if self.inspector_server_id.get() != 0 {
-            #[cold] fn cold() {}
-            cold();
+            bun_core::hint::cold();
             if let Some(debugger) = &self.vm().as_mut().debugger {
-                cold();
+                bun_core::hint::cold();
                 // PORT NOTE (layering): `HTTPServerAgent.notifyServerStopped`
                 // takes `AnyServer` in Zig and unpacks `inspector_server_id`
                 // itself. The Rust port hoists that wrapper to
@@ -1334,7 +1333,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Spec: only clear the id once the agent has been notified, so a
                 // call that races a not-yet-attached debugger leaves the id set
                 // for a later retry (server.zig:1738-1749).
-                self.inspector_server_id = DebuggerId::new(0);
+                self.inspector_server_id = DebuggerId::init(0);
             }
         }
     }
@@ -2404,8 +2403,7 @@ where
                     let addr = match SocketAddress::init(address_bytes, port) {
                         Ok(a) => a,
                         Err(_) => {
-                            #[cold] fn cold() {}
-                            cold();
+                            bun_core::hint::cold();
                             return Ok(JSValue::NULL);
                         }
                     };
@@ -2423,8 +2421,7 @@ where
                         let addr = match SocketAddress::init(address_bytes, port) {
                             Ok(a) => a,
                             Err(_) => {
-                                #[cold] fn cold() {}
-                                cold();
+                                bun_core::hint::cold();
                                 return Ok(JSValue::NULL);
                             }
                         };
@@ -2758,9 +2755,7 @@ where
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
-                        // Parse ASCII decimal directly off the byte slice — header bytes are not
-                        // guaranteed UTF-8, and PORTING.md forbids from_utf8 on network bytes.
-                        break 'brk bun_str::strings::parse_int::<usize>(content_length, 10).unwrap_or(0);
+                        break 'brk bun_http_types::parse_content_length(content_length);
                     }
                     0
                 };
@@ -3289,25 +3284,10 @@ where
 // `noConstructor: true` for all four variants, so no `${T}__getConstructor`
 // symbol is exported by C++ and the trait default (`JSValue::UNDEFINED`) is
 // the spec-correct answer.
-macro_rules! impl_server_jsclass {
-    ($ty:ident, $gen_mod:ident) => {
-        impl bun_jsc::JsClass for $ty {
-            fn from_js(value: JSValue) -> Option<*mut Self> {
-                crate::generated_classes::$gen_mod::from_js(value).map(|p| p.as_ptr())
-            }
-            fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-                crate::generated_classes::$gen_mod::from_js_direct(value).map(|p| p.as_ptr())
-            }
-            fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                crate::generated_classes::$gen_mod::to_js(bun_core::heap::into_raw(Box::new(self)), global)
-            }
-        }
-    };
-}
-impl_server_jsclass!(HTTPServer, js_HTTPServer);
-impl_server_jsclass!(HTTPSServer, js_HTTPSServer);
-impl_server_jsclass!(DebugHTTPServer, js_DebugHTTPServer);
-impl_server_jsclass!(DebugHTTPSServer, js_DebugHTTPSServer);
+bun_jsc::impl_js_class_via_generated!(HTTPServer => crate::generated_classes::js_HTTPServer, no_constructor);
+bun_jsc::impl_js_class_via_generated!(HTTPSServer => crate::generated_classes::js_HTTPSServer, no_constructor);
+bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classes::js_DebugHTTPServer, no_constructor);
+bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
 
 pub enum AnyUserRouteList<'a> {
     HTTPServer(&'a [UserRoute<false, false>]),

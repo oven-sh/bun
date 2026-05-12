@@ -99,6 +99,8 @@ pub mod js {
 // BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = deinit_and_destroy)]
 pub struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
@@ -1837,14 +1839,11 @@ impl Terminal {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        // Refcounted: the trailing `deref_()` releases the JS wrapper's +1;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this: &Self = bun_core::heap::release(self);
-        this.this_value.with_mut(|v| v.finalize());
-        this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.close_internal();
-        this.deref_();
+        bun_ptr::finalize_js_box(self, |this| {
+            this.this_value.with_mut(|v| v.finalize());
+            this.update_flags(|f| f.insert(Flags::FINALIZED));
+            this.close_internal();
+        });
     }
 }
 
@@ -1869,20 +1868,6 @@ unsafe fn deinit_and_destroy(this: *mut Terminal) {
     // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
     // no other live references exist.
     drop(unsafe { bun_core::heap::take(this) });
-}
-
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → trait impl.
-impl bun_ptr::RefCounted for Terminal {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: ref_count == 0 so this is the last live reference; `this`
-        // was heap-allocated in init_terminal.
-        unsafe { deinit_and_destroy(this) };
-    }
 }
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares

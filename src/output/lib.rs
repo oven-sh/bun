@@ -27,6 +27,7 @@
 #![warn(unreachable_pub)]
 pub use bun_core::declare_scope;
 pub use bun_core::scoped_log;
+pub use bun_core::define_scoped_log;
 
 // Supporting types the macro expansions name. Not strictly required for
 // `$crate` resolution, but exposed so callers can name them directly

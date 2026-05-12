@@ -1169,42 +1169,10 @@ pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
 // can't drive `#[link_name]`, so declare all three extern sets in a private mod
 // and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
 // the optimizer folds it to a direct call per monomorphization.
-#[allow(non_snake_case)]
 mod http_sink_abi {
-    use super::{c_void, JSGlobalObject, JSValue};
-    macro_rules! decl {
-        ($($abi:literal => $m:ident;)*) => {$(
-            pub mod $m {
-                use super::*;
-                unsafe extern "C" {
-                    #[link_name = concat!($abi, "__fromJS")]
-                    pub safe fn from_js(value: JSValue) -> usize;
-                    #[link_name = concat!($abi, "__createObject")]
-                    pub safe fn create_object(g: &JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
-                    #[link_name = concat!($abi, "__setDestroyCallback")]
-                    pub safe fn set_destroy_callback(v: JSValue, cb: usize);
-                    #[link_name = concat!($abi, "__assignToStream")]
-                    // `&JSGlobalObject` discharges the deref'd-param
-                    // precondition; `p`/`jp` are opaque — module-private, sole
-                    // caller is the `JsSinkAbi` impl below.
-                    pub safe fn assign_to_stream(
-                        g: &JSGlobalObject, s: JSValue, p: *mut c_void, jp: *mut *mut c_void,
-                    ) -> JSValue;
-                    #[link_name = concat!($abi, "__onClose")]
-                    pub safe fn on_close(p: JSValue, r: JSValue);
-                    #[link_name = concat!($abi, "__onReady")]
-                    pub safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
-                    #[link_name = concat!($abi, "__detachPtr")]
-                    pub safe fn detach_ptr(p: JSValue);
-                }
-            }
-        )*};
-    }
-    decl! {
-        "HTTPResponseSink"  => http;
-        "HTTPSResponseSink" => https;
-        "H3ResponseSink"    => h3;
-    }
+    crate::decl_js_sink_externs!("HTTPResponseSink"  as http);
+    crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
+    crate::decl_js_sink_externs!("H3ResponseSink"    as h3);
 }
 
 macro_rules! http_sink_dispatch {
@@ -2053,24 +2021,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> SinkHandler for HTTPServerWritable<SSL, HTTP3> {
-    fn write(&mut self, data: StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
-    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
-        Self::connect(self, signal);
-        bun_sys::Result::Ok(())
-    }
-}
+crate::impl_sink_handler!([const SSL: bool, const HTTP3: bool] HTTPServerWritable<SSL, HTTP3>);
 
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
@@ -2441,80 +2392,8 @@ impl NetworkSink {
     pub const NAME: &'static str = "NetworkSink";
 }
 
-impl SinkHandler for NetworkSink {
-    fn write(&mut self, data: StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
-    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
-        Self::connect(self, signal);
-        bun_sys::Result::Ok(())
-    }
-}
-
-// `NetworkSink` is exposed to JS via `Sink.JSSink(@This(), "NetworkSink")` —
-// the resolved C externs are spelled out here so the generic `JSSink<NetworkSink>`
-// can dispatch (see FileSink for the same pattern).
-unsafe extern "C" {
-    safe fn NetworkSink__fromJS(value: JSValue) -> usize;
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `object`/`destructor` are stored opaquely in the JS wrapper.
-    safe fn NetworkSink__createObject(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue;
-    safe fn NetworkSink__setDestroyCallback(value: JSValue, callback: usize);
-    // `&JSGlobalObject` discharges the deref'd-param precondition;
-    // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private, sole
-    // caller (`JsSinkAbi::assign_to_stream_extern`) forwards live pointers.
-    safe fn NetworkSink__assignToStream(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue;
-    safe fn NetworkSink__onClose(ptr: JSValue, reason: JSValue);
-    safe fn NetworkSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
-}
-
-impl crate::webcore::sink::JsSinkAbi for NetworkSink {
-    fn from_js_extern(value: JSValue) -> usize {
-        NetworkSink__fromJS(value)
-    }
-    fn create_object_extern(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue {
-        NetworkSink__createObject(global, object, destructor)
-    }
-    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        NetworkSink__setDestroyCallback(value, callback)
-    }
-    fn assign_to_stream_extern(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue {
-        NetworkSink__assignToStream(global, stream, ptr, jsvalue_ptr)
-    }
-    fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        NetworkSink__onClose(ptr, reason)
-    }
-    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        NetworkSink__onReady(ptr, amount, offset)
-    }
-}
+crate::impl_sink_handler!(NetworkSink);
+crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
@@ -2567,6 +2446,8 @@ pub type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // BufferAction
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(bun_core::EnumTag)]
+#[enum_tag(existing = BufferActionTag)]
 pub enum BufferAction {
     Text(JSPromiseStrong),
     ArrayBuffer(JSPromiseStrong),
@@ -2644,16 +2525,6 @@ impl BufferAction {
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
             | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>(p.swap()),
-        }
-    }
-
-    pub fn tag(&self) -> BufferActionTag {
-        match self {
-            BufferAction::Text(_) => BufferActionTag::Text,
-            BufferAction::ArrayBuffer(_) => BufferActionTag::ArrayBuffer,
-            BufferAction::Blob(_) => BufferActionTag::Blob,
-            BufferAction::Bytes(_) => BufferActionTag::Bytes,
-            BufferAction::Json(_) => BufferActionTag::Json,
         }
     }
 }

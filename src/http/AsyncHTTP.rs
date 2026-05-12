@@ -1,4 +1,3 @@
-use core::mem::offset_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -6,6 +5,7 @@ use std::io::Write as _;
 use bun_core::FeatureFlags;
 use bun_ast::{Loc, Log};
 use bun_string::{MutableString, ZigStringSlice};
+use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
 
@@ -70,6 +70,8 @@ pub struct AsyncHTTP<'a> {
 
     pub signals: Signals,
 }
+
+bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
@@ -891,9 +893,7 @@ impl<'a> AsyncHTTP<'a> {
 /// `schedule()`.
 pub unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above.
-    let this: *mut AsyncHTTP<'static> = unsafe {
-        bun_core::from_field_ptr!(AsyncHTTP<'static>, task, task)
-    };
+    let this = unsafe { AsyncHTTP::<'static>::from_task_ptr(task) };
     unsafe { (*this).on_start() };
 }
 

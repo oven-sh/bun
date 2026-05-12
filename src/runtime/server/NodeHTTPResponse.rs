@@ -1802,10 +1802,7 @@ impl NodeHTTPResponse {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // (`heap::release` returns `&mut T`; auto-derefs to `&self` for `deref`.)
-        bun_core::heap::release(self).deref();
+        bun_ptr::finalize_js_box_noop(self);
     }
 
     /// Called by intrusive RefCount when count reaches zero.
@@ -1848,6 +1845,42 @@ impl NodeHTTPResponse {
     }
 }
 
+// `AnyRefCounted` bridge so `bun_ptr::finalize_js_box*` / `RefPtr` accept this
+// type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
+// `&self`-receiver `deref()` above is called from ~10 sites that route through
+// `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
+// is a separate sweep.
+impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
+    type DestructorCtx = ();
+    #[inline]
+    unsafe fn rc_ref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; touches only the
+        // interior-mutable `Cell<u32>` field.
+        unsafe { (*this).ref_() }
+    }
+    #[inline]
+    unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+        // SAFETY: caller contract — `this` is live; `deref()` touches only
+        // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
+        unsafe { (*this).deref() }
+    }
+    #[inline]
+    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_count.get() == 1 }
+    }
+    #[inline]
+    unsafe fn rc_assert_no_refs(this: *const Self) {
+        // SAFETY: caller contract — `this` is live.
+        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
+    }
+    #[cfg(debug_assertions)]
+    #[inline]
+    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
+        bun_ptr::ref_count::noop_debug_data()
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
@@ -1875,11 +1908,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
                     "content-length: {}",
                     BStr::new(content_length)
                 );
-                // std.fmt.parseInt — header values are ASCII, so utf8+parse is equivalent.
-                break 'brk core::str::from_utf8(content_length)
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(0);
+                break 'brk bun_http_types::parse_content_length(content_length);
             }
             break 'brk 0;
         };

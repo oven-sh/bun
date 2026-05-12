@@ -1,3 +1,5 @@
+#![feature(allocator_api)]
+#![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use, unreachable_pub)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
@@ -7,6 +9,7 @@ pub mod tty;
 pub mod util;
 pub mod Global;
 pub mod atomic_cell;
+pub mod hint;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
@@ -156,6 +159,70 @@ pub mod vec {
         extend_from_fn(v, n, |_| T::default());
         &mut v[prev..]
     }
+
+    // ── Zig `ArrayList(u8).unusedCapacitySlice()` family ──────────────────
+    // The Zig stdlib has ONE helper and ~30 call sites; the Rust port had
+    // grown 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
+    // + `set_len(len+n)` copies because `spare_capacity_mut` returns
+    // `MaybeUninit<u8>` and every C-ABI fill site (read/recv/pread, simdutf,
+    // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
+
+    /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
+    /// syscall producer to fill. Pair with [`commit_spare`] (or use
+    /// [`fill_spare`] which does both).
+    ///
+    /// # Safety
+    /// The returned bytes are **uninitialized**. Treat the slice as
+    /// write-only: do not read it, and do not hand it to safe code that
+    /// might. After the producer writes `n` bytes to the front of this
+    /// slice, call [`commit_spare`]`(v, n)` to expose them.
+    #[inline]
+    pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
+        let spare = v.spare_capacity_mut();
+        // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
+        // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
+        // the write-only contract above.
+        core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
+    }
+
+    /// Advance `v.len()` by `n` after a producer has initialized the first
+    /// `n` bytes of [`spare_bytes_mut`]`(v)`.
+    ///
+    /// # Safety
+    /// `n <= v.capacity() - v.len()` and `v[len .. len+n]` must have been
+    /// fully initialized (typically by the FFI/syscall that just returned `n`).
+    #[inline]
+    pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
+        debug_assert!(n <= v.capacity() - v.len());
+        v.set_len(v.len() + n);
+    }
+
+    /// One-shot "reserve → hand spare bytes to producer → commit" combinator.
+    ///
+    /// If `min_spare > 0`, reserves at least that many spare bytes first.
+    /// Calls `f` with the spare-capacity slice; `f` must return
+    /// `(bytes_written, payload)` — `bytes_written` is committed via
+    /// [`commit_spare`] and `payload` is returned to the caller. Return
+    /// `(0, payload)` to commit nothing (e.g. on a producer error).
+    ///
+    /// # Safety
+    /// Same as [`spare_bytes_mut`]: `f` receives a slice over uninitialized
+    /// bytes and must treat it as write-only. The `bytes_written` it reports
+    /// must not exceed the slice length and must cover only bytes `f`
+    /// actually initialized.
+    #[inline]
+    pub unsafe fn fill_spare<R>(
+        v: &mut Vec<u8>,
+        min_spare: usize,
+        f: impl FnOnce(&mut [u8]) -> (usize, R),
+    ) -> R {
+        if min_spare > 0 {
+            v.reserve(min_spare);
+        }
+        let (n, r) = f(spare_bytes_mut(v));
+        commit_spare(v, n);
+        r
+    }
 }
 
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────
@@ -186,9 +253,23 @@ impl OutputSink {
     pub const SYS: Self = Self { kind: OutputSinkKind::Sys, owner: core::ptr::null_mut() };
 }
 
+// `bun_core` (T0) cannot name `bun_errno` (cycle). Single-variant link-interface
+// (owner is unused / null); `bun_errno` provides the `Sys` arm. Gives `result.rs`
+// access to the per-OS `SystemErrno` strum table without duplicating it here.
+bun_dispatch::link_interface! {
+    pub ErrnoNames[Sys] {
+        fn name(errno: i32) -> Option<&'static str>;
+        fn max_dense() -> u32;
+    }
+}
+
+impl ErrnoNames {
+    pub const SYS: Self = Self { kind: ErrnoNamesKind::Sys, owner: core::ptr::null_mut() };
+}
+
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
-pub use bun_core_macros::pretty_fmt;
+pub use bun_core_macros::{pretty_fmt, EnumTag};
 
 /// Stand-in for Zig's `@import("build_options")`. Real values are emitted by
 /// `build.rs` via `env!()` in Phase C (link). Placeholder values let env.rs
@@ -467,6 +548,72 @@ macro_rules! assertf {
     ($cond:expr, $($arg:tt)*) => { ::core::debug_assert!($cond, $($arg)*) };
 }
 
+/// Zig `union(enum)` field projection — `data.file`, `chunk.content.javascript`.
+///
+/// In safety-checked Zig builds, reading a tagged-union field on the wrong
+/// active variant panics at runtime. The Rust port hand-wrote ~20 identical
+/// `match self { Self::V(x) => x, _ => unreachable!() }` accessors across
+/// `jsc` / `bundler` / `ini` / `resolver` / `ast` / `install`; this macro is
+/// the 1:1 analogue. Invoke it *inside* an `impl Enum { ... }` block:
+///
+/// ```ignore
+/// impl Data {
+///     bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
+///     bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
+/// }
+/// impl<'b> PrepareResult<'b> {
+///     bun_core::enum_unwrap!(PrepareResult, Value => into fn into_value -> Expr);
+/// }
+/// ```
+///
+/// The `&`/`&mut` arm returns `&$Out` / `&mut $Out`, so when the variant
+/// payload is itself a reference (e.g. `Entries(&'static mut DirEntry)`),
+/// auto-deref/reborrow coerces `&&mut T` → `&T` and `&mut &mut T` → `&mut T`
+/// to satisfy the declared return type.
+#[macro_export]
+macro_rules! enum_unwrap {
+    ($vis:vis $Enum:ident, $Variant:ident => fn $get:ident / $get_mut:ident -> $Out:ty) => {
+        #[inline]
+        #[track_caller]
+        $vis fn $get(&self) -> &$Out {
+            match self {
+                $Enum::$Variant(__x) => __x,
+                #[allow(unreachable_patterns)]
+                _ => ::core::unreachable!(
+                    ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($get),
+                                    " on non-", ::core::stringify!($Variant), " variant")
+                ),
+            }
+        }
+        #[inline]
+        #[track_caller]
+        $vis fn $get_mut(&mut self) -> &mut $Out {
+            match self {
+                $Enum::$Variant(__x) => __x,
+                #[allow(unreachable_patterns)]
+                _ => ::core::unreachable!(
+                    ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($get_mut),
+                                    " on non-", ::core::stringify!($Variant), " variant")
+                ),
+            }
+        }
+    };
+    ($vis:vis $Enum:ident, $Variant:ident => into fn $into:ident -> $Out:ty) => {
+        #[inline]
+        #[track_caller]
+        $vis fn $into(self) -> $Out {
+            match self {
+                $Enum::$Variant(__x) => __x,
+                #[allow(unreachable_patterns)]
+                _ => ::core::unreachable!(
+                    ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($into),
+                                    " on non-", ::core::stringify!($Variant), " variant")
+                ),
+            }
+        }
+    };
+}
+
 /// Zig: `bun.handleOom(expr)` — unwrap a `Result`, calling `outOfMemory()` on
 /// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
 /// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
@@ -479,6 +626,30 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
     match r {
         Ok(v) => v,
         Err(_) => out_of_memory(),
+    }
+}
+
+/// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
+/// `Result<T, E>`. Zig: `expr catch bun.outOfMemory()` — the *loose* idiom
+/// that panics on **any** `Err`, not just OOM-only error sets. For the
+/// Zig-faithful narrowing version (`bun.handleOom` with comptime error-set
+/// reflection) see `bun_crash_handler::HandleOom`.
+///
+/// PORT NOTE: this is intentionally a blanket `impl<T, E>` — it matches the
+/// existing `bun_core::handle_oom` free fn and the two pre-existing local
+/// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
+/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
+/// instead.
+pub trait UnwrapOrOom {
+    type Output;
+    fn unwrap_or_oom(self) -> Self::Output;
+}
+impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
+    type Output = T;
+    #[inline]
+    #[track_caller]
+    fn unwrap_or_oom(self) -> T {
+        handle_oom(self)
     }
 }
 
@@ -600,59 +771,118 @@ pub mod schema {
 pub use output as Output;
 
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
-pub use fmt::{js_lexer, js_printer};
+pub use fmt::{js_lexer, js_printer, parse_int, ParseIntError};
 
 /// Minimal `bun.strings` subset (full SIMD impl in bun_str via highway FFI).
 pub mod strings {
+    // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
+    // Zig parity: src/string/immutable/unicode.zig:1480 `u16Lead`/`u16Trail`,
+    // re-exported as `strings.u16Lead`/`strings.u16Trail`. Defined here in
+    // bun_core (not bun_string) so the WTF-8 fallback transcoder below and any
+    // other tier-0 caller can use it without a dep cycle.
+    //
+    // Precondition: `supplementary` is in U+10000..=U+10FFFF. Out-of-range input
+    // is not checked in release (matches the ICU C macros' truncating cast).
+
+    /// ICU `U16_LEAD`: high surrogate for a supplementary code point.
+    #[inline]
+    pub const fn u16_lead(supplementary: u32) -> u16 {
+        debug_assert!(supplementary >= 0x10000 && supplementary <= 0x10FFFF);
+        ((supplementary >> 10) + 0xD7C0) as u16
+    }
+
+    /// ICU `U16_TRAIL`: low surrogate for a supplementary code point.
+    #[inline]
+    pub const fn u16_trail(supplementary: u32) -> u16 {
+        debug_assert!(supplementary >= 0x10000 && supplementary <= 0x10FFFF);
+        ((supplementary & 0x3FF) | 0xDC00) as u16
+    }
+
+    /// `[U16_LEAD(c), U16_TRAIL(c)]` for a supplementary code point.
+    #[inline]
+    pub const fn encode_surrogate_pair(supplementary: u32) -> [u16; 2] {
+        [u16_lead(supplementary), u16_trail(supplementary)]
+    }
+
+    /// Append `cp` to `buf` as 1 or 2 UTF-16 code units (BMP vs surrogate
+    /// pair). Lone-surrogate code points pass through unchanged (WTF-16).
+    #[inline]
+    pub fn push_codepoint_utf16(buf: &mut Vec<u16>, cp: u32) {
+        if cp <= 0xFFFF {
+            buf.push(cp as u16);
+        } else {
+            buf.extend_from_slice(&encode_surrogate_pair(cp));
+        }
+    }
+
     #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { ::bstr::ByteSlice::find(h, n).is_some() }
     #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
     #[inline] pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> { h.iter().position(|&b| b == c) }
     #[inline] pub fn starts_with(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
     #[inline] pub fn ends_with(h: &[u8], p: &[u8]) -> bool { h.ends_with(p) }
     #[inline] pub fn eql(a: &[u8], b: &[u8]) -> bool { a == b }
-    pub use ::bun_alloc::trim_right;
-    /// Allocating replace-all (cold debug-log path). Not the SIMD `bun.strings`
-    /// version — that lives in `bun_str`.
-    pub fn replace_owned(haystack: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
+    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
+
+    /// `std.mem.replacementSize` — byte length of `input` after replacing every
+    /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
+    /// (lenient vs Zig's assert; matches every existing Rust caller's expectation).
+    pub fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
         if needle.is_empty() {
-            return haystack.to_vec();
+            return input.len();
         }
-        let mut out = Vec::with_capacity(haystack.len());
-        let mut i = 0;
-        while let Some(pos) = ::bstr::ByteSlice::find(&haystack[i..], needle) {
-            out.extend_from_slice(&haystack[i..i + pos]);
+        let mut size = input.len();
+        let mut i = 0usize;
+        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+            size = size - needle.len() + replacement.len();
+            i += pos + needle.len();
+        }
+        size
+    }
+
+    /// `std.mem.replace` — write `input` into `output` replacing every `needle`
+    /// with `replacement`; returns the number of replacements made. `output`
+    /// must be at least [`replacement_size`]`(input, needle, replacement)` bytes.
+    pub fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
+        if needle.is_empty() {
+            output[..input.len()].copy_from_slice(input);
+            return 0;
+        }
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut count = 0usize;
+        loop {
+            match ::bstr::ByteSlice::find(&input[i..], needle) {
+                Some(pos) => {
+                    output[o..o + pos].copy_from_slice(&input[i..i + pos]);
+                    o += pos;
+                    output[o..o + replacement.len()].copy_from_slice(replacement);
+                    o += replacement.len();
+                    i += pos + needle.len();
+                    count += 1;
+                }
+                None => {
+                    output[o..o + (input.len() - i)].copy_from_slice(&input[i..]);
+                    return count;
+                }
+            }
+        }
+    }
+
+    /// Allocating replace-all — `std.mem.replacementSize` + `std.mem.replace`
+    /// fused. Returns a fresh `Vec` (sized exactly to the result; no realloc).
+    pub fn replace_owned(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
+        if needle.is_empty() {
+            return input.to_vec();
+        }
+        let mut out = Vec::with_capacity(replacement_size(input, needle, replacement));
+        let mut i = 0usize;
+        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+            out.extend_from_slice(&input[i..i + pos]);
             out.extend_from_slice(replacement);
             i += pos + needle.len();
         }
-        out.extend_from_slice(&haystack[i..]);
+        out.extend_from_slice(&input[i..]);
         out
-    }
-    /// Zig: `strings.copyLowercase` (src/string/immutable.zig). ASCII-lowercase
-    /// `in_` into `out` (which must be at least `in_.len()`), returning the
-    /// written prefix. Memcpy-runs + per-uppercase-byte fixup; identical output
-    /// to a byte-at-a-time `to_ascii_lowercase` zip.
-    pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
-        let mut in_slice = in_;
-        // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
-        let mut out_off: usize = 0;
-
-        'begin: loop {
-            for (i, &c) in in_slice.iter().enumerate() {
-                if let b'A'..=b'Z' = c {
-                    out[out_off..out_off + i].copy_from_slice(&in_slice[0..i]);
-                    out[out_off + i] = c.to_ascii_lowercase();
-                    let end = i + 1;
-                    in_slice = &in_slice[end..];
-                    out_off += end;
-                    continue 'begin;
-                }
-            }
-
-            out[out_off..out_off + in_slice.len()].copy_from_slice(in_slice);
-            break;
-        }
-
-        &out[0..in_.len()]
     }
     /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
     /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
@@ -760,6 +990,33 @@ pub mod strings {
         a == b
     }
 
+    /// `const fn` byte-slice equality — slice `==` is not `const` on stable, so
+    /// const-context callers (clap param-name lookup, MultiArrayList field-name
+    /// reflection, host-fn error-set parsing) need the manual len-check + while
+    /// loop. Zig precedent: a single `std.mem.eql(u8, a, b)`; the per-crate
+    /// duplication was a Rust-port artifact, not a design choice. Runtime
+    /// callers should prefer plain `==` (lowers to `memcmp`).
+    #[inline]
+    pub const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut i = 0;
+        while i < a.len() {
+            if a[i] != b[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// `const fn` `&str` equality via [`const_bytes_eq`].
+    #[inline]
+    pub const fn const_str_eq(a: &str, b: &str) -> bool {
+        const_bytes_eq(a.as_bytes(), b.as_bytes())
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Transcoding (from src/string/immutable/unicode.zig). Lives in T0 so
     // collections::Vec<u8> can call it without depending on bun_string.
@@ -812,6 +1069,93 @@ pub mod strings {
             out[3] = 0x80 | (cp & 0x3F) as u8;
             4
         }
+    }
+
+
+    // ── UTF-16 surrogate primitives (ICU `utf16.h` macros) ────────────────────
+    // Canonical home is bun_core (not bun_string) because bun_core::strings itself
+    // needs these for the simdutf scalar-fallback paths (append_wtf8_from_utf16,
+    // copy_utf16_into_utf8, util::getcwd on Windows) and bun_string already
+    // depends on bun_core. bun_string re-exports the full set via
+    // `pub use bun_core::strings::{u16_is_lead, ...}`.
+    //
+    // DO NOT add a one-size `Utf16CodepointIter` here: unpaired-surrogate policy
+    // is caller-specific and load-bearing (WTF-8 pass-through vs U+FFFD replace
+    // vs js_printer's unchecked-trail combine). Callers compose the primitives.
+
+    /// ICU `U16_SURROGATE_OFFSET` = `(0xD800 << 10) + 0xDC00 - 0x10000`.
+    pub const U16_SURROGATE_OFFSET: u32 = (0xD800u32 << 10) + 0xDC00 - 0x10000;
+
+    /// ICU `U16_IS_LEAD` — high (lead) surrogate `0xD800..=0xDBFF`.
+    #[inline]
+    pub const fn u16_is_lead(c: u16) -> bool {
+        (c & 0xFC00) == 0xD800
+    }
+
+    /// ICU `U16_IS_TRAIL` — low (trail) surrogate `0xDC00..=0xDFFF`.
+    #[inline]
+    pub const fn u16_is_trail(c: u16) -> bool {
+        (c & 0xFC00) == 0xDC00
+    }
+
+    /// ICU `U16_IS_SURROGATE` — either half, `0xD800..=0xDFFF`.
+    #[inline]
+    pub const fn u16_is_surrogate(c: u16) -> bool {
+        (c & 0xF800) == 0xD800
+    }
+
+    /// ICU `U16_GET_SUPPLEMENTARY` — combine a *known-valid* lead+trail into a
+    /// supplementary code point. Caller must have already checked
+    /// [`u16_is_lead`]/[`u16_is_trail`].
+    #[inline]
+    pub const fn u16_get_supplementary(lead: u16, trail: u16) -> u32 {
+        ((lead as u32) << 10) + trail as u32 - U16_SURROGATE_OFFSET
+    }
+
+    /// Validate-then-combine: `Some(supplementary)` iff `lead` is a high
+    /// surrogate **and** `trail` is a low surrogate.
+    #[inline]
+    pub const fn decode_surrogate_pair(lead: u16, trail: u16) -> Option<u32> {
+        if u16_is_lead(lead) && u16_is_trail(trail) {
+            Some(u16_get_supplementary(lead, trail))
+        } else {
+            None
+        }
+    }
+
+    /// Decode one code point from `input[0..]`, replacing any unpaired
+    /// surrogate with U+FFFD. Returns `(code_point, units_consumed ∈ {1,2})`.
+    /// `input` must be non-empty.
+    #[inline]
+    pub fn decode_utf16_with_fffd(input: &[u16]) -> (u32, u8) {
+        let c0 = input[0];
+        if u16_is_lead(c0) {
+            match input.get(1) {
+                Some(&c1) if u16_is_trail(c1) => (u16_get_supplementary(c0, c1), 2),
+                _ => (0xFFFD, 1),
+            }
+        } else if u16_is_trail(c0) {
+            (0xFFFD, 1)
+        } else {
+            (c0 as u32, 1)
+        }
+    }
+
+    /// Decode one code point from `input[0..]` with **WTF-16 pass-through**:
+    /// well-formed pairs are combined; *unpaired* surrogates are returned
+    /// verbatim (so the caller can re-encode them as 3-byte WTF-8).
+    /// Returns `(code_point, units_consumed ∈ {1,2})`. `input` must be non-empty.
+    #[inline]
+    pub fn decode_wtf16_raw(input: &[u16]) -> (u32, u8) {
+        let c0 = input[0];
+        if u16_is_lead(c0) {
+            if let Some(&c1) = input.get(1) {
+                if u16_is_trail(c1) {
+                    return (u16_get_supplementary(c0, c1), 2);
+                }
+            }
+        }
+        (c0 as u32, 1)
     }
 
     #[inline]
@@ -869,20 +1213,8 @@ pub mod strings {
         let mut i = 0usize;
         let mut buf = [0u8; 4];
         while i < utf16.len() {
-            let unit = utf16[i] as u32;
-            let cp;
-            if (0xD800..=0xDBFF).contains(&unit) {
-                if i + 1 < utf16.len() {
-                    let lo = utf16[i + 1] as u32;
-                    if (0xDC00..=0xDFFF).contains(&lo) {
-                        cp = 0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00);
-                        i += 2;
-                    } else { cp = 0xFFFD; i += 1; }
-                } else { cp = 0xFFFD; i += 1; }
-            } else if (0xDC00..=0xDFFF).contains(&unit) {
-                cp = 0xFFFD;
-                i += 1;
-            } else { cp = unit; i += 1; }
+            let (cp, adv) = decode_utf16_with_fffd(&utf16[i..]);
+            i += adv as usize;
             let n = encode_wtf8_rune(&mut buf, cp);
             list.extend_from_slice(&buf[..n]);
         }
@@ -891,21 +1223,21 @@ pub mod strings {
     /// Port of `convertUTF16ToUTF8Append`. Caller must reserve
     /// `simdutf::length::utf8::from::utf16::le(utf16)` spare bytes for the fast path.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
-        let spare = list.spare_capacity_mut();
-        // SAFETY: simdutf writes only initialized bytes; we set_len by reported count.
+        // SAFETY: simdutf writes only initialized bytes into the spare slice and
+        // reports the count; on SURROGATE we commit 0 and fall back below.
         let r = unsafe {
-            simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
-                utf16.as_ptr(),
-                utf16.len(),
-                spare.as_mut_ptr().cast::<u8>(),
-            )
+            crate::vec::fill_spare(list, 0, |spare| {
+                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    spare.as_mut_ptr(),
+                );
+                (if r.status == simdutf::Status::SURROGATE { 0 } else { r.count }, r)
+            })
         };
         if r.status == simdutf::Status::SURROGATE {
             append_wtf8_from_utf16(list, utf16);
-            return;
         }
-        // SAFETY: simdutf wrote `r.count` bytes into spare capacity.
-        unsafe { list.set_len(list.len() + r.count) };
     }
 
     pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
@@ -1020,22 +1352,12 @@ pub mod strings {
         let mut written = 0usize;
         let mut tmp = [0u8; 4];
         while read < utf16.len() {
-            let unit = utf16[read] as u32;
-            let (cp, adv) = if (0xD800..=0xDBFF).contains(&unit) {
-                if read + 1 < utf16.len() {
-                    let lo = utf16[read + 1] as u32;
-                    if (0xDC00..=0xDFFF).contains(&lo) {
-                        (0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00), 2)
-                    } else { (0xFFFD, 1) }
-                } else { (0xFFFD, 1) }
-            } else if (0xDC00..=0xDFFF).contains(&unit) {
-                (0xFFFD, 1)
-            } else { (unit, 1) };
+            let (cp, adv) = decode_utf16_with_fffd(&utf16[read..]);
             let n = encode_wtf8_rune(&mut tmp, cp);
             if written + n > buf.len() { break; }
             buf[written..written + n].copy_from_slice(&tmp[..n]);
             written += n;
-            read += adv;
+            read += adv as usize;
         }
         EncodeIntoResult { read: read as u32, written: written as u32 }
     }
@@ -1212,6 +1534,23 @@ pub mod strings {
         utf16.iter().position(|&u| u >= 0x80)
     }
 
+    /// Narrow ASCII-only `src` into `dst`. Returns `Some(&mut dst[..src.len()])`
+    /// iff every unit is `< 0x80` and `dst.len() >= src.len()`; otherwise `None`
+    /// (partial writes to `dst` are not rolled back). Composes `firstNonASCII16`
+    /// + `copyU16IntoU8` — Zig has no single helper and open-codes this per site
+    /// (e.g. string.zig `inMapCaseInsensitive`).
+    #[inline]
+    pub fn narrow_ascii_u16<'a>(src: &[u16], dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
+        let dst = dst.get_mut(..src.len())?;
+        for (d, &u) in dst.iter_mut().zip(src) {
+            if u >= 0x80 {
+                return None;
+            }
+            *d = u as u8;
+        }
+        Some(dst)
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Generic-T helpers used by bun_paths (must live at T0).
     // ──────────────────────────────────────────────────────────────────────
@@ -1221,9 +1560,21 @@ pub mod strings {
         s.iter().position(|c| chars.contains(c))
     }
 
+    // Bound relaxed Eq → PartialEq to match core::slice::<[T]>::starts_with /
+    // ends_with exactly. Bodies are semantically identical to the stdlib
+    // methods; kept as named free fns so Zig-port call sites that read
+    // `strings::has_prefix_t(a, b)` stay 1:1 with `bun.strings.hasPrefixComptime`
+    // / `std.mem.startsWith`. Rust already lowers slice `==` on integer T to
+    // memcmp, so the `eql_long`/`reinterpret_to_u8` perf path from
+    // immutable.rs is unnecessary.
     #[inline]
-    pub fn has_prefix_t<T: Eq>(s: &[T], prefix: &[T]) -> bool {
-        s.len() >= prefix.len() && &s[..prefix.len()] == prefix
+    pub fn has_prefix_t<T: PartialEq>(s: &[T], prefix: &[T]) -> bool {
+        s.len() >= prefix.len() && s[..prefix.len()] == *prefix
+    }
+
+    #[inline]
+    pub fn has_suffix_t<T: PartialEq>(s: &[T], suffix: &[T]) -> bool {
+        s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
     }
 
     #[inline]
@@ -1536,12 +1887,13 @@ pub mod strings {
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
         // std.fs.path.basenamePosix — last component after stripping trailing
-        // '/' separators; "/" → "".
+        // '/' separators; "/" → "". `\` is NOT a separator on POSIX (matches
+        // Zig basenamePosix and bun_paths::basename_posix).
         let mut end = path.len();
-        while end > 0 && (path[end - 1] == b'/' || path[end - 1] == b'\\') { end -= 1; }
+        while end > 0 && path[end - 1] == b'/' { end -= 1; }
         if end == 0 { return b""; }
         let mut start = end;
-        while start > 0 && path[start - 1] != b'/' && path[start - 1] != b'\\' { start -= 1; }
+        while start > 0 && path[start - 1] != b'/' { start -= 1; }
         &path[start..end]
     }
     /// `bun.strings.withoutTrailingSlash`
@@ -1580,9 +1932,9 @@ pub mod strings {
                     out[written] = cp as u16;
                     written += 1;
                 } else {
-                    let cp = cp - 0x10000;
-                    out[written] = 0xD800 | ((cp >> 10) as u16);
-                    out[written + 1] = 0xDC00 | ((cp & 0x3FF) as u16);
+                    let [hi, lo] = encode_surrogate_pair(cp);
+                    out[written] = hi;
+                    out[written + 1] = lo;
                     written += 2;
                 }
                 i += adv;
@@ -1719,6 +2071,41 @@ pub mod ffi {
     pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
         // SAFETY: forwarded to `cstr`.
         unsafe { cstr(p) }.to_bytes()
+    }
+
+    /// `std.mem.len` for `[*:0]const u16` — count u16 code units up to (and
+    /// excluding) the first NUL. Single audited funnel for the hand-rolled
+    /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
+    /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
+    /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
+    /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
+    /// [`cstr`] and as Zig `std.mem.len([*:0]const u16)`.
+    ///
+    /// # Safety
+    /// `p` must be non-null and point to a NUL-terminated u16 sequence
+    /// readable up to and including the terminator.
+    #[inline(always)]
+    pub unsafe fn wcslen(p: *const u16) -> usize {
+        debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
+        let mut n = 0usize;
+        // SAFETY: caller contract — non-null, NUL-terminated.
+        while unsafe { *p.add(n) } != 0 {
+            n += 1;
+        }
+        n
+    }
+
+    /// UTF-16 analogue of [`cstr_bytes`]: scan to NUL and borrow the code
+    /// units as a `&[u16]`. Dominant shape at call sites (Zig
+    /// `std.mem.span([*:0]const u16)` port).
+    ///
+    /// # Safety
+    /// Same contract as [`wcslen`]; the returned borrow must not outlive the
+    /// allocation backing `p`.
+    #[inline(always)]
+    pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
+        // SAFETY: forwarded to `wcslen`; `p[..len]` is readable per contract.
+        unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
     }
 
     #[cfg(unix)]
@@ -1921,6 +2308,8 @@ pub mod ffi {
     #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
     #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
     #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///

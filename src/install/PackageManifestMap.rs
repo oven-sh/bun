@@ -21,22 +21,7 @@ pub enum Value {
 
 impl Value {
     /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
-    #[inline]
-    pub fn manifest_mut(&mut self) -> &mut npm::PackageManifest {
-        match self {
-            Value::Manifest(m) => m,
-            _ => unreachable!("manifest_mut on non-Manifest value"),
-        }
-    }
-
-    /// Immutable counterpart of `manifest_mut`.
-    #[inline]
-    pub fn manifest(&self) -> &npm::PackageManifest {
-        match self {
-            Value::Manifest(m) => m,
-            _ => unreachable!("manifest on non-Manifest value"),
-        }
-    }
+    bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 
 // Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.

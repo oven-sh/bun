@@ -12,7 +12,7 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
 use core::cell::{Cell, UnsafeCell};
-use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
 
@@ -45,89 +45,30 @@ macro_rules! __uv_log {
 pub use crate::__uv_log as log;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Win32 ABI typedefs. Shared POD structs (COORD, sockaddr_*) come from the
-// tier-0 `bun_windows_sys` leaf; libuv-specific scalars stay local so this
-// crate stays free of any `bun_sys` (higher-tier) dependency.
+// Win32 ABI typedefs. Shared POD structs/typedefs come from the tier-0
+// `bun_windows_sys` leaf so the same nominal types flow through libuv,
+// `bun_sys`, and the runtime without cross-crate mismatch.
 // ──────────────────────────────────────────────────────────────────────────
+pub use bun_windows_sys::{
+    BOOL, COORD, CRITICAL_SECTION, DWORD, HANDLE, HMODULE, INPUT_RECORD, INVALID_HANDLE_VALUE,
+    LARGE_INTEGER, LONG, OVERLAPPED, SHORT, ULONG, ULONG_PTR, WCHAR, WIN32_FIND_DATAW, WORD,
+};
+// Kept local — NOT re-exported from `bun_windows_sys`:
+// • CHAR: libuv wants u8, `bun_windows_sys::CHAR` is c_char (i8 on MSVC).
+// • NTSTATUS: libuv wants plain i32, `bun_windows_sys::NTSTATUS` is a newtype.
 pub type CHAR = u8;
-pub type SHORT = c_short;
-pub type LONG = c_long;
-pub type WORD = c_ushort;
-pub type ULONG = u32;
-pub type DWORD = u32;
-pub type BOOL = c_int;
-pub type ULONG_PTR = usize;
-pub type LARGE_INTEGER = i64;
-pub type HANDLE = *mut c_void;
-pub type HMODULE = HANDLE;
+pub type NTSTATUS = i32;
 /// Win32 `SOCKET` is `UINT_PTR` (an integer), not a pointer; matches Zig's
 /// `std.os.windows.ws2_32.SOCKET = usize`. A raw-pointer type would give
 /// `Option<SOCKET>` an unwanted niche (None ↔ 0 collides with socket 0) and
 /// force int-to-ptr provenance for `INVALID_SOCKET`.
 pub type SOCKET = usize;
-pub type WCHAR = u16;
-pub type NTSTATUS = i32;
 type LPFN_ACCEPTEX = *const c_void;
 type LPFN_CONNECTEX = *const c_void;
 type LPFN_WSARECV = *const c_void;
 type LPFN_WSARECVFROM = *const c_void;
 type FILE = c_void;
-
-pub const INVALID_HANDLE_VALUE: HANDLE = usize::MAX as HANDLE;
-
-/// `OVERLAPPED` (minwinbase.h) — 32 bytes on x64.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct OVERLAPPED {
-    pub Internal: ULONG_PTR,
-    pub InternalHigh: ULONG_PTR,
-    pub Offset: DWORD,
-    pub OffsetHigh: DWORD,
-    pub hEvent: HANDLE,
-}
-
-/// `RTL_CRITICAL_SECTION` — 40 bytes on x64.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CRITICAL_SECTION {
-    DebugInfo: *mut c_void,
-    LockCount: LONG,
-    RecursionCount: LONG,
-    OwningThread: HANDLE,
-    LockSemaphore: HANDLE,
-    SpinCount: ULONG_PTR,
-}
 pub type uv_mutex_t = CRITICAL_SECTION;
-
-/// `_COORD` (wincon.h).
-pub use bun_windows_sys::COORD;
-
-/// `INPUT_RECORD` (wincon.h) — 20 bytes (4-aligned, EventType u16 + 2 pad +
-/// 16-byte union). Only ever read by libuv internals; Rust treats payload as
-/// opaque bytes.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct INPUT_RECORD {
-    pub EventType: WORD,
-    _pad: WORD,
-    pub Event: [u32; 4],
-}
-
-/// `WIN32_FIND_DATAW` (minwinbase.h) — 592 bytes.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WIN32_FIND_DATAW {
-    pub dwFileAttributes: DWORD,
-    pub ftCreationTime: [DWORD; 2],
-    pub ftLastAccessTime: [DWORD; 2],
-    pub ftLastWriteTime: [DWORD; 2],
-    pub nFileSizeHigh: DWORD,
-    pub nFileSizeLow: DWORD,
-    pub dwReserved0: DWORD,
-    pub dwReserved1: DWORD,
-    pub cFileName: [WCHAR; 260],
-    pub cAlternateFileName: [WCHAR; 14],
-}
 
 // Socket address types (ws2def.h). The canonical `#[repr(C)]` definitions live
 // in `bun_windows_sys::ws2_32` so the same nominal type flows through libuv,

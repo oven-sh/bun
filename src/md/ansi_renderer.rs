@@ -345,16 +345,9 @@ impl<'a> AnsiRenderer<'a> {
                     if let Some(idx) = parent_list {
                         if self.block_stack[idx].kind == BlockKind::Ol {
                             let num = self.block_stack[idx].data + entry.index;
-                            let written: &[u8] = {
-                                let mut cursor = &mut num_buf[..];
-                                match write!(cursor, "{}. ", num) {
-                                    Ok(()) => {
-                                        let remaining = cursor.len();
-                                        &num_buf[..num_buf.len() - remaining]
-                                    }
-                                    Err(_) => b"? ",
-                                }
-                            };
+                            let written: &[u8] =
+                                bun_core::fmt::buf_print(&mut num_buf, format_args!("{num}. "))
+                                    .unwrap_or(b"? ");
                             break 'blk (written, color(AnsiColor::Cyan));
                         }
                     }
@@ -2040,7 +2033,7 @@ impl<'s> CellAnsiState<'s> {
         // since we don't need to recompute it — just replay it.
         let mut iter = params.split(|b| *b == b';');
         while let Some(p) = iter.next() {
-            let n = match core::str::from_utf8(p).ok().and_then(|s| s.parse::<u32>().ok()) {
+            let n = match bun_core::fmt::parse_int::<u32>(p, 10).ok() {
                 Some(n) => n,
                 None => continue,
             };
@@ -2296,7 +2289,7 @@ pub fn detect_light_background() -> bool {
             last = part;
         }
         if !last.is_empty() {
-            let bg = match core::str::from_utf8(last).ok().and_then(|s| s.parse::<u8>().ok()) {
+            let bg = match bun_core::fmt::parse_int::<u8>(last, 10).ok() {
                 Some(n) => n,
                 None => return false,
             };

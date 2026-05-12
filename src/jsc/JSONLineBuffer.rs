@@ -133,25 +133,16 @@ impl JSONLineBuffer {
         self.head as usize >= self.data.len()
     }
 
-    pub fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        self.data.unused_capacity_slice()
-    }
-
-    pub fn ensure_unused_capacity(&mut self, additional: usize) {
-        self.data.ensure_unused_capacity(additional);
-    }
-
     /// Notify the buffer that `nread` bytes were written directly into the
-    /// tail of `data` (e.g., via the slice handed out by
-    /// `unused_capacity_slice()`).
+    /// tail of `data` (via `data.uv_alloc_spare_u8()`).
     ///
     /// Takes a length, not a `&[u8]`, because the only caller's slice would
     /// alias `&mut self.data` — and only the length is used here. Passing the
     /// slice through would re-introduce the Stacked-Borrows hazard the
     /// `on_read` refactor removed.
     pub fn notify_written(&mut self, nread: usize) {
-        debug_assert!((nread as u64) <= u32::MAX as u64);
-        unsafe { self.data.set_len(self.data.len().saturating_add(nread)) };
+        // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
+        unsafe { self.data.uv_commit(nread) };
         self.scan_for_newline();
     }
 }

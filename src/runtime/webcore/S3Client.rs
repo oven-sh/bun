@@ -634,12 +634,6 @@ impl S3Client {
         store.data.as_s3().unlink(store, global, options)
     }
 
-    /// Called by the generated JSCell wrapper's `finalize()`. Runs on the
-    /// mutator thread during lazy sweep — do not touch JS values here.
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // ── Static methods ────────────────────────────────────────────────────
     // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
     // wrappers that call these as `S3Client::static_*(global, callframe)`,

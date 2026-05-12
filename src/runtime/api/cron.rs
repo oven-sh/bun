@@ -43,14 +43,6 @@ use bun_sys::{self as sys, Fd, File};
 
 // ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
 ///
 /// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
@@ -352,7 +344,7 @@ impl CronRegisterJob {
         } else {
             RegisterState::Done
         };
-        this_ref.poll.unref(vm_ctx());
+        this_ref.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
@@ -764,7 +756,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         // `start_*` (which may free `job`).
         let promise_value = {
             let job_ref = unsafe { &mut *job };
-            job_ref.poll.ref_(vm_ctx());
+            job_ref.poll.ref_(bun_io::js_vm_ctx());
             job_ref.promise.value()
         };
 
@@ -1081,7 +1073,7 @@ impl CronRemoveJob {
         } else {
             RemoveState::Done
         };
-        this_ref.poll.unref(vm_ctx());
+        this_ref.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
@@ -1246,7 +1238,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         // `start_*` (which may free `job`).
         let promise_value = {
             let job_ref = unsafe { &mut *job };
-            job_ref.poll.ref_(vm_ctx());
+            job_ref.poll.ref_(bun_io::js_vm_ctx());
             job_ref.promise.value()
         };
         // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
@@ -1439,7 +1431,7 @@ impl CronJob {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        self.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         self.maybe_downgrade();
     }
 
@@ -1460,7 +1452,7 @@ impl CronJob {
         // and clearAllForVM(.teardown) can release pending_ref.
         if this_ref.in_fire.get() || this_ref.pending_ref.get() {
             this_ref.stopped.set(true);
-            this_ref.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+            this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             return;
         }
         this_ref.stop_internal(vm);
@@ -1515,13 +1507,7 @@ impl CronJob {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.this_value.with_mut(|v| v.finalize());
-        // SAFETY: `this` is a live Box-allocated CronJob; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -1694,14 +1680,14 @@ impl CronJob {
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if !self.stopped.get() {
-            self.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
+            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
         Ok(frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_unref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         Ok(frame.this())
     }
 
@@ -1780,7 +1766,7 @@ impl CronJob {
         js::cron_set_cached(js_value, global, schedule_arg);
         js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));
 
-        job_ref.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
+        job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
 
         Ok(js_value)

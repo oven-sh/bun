@@ -1,6 +1,7 @@
 //! Port of `src/string/immutable/unicode.zig`.
 
 use bun_alloc::AllocError;
+use bun_collections::VecExt as _;
 use crate::immutable::{
     self as strings, eql_comptime_ignore_len as eql_ignore_len, first_non_ascii, first_non_ascii16,
     U3Fast, ASCII_VECTOR_SIZE, UNICODE_REPLACEMENT as unicode_replacement,
@@ -59,12 +60,8 @@ fn append_u8_as_u16(dst: &mut Vec<u16>, src: &[u8]) {
     if src.is_empty() {
         return;
     }
-    let end = dst.len();
-    dst.reserve(src.len());
-    // SAFETY: `src.len()` u16 slots reserved above; `copy_u8_into_u16`
-    // writes exactly `src.len()` of them immediately below.
-    unsafe { dst.set_len(end + src.len()) };
-    copy_u8_into_u16(&mut dst[end..], src);
+    // SAFETY: copy_u8_into_u16 fills exactly src.len() slots.
+    copy_u8_into_u16(unsafe { dst.writable_slice(src.len()) }, src);
 }
 
 /// Narrow-append `src` Latin-1/ASCII `u16` code units onto `dst` as bytes.
@@ -74,12 +71,8 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     if src.is_empty() {
         return;
     }
-    let end = dst.len();
-    dst.reserve(src.len());
-    // SAFETY: `src.len()` bytes reserved above; `copy_u16_into_u8` writes
-    // exactly `src.len()` of them immediately below.
-    unsafe { dst.set_len(end + src.len()) };
-    copy_u16_into_u8(&mut dst[end..], src);
+    // SAFETY: copy_u16_into_u8 fills exactly src.len() bytes.
+    copy_u16_into_u8(unsafe { dst.writable_slice(src.len()) }, src);
 }
 
 // ───────────────────────────── NewCodePointIterator ─────────────────────────────
@@ -576,8 +569,20 @@ pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> 
 }
 
 
+// ─── CANONICAL: UTF-16 codepoint decode ─────────────────────────────────────
+// Faithful port of unicode.zig:569 / :1321 / :1325 / :1361. Re-exported from
+// immutable.rs as `strings::{utf16_codepoint, utf16_codepoint_with_fffd,
+// UTF16Replacement}`; the parallel Utf16CodepointLen + duplicate struct/fns
+// that lived in immutable.rs are deleted in favour of this single source of
+// truth. All callers (escapeHTML.rs ×5 — reads only `.len`; visible.rs ×1;
+// unicode.rs ×4; shell_parser/parse.rs ×1; TextEncoderStreamEncoder.rs ×1)
+// resolve through the `pub use unicode_draft::{…}` re-export with no source
+// change.
+
+/// `strings.UTF16Replacement` (unicode.zig:569) — decoded UTF-16 codepoint
+/// with surrogate metadata.
 #[derive(Clone, Copy)]
-pub(super) struct UTF16Replacement {
+pub struct UTF16Replacement {
     pub code_point: u32,
     pub len: U3Fast,
 
@@ -604,7 +609,7 @@ impl Default for UTF16Replacement {
 
 impl UTF16Replacement {
     #[inline]
-    pub(super) fn utf8_width(self) -> U3Fast {
+    pub fn utf8_width(self) -> U3Fast {
         match self.code_point {
             0..=0x7F => 1,
             0x80..=0x7FF => 2,
@@ -1112,14 +1117,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         remaining = &remaining[(replacement.len as usize).max(1)..];
 
         //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        match replacement.code_point {
-            c @ 0..=0xffff => {
-                output.push(u16::try_from(c).expect("int cast"));
-            }
-            c => {
-                output.extend_from_slice(&[u16_lead(c), u16_trail(c)]);
-            }
-        }
+        push_codepoint_utf16(&mut output, replacement.code_point);
     }
 
     while let Some(j) = first_non_ascii(remaining) {
@@ -1137,14 +1135,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         remaining = &remaining[(replacement.len as usize).max(1)..];
 
         //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        match replacement.code_point {
-            c @ 0..=0xffff => {
-                output.push(u16::try_from(c).expect("int cast"));
-            }
-            c => {
-                output.extend_from_slice(&[u16_lead(c), u16_trail(c)]);
-            }
-        }
+        push_codepoint_utf16(&mut output, replacement.code_point);
     }
 
     if !remaining.is_empty() {
@@ -1264,10 +1255,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         remaining = &remaining[(converted.len as usize).max(1)..];
 
         // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        match converted.code_point {
-            c @ 0..=0xffff => output.push(u16::try_from(c).expect("int cast")), // PERF(port): was assume_capacity
-            c => output.extend_from_slice(&[u16_lead(c), u16_trail(c)]), // PERF(port): was assume_capacity
-        }
+        push_codepoint_utf16(&mut output, converted.code_point); // PERF(port): was assume_capacity
 
         non_ascii = first_non_ascii(remaining);
     }
@@ -1282,75 +1270,54 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
     Ok(Some((output, [0; 3], 0)))
 }
 
-pub(super) fn utf16_codepoint_with_fffd(input: &[u16]) -> UTF16Replacement {
+#[inline]
+pub fn utf16_codepoint_with_fffd(input: &[u16]) -> UTF16Replacement {
     utf16_codepoint_with_fffd_and_first_input_char(input[0], input)
 }
 
 fn utf16_codepoint_with_fffd_and_first_input_char(char: u16, input: &[u16]) -> UTF16Replacement {
-    let c0 = char as u32;
-
-    if c0 & !0x03ff == 0xd800 {
+    if u16_is_lead(char) {
         // surrogate pair
         if input.len() == 1 {
             return UTF16Replacement { len: 1, is_lead: true, ..Default::default() };
         }
-        //error.DanglingSurrogateHalf;
-        let c1 = input[1] as u32;
-        if c1 & !0x03ff != 0xdc00 {
-            if input.len() == 1 {
-                return UTF16Replacement { len: 1, ..Default::default() };
-            } else {
-                return UTF16Replacement {
-                    fail: true,
-                    len: 1,
-                    code_point: unicode_replacement,
-                    is_lead: true,
-                    ..Default::default()
-                };
-            }
+        // error.DanglingSurrogateHalf;
+        let c1 = input[1];
+        if !u16_is_trail(c1) {
+            return UTF16Replacement {
+                fail: true,
+                len: 1,
+                code_point: unicode_replacement,
+                is_lead: true,
+                ..Default::default()
+            };
         }
         // return error.ExpectedSecondSurrogateHalf;
-
-        UTF16Replacement {
-            len: 2,
-            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
-            ..Default::default()
-        }
-    } else if c0 & !0x03ff == 0xdc00 {
+        UTF16Replacement { len: 2, code_point: u16_get_supplementary(char, c1), ..Default::default() }
+    } else if u16_is_trail(char) {
         // return error.UnexpectedSecondSurrogateHalf;
         UTF16Replacement { fail: true, len: 1, code_point: unicode_replacement, ..Default::default() }
     } else {
-        UTF16Replacement { code_point: c0, len: 1, ..Default::default() }
+        UTF16Replacement { code_point: char as u32, len: 1, ..Default::default() }
     }
 }
 
-pub(super) fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
-    let c0 = input[0] as u32;
-
-    if c0 & !0x03ff == 0xd800 {
+#[inline]
+pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
+    let c0 = input[0];
+    if u16_is_lead(c0) {
         // surrogate pair
         if input.len() == 1 {
             return UTF16Replacement { len: 1, ..Default::default() };
         }
-        //error.DanglingSurrogateHalf;
-        let c1 = input[1] as u32;
-        if c1 & !0x03ff != 0xdc00 {
-            if input.len() == 1 {
-                return UTF16Replacement { len: 1, ..Default::default() };
-            }
-        }
-        // return error.ExpectedSecondSurrogateHalf;
-
-        UTF16Replacement {
-            len: 2,
-            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
-            ..Default::default()
-        }
-    } else if c0 & !0x03ff == 0xdc00 {
+        // PORT NOTE (unicode.zig:1378): Zig falls through with len=2 even when input[1]
+        // is not a trail surrogate; preserve that iteration behaviour.
+        UTF16Replacement { len: 2, code_point: u16_get_supplementary(c0, input[1]), ..Default::default() }
+    } else if u16_is_trail(c0) {
         // return error.UnexpectedSecondSurrogateHalf;
         UTF16Replacement { len: 1, ..Default::default() }
     } else {
-        UTF16Replacement { code_point: c0, len: 1, ..Default::default() }
+        UTF16Replacement { code_point: c0 as u32, len: 1, ..Default::default() }
     }
 }
 
@@ -1433,40 +1400,12 @@ pub(super) fn decode_check(state: u8, byte: u8) -> u8 {
     UTF8D[value as usize]
 }
 
-// #define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
-#[inline]
-pub(super) fn u16_lead(supplementary: u32) -> u16 {
-    u16::try_from((supplementary >> 10) + 0xd7c0).expect("int cast")
-}
+pub(super) use bun_core::strings::{u16_lead, u16_trail, push_codepoint_utf16};
 
-// #define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
-#[inline]
-pub(super) fn u16_trail(supplementary: u32) -> u16 {
-    u16::try_from((supplementary & 0x3ff) | 0xdc00).expect("int cast")
-}
-
-// #define U16_IS_TRAIL(c) (((c)&0xfffffc00)==0xdc00)
-#[inline]
-pub fn u16_is_trail(supplementary: u16) -> bool {
-    (supplementary as u32 & 0xfffffc00) == 0xdc00
-}
-
-// #define U16_IS_LEAD(c) (((c)&0xfffffc00)==0xd800)
-#[inline]
-pub fn u16_is_lead(supplementary: u16) -> bool {
-    (supplementary as u32 & 0xfffffc00) == 0xd800
-}
-
-// #define U16_GET_SUPPLEMENTARY(lead, trail) \
-//     (((UChar32)(lead)<<10UL)+(UChar32)(trail)-U16_SURROGATE_OFFSET)
-#[inline]
-pub(super) fn u16_get_supplementary(lead: u32, trail: u32) -> u32 {
-    let shifted = lead << 10;
-    (shifted + trail) - U16_SURROGATE_OFFSET
-}
-
-// #define U16_SURROGATE_OFFSET ((0xd800<<10UL)+0xdc00-0x10000)
-pub(super) const U16_SURROGATE_OFFSET: u32 = 56613888;
+pub use bun_core::strings::{
+    decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw, u16_get_supplementary,
+    u16_is_lead, u16_is_surrogate, u16_is_trail, U16_SURROGATE_OFFSET,
+};
 
 #[inline]
 pub(super) fn utf8_byte_sequence_length(first_byte: u8) -> U3Fast {
@@ -1806,45 +1745,6 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
     }
 
     count + utf8_remaining.len()
-}
-
-// Check utf16 string equals utf8 string without allocating extra memory
-pub(super) fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
-    if text.len() > str.len() {
-        // Strings can't be equal if UTF-16 encoding is longer than UTF-8 encoding
-        return false;
-    }
-
-    let mut temp = [0u8; 4];
-    let n = text.len();
-    let mut j: usize = 0;
-    let mut i: usize = 0;
-    // TODO: is it safe to just make this u32 or u21?
-    let mut r1: i32;
-    while i < n {
-        r1 = text[i] as i32;
-        if r1 >= 0xD800 && r1 <= 0xDBFF && i + 1 < n {
-            let r2: i32 = text[i + 1] as i32;
-            if r2 >= 0xDC00 && r2 <= 0xDFFF {
-                r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
-                i += 1;
-            }
-        }
-
-        let width = bun_core::strings::encode_wtf8_rune(&mut temp, r1 as u32);
-        if j + width > str.len() {
-            return false;
-        }
-        for k in 0..width {
-            if temp[k] != str[j] {
-                return false;
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-
-    j == str.len()
 }
 
 pub(super) const fn encode_utf8_comptime<const CP: u32>() -> &'static [u8] {

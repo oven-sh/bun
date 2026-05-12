@@ -13,11 +13,8 @@ pub use bun_core::DecodeWindows;
 
 use crate as sys;
 
-bun_core::declare_scope!(SYS, visible);
 // `log` in the Zig is `bun.sys.syslog`
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(SYS, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, SYS, visible);
 
 /// `std.posix.fd_t` — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
 pub type FdT = FdNative;

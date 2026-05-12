@@ -1357,6 +1357,14 @@ impl WakeHandler {
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
+//
+// Canonical {package.json key, snake_case field, Behavior bit} triple for the
+// four dependency sections. Callers that iterate sections build their OWN
+// ordered slice from the named constants below — there is intentionally no
+// single `ALL` array because iteration order is load-bearing and diverges per
+// caller (PackageJSONEditor precedence ≠ migration.rs scan order ≠ `bun pack`
+// edit order). `FOUR` is provided only as an *unordered set* for callers that
+// genuinely do not care about precedence.
 
 #[derive(Clone, Copy)]
 pub struct DependencyGroup {
@@ -1381,6 +1389,40 @@ impl DependencyGroup {
     };
     pub const WORKSPACES: Self =
         Self { prop: b"workspaces", field: b"workspaces", behavior: Behavior::WORKSPACE };
+
+    /// Unordered set of the four package.json dependency sections. Use the
+    /// named constants and build your own ordered array when iteration order
+    /// matters (it usually does — see module comment).
+    pub const FOUR: [Self; 4] = [Self::DEPENDENCIES, Self::DEV, Self::OPTIONAL, Self::PEER];
+
+    /// Reverse map a [`Behavior`] back to the package.json section key. Tests
+    /// dev → optional → peer → prod (Zig: `update_interactive_command.zig`
+    /// `dep.behavior.isDev()` chain); falls through to `"dependencies"` for
+    /// PROD/WORKSPACE/BUNDLED/empty.
+    #[inline]
+    pub fn prop_for_behavior(b: Behavior) -> &'static [u8] {
+        if b.is_dev() {
+            Self::DEV.prop
+        } else if b.is_optional() {
+            Self::OPTIONAL.prop
+        } else if b.is_peer() {
+            Self::PEER.prop
+        } else {
+            Self::DEPENDENCIES.prop
+        }
+    }
+
+    /// Exact-match a package.json section key back to its group.
+    #[inline]
+    pub fn from_prop(prop: &[u8]) -> Option<Self> {
+        match prop {
+            b"dependencies" => Some(Self::DEPENDENCIES),
+            b"devDependencies" => Some(Self::DEV),
+            b"optionalDependencies" => Some(Self::OPTIONAL),
+            b"peerDependencies" => Some(Self::PEER),
+            _ => None,
+        }
+    }
 }
 
 // ─── EnqueueResult ────────────────────────────────────────────────────────

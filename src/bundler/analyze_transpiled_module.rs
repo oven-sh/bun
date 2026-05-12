@@ -1,7 +1,7 @@
 use core::ffi::{c_char, CStr};
 use core::mem::size_of;
 
-use bun_core::{self, err};
+use bun_core::{self, err, slice_as_bytes};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
@@ -426,12 +426,6 @@ fn bytes_as_slice<T>(bytes: &[u8]) -> Result<*const [T], ModuleInfoError> {
         ptr.cast::<T>(),
         bytes.len() / size_of::<T>(),
     ))
-}
-
-/// Reinterpret `&[T]` as bytes (Zig: `std.mem.sliceAsBytes`).
-#[inline]
-fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-    bytemuck::cast_slice(s)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

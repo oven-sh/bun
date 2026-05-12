@@ -23,9 +23,7 @@ type Result<T> = crate::Result<T>;
 // `pub const log = bun.sys.syslog;`
 // In Rust the scoped log is a macro; re-export the crate macro and alias locally.
 pub use crate::syslog;
-macro_rules! log {
-    ($($arg:tt)*) => { $crate::syslog!($($arg)*) };
-}
+bun_core::define_scoped_log!(log, crate::fd::SYS);
 
 pub use crate::Error;
 pub use crate::PosixStat;

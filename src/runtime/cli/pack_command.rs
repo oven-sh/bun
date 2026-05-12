@@ -2856,12 +2856,16 @@ fn edit_root_package_json(
     maybe_lockfile: Option<&Lockfile>,
     json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
+    use bun_install_types::DependencyGroup;
+    // preserve deps→dev→peer→optional order (matches Zig pack_command.zig:2149 error-message ordering)
     for dependency_group in [
-        b"dependencies".as_slice(),
-        b"devDependencies".as_slice(),
-        b"peerDependencies".as_slice(),
-        b"optionalDependencies".as_slice(),
-    ] {
+        DependencyGroup::DEPENDENCIES,
+        DependencyGroup::DEV,
+        DependencyGroup::PEER,
+        DependencyGroup::OPTIONAL,
+    ]
+    .map(|g| g.prop)
+    {
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {

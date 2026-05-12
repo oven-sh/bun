@@ -42,6 +42,8 @@ pub mod windows_event_loop;
 // specific bits inside (kqueue/epoll wakers, fd polling) are individually
 // `#[cfg(unix)]`-gated so the module still compiles on Windows.
 pub mod posix_event_loop;
+mod keep_alive;
+pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
 // Windows handles orphan death via Job Objects in `spawn`. The Zig original
@@ -72,11 +74,11 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
 #[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, KeepAlive, Loop};
+pub use posix_event_loop::{FilePoll, Loop};
 #[cfg(windows)]
-pub use windows_event_loop::{FilePoll, KeepAlive, Loop};
+pub use windows_event_loop::{FilePoll, Loop};
 
-pub use posix_event_loop::{AllocatorType, Owner, PollTag};
+pub use posix_event_loop::{get_vm_ctx, js_vm_ctx, AllocatorType, Owner, PollTag};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
@@ -256,7 +258,7 @@ pub mod write;
 // Byte-level `Write` trait + helpers (Zig `std.Io.Writer` surface). Downstream
 // crates name these as `bun_io::Write` / `bun_io::BufWriter` /
 // `bun_io::FmtAdapter` / `bun_io::Result`.
-pub use write::{BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
+pub use write::{AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write};
 
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
@@ -354,9 +356,7 @@ pub static io_loop: bun_core::output::ScopedLogger =
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
 // Windows the IoRequestLoop is `panic!`-stubbed, so gate the macro to match.
 #[cfg(not(windows))]
-macro_rules! log {
-    ($($args:tt)*) => { bun_core::scoped_log!(io_loop, $($args)*) };
-}
+bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagname "loop" is a keyword)
 
 #[cfg(windows)]
 mod windows_ffi {
@@ -1934,12 +1934,11 @@ pub mod closer {
         task: WorkPoolTask,
     }
 
-    // SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task_mut` returns
-    // that same field. `Closer` is `Send` (`Fd` + intrusive `Task`).
+    #[cfg(not(windows))]
+    bun_threading::intrusive_work_task!(Closer, task);
+    // SAFETY: `Closer` is `Send` (`Fd` + intrusive `Task`).
     #[cfg(not(windows))]
     unsafe impl bun_threading::work_pool::OwnedTask for Closer {
-        const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
-        fn task_mut(&mut self) -> &mut WorkPoolTask { &mut self.task }
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
             self.fd.close();

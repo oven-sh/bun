@@ -184,9 +184,10 @@ pub fn dirname_simple(p: &[u8]) -> &[u8] {
 }
 /// Port of `std.fs.path.basename` — strips trailing separators before slicing
 /// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
-pub fn basename(p: &[u8]) -> &[u8] {
-    if cfg!(windows) { basename_windows(p) } else { basename_posix(p) }
-}
+/// Canonical `u8` impl lives in `bun_core::strings`; the width-generic
+/// `basename_{posix,windows}<T: PathChar>` wrappers below stay here for `u16`
+/// callers (crash_handler, BinLinkingShim).
+pub use bun_core::strings::basename;
 
 /// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
 /// final component. `\` is NOT a separator. Generic over `u8`/`u16` so the
@@ -296,6 +297,7 @@ pub use resolve_path::{Platform, PlatformT, platform};
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place,
+    dangerously_convert_path_to_windows_in_place,
     join_abs_string_buf,
     dirname_w,
     is_drive_letter,
@@ -304,6 +306,8 @@ pub use resolve_path::{
     is_sep_any_t,
     is_sep_native,
     is_sep_native_t,
+    is_sep_posix,
+    is_sep_posix_t,
     join_abs_string_buf_z,
     join_string_buf_wz,
     path_to_posix_buf,
@@ -408,10 +412,10 @@ pub mod windows {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `is_package_path` /
-// `is_package_path_not_absolute` — pure path predicates with no resolver
-// state. Source: src/resolver/resolver.zig:6-26. Pulled down so `bun_install`
-// and `bun_js_parser` can drop their `bun_resolver` edge.
+// `is_package_path` / `is_package_path_not_absolute` — pure path predicates
+// with no resolver state. Source: src/resolver/resolver.zig:6-26. Lives here
+// (not bun_resolver) so bun_install / bun_js_parser can drop their resolver
+// edge; bun_resolver re-exports these for its own callers.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Returns true if `path` is a bare package specifier (e.g. `react`, `@scope/pkg`),
@@ -419,22 +423,18 @@ pub mod windows {
 ///
 /// Always rejects POSIX-absolute (`/...`); on Windows additionally rejects
 /// Windows-absolute forms via `std.fs.path.isAbsolute` semantics.
+///
+/// Port of `isPackagePath` (src/resolver/resolver.zig).
+#[inline]
 pub fn is_package_path(path: &[u8]) -> bool {
-    // Zig: `!std.fs.path.isAbsolute(path)` — platform-dependent.
-    #[cfg(not(windows))]
-    let absolute = path.first() == Some(&b'/');
-    #[cfg(windows)]
-    let absolute = is_absolute_windows(path);
-
-    !absolute && is_package_path_not_absolute(path)
+    !is_absolute(path) && is_package_path_not_absolute(path)
 }
 
 /// Precondition: `non_absolute_path` is known to not be absolute.
+#[inline]
 pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
-    #[cfg(debug_assertions)]
-    {
-        debug_assert!(!non_absolute_path.starts_with(b"/"));
-    }
+    debug_assert!(!is_absolute(non_absolute_path));
+    debug_assert!(!non_absolute_path.starts_with(b"/"));
 
     let p = non_absolute_path;
     if p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b".." {

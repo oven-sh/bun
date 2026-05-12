@@ -57,19 +57,11 @@ use super::{
 use super::package::{Meta, PackageColumns as _, PackageColumns as _};
 use super::PackageIDSlice;
 
-/// `core::fmt::Write` → `bun_io::Write` bridge for callees that take
-/// `impl fmt::Write` (e.g. `Negatable::to_json`, `Bin::to_json`). The
-/// underlying byte error is squashed into `fmt::Error`; callers map it back.
-struct FmtBridge<'a>(&'a mut Writer);
-impl core::fmt::Write for FmtBridge<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
-    }
-}
-/// `Bin::to_json` indent callback typed against `FmtBridge` (Zig passed
+use bun_io::AsFmt;
+
+/// `Bin::to_json` indent callback typed against `AsFmt` (Zig passed
 /// `Stringifier.writeIndent` directly; here the writer types differ).
-fn write_indent_fmt(w: &mut FmtBridge<'_>, indent: &mut u32) -> core::fmt::Result {
+fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     for _ in 0..*indent {
         w.write_str("  ")?;
     }
@@ -636,7 +628,7 @@ impl Stringifier {
                                         None,
                                         buf,
                                         extern_strings,
-                                        &mut FmtBridge(writer),
+                                        &mut AsFmt::new(writer),
                                         write_indent_fmt,
                                     )?;
 
@@ -980,7 +972,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"os\": ")?;
-            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut FmtBridge(writer))?;
+            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut AsFmt::new(writer))?;
         }
 
         if meta.arch != Npm::Architecture::ALL {
@@ -990,7 +982,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"cpu\": ")?;
-            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut FmtBridge(writer))?;
+            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
         }
 
         if bin.tag != BinTag::None {
@@ -1008,7 +1000,7 @@ impl Stringifier {
                 None,
                 buf,
                 extern_strings,
-                &mut FmtBridge(writer),
+                &mut AsFmt::new(writer),
                 write_indent_fmt,
             )?;
         }
@@ -1099,7 +1091,7 @@ impl Stringifier {
                     Some(indent),
                     buf,
                     extern_strings,
-                    &mut FmtBridge(writer),
+                    &mut AsFmt::new(writer),
                     write_indent_fmt,
                 )?;
             }

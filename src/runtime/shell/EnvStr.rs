@@ -147,9 +147,7 @@ impl EnvStr {
             break 'brk 1;
         };
         if divisor == 0 {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             return 0;
         }
 

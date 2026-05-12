@@ -49,11 +49,7 @@ pub(crate) struct MimallocAllocator;
 
 impl MimallocAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
-            mimalloc::mi_malloc_aligned(len, alignment.to_byte_units())
-        } else {
-            mimalloc::mi_malloc(len)
-        };
+        let ptr: *mut c_void = mimalloc::mi_malloc_auto_align(len, alignment.to_byte_units());
 
         #[cfg(debug_assertions)]
         {
@@ -122,11 +118,7 @@ pub(crate) struct ZAllocator;
 
 impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
-            mimalloc::mi_zalloc_aligned(len, alignment.to_byte_units())
-        } else {
-            mimalloc::mi_zalloc(len)
-        };
+        let ptr: *mut c_void = mimalloc::mi_zalloc_auto_align(len, alignment.to_byte_units());
 
         #[cfg(debug_assertions)]
         {

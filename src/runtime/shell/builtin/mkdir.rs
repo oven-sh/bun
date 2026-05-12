@@ -2,10 +2,10 @@ use core::ffi::CStr;
 
 use crate::node::fs::{args as fs_args, MkdirCtx, NodeFS};
 use crate::node::types::PathLike;
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseError, ParseFlagResult, ShellTask,
+    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -59,7 +59,11 @@ impl Mkdir {
                 Ok(None) => {
                     return Self::fail_usage(interp, cmd);
                 }
-                Err(e) => return Self::fail_parse(interp, cmd, e),
+                Err(e) => {
+                    return Builtin::fail_parse(interp, cmd, Kind::Mkdir, e, || {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+                    })
+                }
             }
         };
         // Hand the parsed opts back into state.
@@ -81,31 +85,6 @@ impl Mkdir {
     fn fail_usage(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
-    }
-
-    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match &e {
-            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Mkdir),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
-            ParseError::ShowUsage => Kind::Mkdir.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Mkdir),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
-                ),
-            )
-            .to_vec(),
-        };
-        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-        Builtin::write_failing_error(interp, cmd, &buf, 1)
     }
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -203,14 +182,6 @@ impl Mkdir {
             s
         });
         OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()).run(interp);
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Mkdir {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Mkdir(m) => &mut **m,
-            _ => unreachable!(),
-        }
     }
 }
 

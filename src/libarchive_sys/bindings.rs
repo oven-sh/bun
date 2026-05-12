@@ -19,21 +19,6 @@ unsafe fn zstr_from_ptr<'a>(p: *const u8) -> &'a ZStr {
     unsafe { ZStr::from_c_ptr(p.cast()) }
 }
 
-#[inline]
-unsafe fn wstr_from_ptr<'a>(p: *const u16) -> &'a WStr {
-    if p.is_null() {
-        return WStr::EMPTY;
-    }
-    let mut len = 0usize;
-    // SAFETY: caller guarantees `p` is a NUL-terminated wide string valid for `'a`.
-    unsafe {
-        while *p.add(len) != 0 {
-            len += 1;
-        }
-        WStr::from_raw(p, len)
-    }
-}
-
 /// Bitset over [`FileKind`] (Zig: `std.EnumSet(std.fs.File.Kind)`).
 /// Local because `bun_core::FileKind` does not derive `enumset::EnumSetType`.
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
@@ -1071,7 +1056,7 @@ impl ArchiveEntry {
     }
     pub fn pathname_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { wstr_from_ptr(archive_entry_pathname_w(self)) }
+        unsafe { WStr::from_ptr(archive_entry_pathname_w(self)) }
     }
     pub fn filetype(&self) -> Mode {
         archive_entry_filetype(self)
@@ -1099,7 +1084,7 @@ impl ArchiveEntry {
     }
     pub fn symlink_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { wstr_from_ptr(archive_entry_symlink_w(self)) }
+        unsafe { WStr::from_ptr(archive_entry_symlink_w(self)) }
     }
 }
 

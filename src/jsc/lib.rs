@@ -1505,6 +1505,8 @@ pub use self::js_property_iterator::{
 
 #[path = "event_loop.rs"] pub mod event_loop;
 pub use self::event_loop as EventLoop;
+#[path = "any_task_job.rs"] pub mod any_task_job;
+pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 pub use self::event_loop::{
     AbstractVM, AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask,
     ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
@@ -1968,6 +1970,29 @@ pub trait JsClass: Sized {
         core::mem::size_of::<Self>()
     }
 }
+
+/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk
+/// (generate-classes.ts:2893-2902). The thunk body is
+/// `host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))` — Rust path
+/// resolution on `${T}::finalize` picks an *inherent* `fn finalize(self:
+/// Box<Self>)` first when one exists (refcounted / leak-on-pending types),
+/// otherwise falls through to this trait's default: drop the `Box`, running
+/// `T`'s `Drop` glue and freeing the allocation. Zig has no `Drop`, so every
+/// `*.zig` sibling must spell `bun.destroy(this)` per type; in Rust the
+/// trivial body collapses to this one default.
+///
+/// **Override by defining an inherent `pub fn finalize(self: Box<Self>)` on
+/// the concrete type** — do *not* `impl JsFinalize for MyType`; the blanket
+/// impl below already covers every `Sized` type and a second impl would
+/// conflict. The generated thunk file imports `JsFinalize as _` so the trait
+/// is in scope for path resolution without polluting any per-type module.
+pub trait JsFinalize: Sized {
+    #[inline]
+    fn finalize(self: Box<Self>) {
+        drop(self)
+    }
+}
+impl<T: Sized> JsFinalize for T {}
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]

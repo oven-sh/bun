@@ -27,13 +27,8 @@ use crate::bake::dev_server_body::{CachedFileIndex, HotUpdateContext};
 /// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`
 /// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
 /// spec.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct FileIndex<const SIDE: bake::Side>(pub u32);
-impl<const SIDE: bake::Side> FileIndex<SIDE> {
-    #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-    #[inline] pub const fn get(self) -> u32 { self.0 }
-}
+pub struct SideMarker<const SIDE: bake::Side>;
+pub type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
 /// Alias used by `DevServer.route_lookup` (Zig: `IncrementalGraph(.server).FileIndex`).
 pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
@@ -50,13 +45,8 @@ pub struct InsertEmptyResult<const SIDE: bake::Side> {
 }
 
 /// `bun.GenericIndex(u32, Edge)`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct EdgeIndex(pub u32);
-impl EdgeIndex {
-    #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-    #[inline] pub const fn get(self) -> u32 { self.0 }
-}
+pub enum EdgeMarker {}
+pub type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 
 /// One edge in the import graph. `File` objects act as nodes in a directional
 /// many-to-many graph, where edges represent the imports between modules. A
@@ -335,7 +325,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn get_file_index(&self, abs_path: &[u8]) -> Option<FileIndex<SIDE>> {
         self.bundled_files
             .get_index(abs_path)
-            .map(|i| FileIndex(i as u32))
+            .map(|i| FileIndex::init(i as u32))
     }
 
     /// `IncrementalGraph(.client).htmlRouteBundleIndex`.
@@ -658,7 +648,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     }
                                     _ => 0,
                                 };
-                                packed_map::Shared::LineCount(packed_map::LineCount(count))
+                                packed_map::Shared::LineCount(packed_map::LineCount::init(count))
                             }
                         };
                         (kind, sm, Some(len))
@@ -778,7 +768,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 sm.escaped_source.take().unwrap(),
                             ))
                         }
-                        _ => packed_map::Shared::LineCount(packed_map::LineCount(line_count)),
+                        _ => packed_map::Shared::LineCount(packed_map::LineCount::init(line_count)),
                     };
                     self.current_chunk_source_maps.push(CurrentChunkSourceMapData {
                         file_index: ServerFileIndex::init(file_index.get()),
@@ -1306,7 +1296,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
         }
-        Ok(FileIndex(idx as u32))
+        Ok(FileIndex::init(idx as u32))
     }
 
     /// `IncrementalGraph(side).insertEmpty(abs_path, kind)` (spec :1354).
@@ -1342,7 +1332,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.first_import.push(None);
             self.ensure_stale_bit_capacity(true)?;
         }
-        Ok(InsertEmptyResult { index: FileIndex(idx as u32), key })
+        Ok(InsertEmptyResult { index: FileIndex::init(idx as u32), key })
     }
 
     /// `IncrementalGraph(.server).insertCssFileOnServer` (spec :1390).
@@ -1442,8 +1432,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
             SerializedFailure::init_from_log(
                 match SIDE {
-                    Side::Server => serialized_failure::Owner::Server(FileIndex(idx as u32)),
-                    Side::Client => serialized_failure::Owner::Client(FileIndex(idx as u32)),
+                    Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
+                    Side::Client => serialized_failure::Owner::Client(FileIndex::init(idx as u32)),
                 },
                 owner_display_name,
                 &log.msgs,

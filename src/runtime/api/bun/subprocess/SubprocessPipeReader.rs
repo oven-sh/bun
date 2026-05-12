@@ -30,6 +30,9 @@ impl Default for State {
     }
 }
 
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
     pub reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
@@ -49,23 +52,6 @@ pub struct PipeReader {
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
     pub stdio_result: StdioResult,
-}
-
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
-impl RefCounted for PipeReader {
-    type DestructorCtx = ();
-    fn debug_name() -> &'static str {
-        "PipeReader"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live PipeReader; field projection is in-bounds.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: refcount hit zero; we are the last owner of this heap allocation
-        // created in `create()` via heap::alloc.
-        unsafe { PipeReader::deinit(this) };
-    }
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call

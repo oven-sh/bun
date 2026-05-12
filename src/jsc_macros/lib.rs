@@ -308,6 +308,7 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
         let snake = camel_to_snake(&prop_str);
         let get_fn = format_ident!("{snake}_get_cached");
         let set_fn = format_ident!("{snake}_set_cached");
+        let take_fn = format_ident!("{snake}_take_cached");
         let get_ext = format_ident!("__{snake}_get_cached_value");
         let set_ext = format_ident!("__{snake}_set_cached_value");
 
@@ -360,6 +361,22 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
                 // write barrier mutating VM/heap state is sound under Stacked
                 // Borrows (a `&T as *const T as *mut T` cast would not be).
                 #set_ext(this_value, global.as_mut_ptr(), value)
+            }
+
+            /// Read-and-clear the `JSC::WriteBarrier` slot in one step.
+            ///
+            /// Returns `Some(value)` and resets the slot to `.zero` (dropping
+            /// this GC root) iff a value was cached; `None` if the slot was
+            /// already empty. Replaces the hand-rolled
+            /// `let v = get_cached()?; set_cached(ZERO); Some(v)` pattern.
+            #[inline]
+            pub fn #take_fn(
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+            ) -> ::core::option::Option<::bun_jsc::JSValue> {
+                let v = #get_fn(this_value)?;
+                #set_fn(this_value, global, ::bun_jsc::JSValue::ZERO);
+                Some(v)
             }
         });
     }

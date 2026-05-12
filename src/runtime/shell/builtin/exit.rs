@@ -1,8 +1,5 @@
-use core::ffi::CStr;
-
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, BuiltinState};
 use crate::shell::interpreter::{Interpreter, NodeId};
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -47,15 +44,8 @@ impl Exit {
     }
 
     fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, msg, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
-        Builtin::done(interp, cmd, 1)
+        Self::state_mut(interp, cmd).state = State::WaitingIo;
+        Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
     pub fn on_io_writer_chunk(
@@ -66,14 +56,6 @@ impl Exit {
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Exit {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Exit(e) => e,
-            _ => unreachable!(),
-        }
     }
 }
 

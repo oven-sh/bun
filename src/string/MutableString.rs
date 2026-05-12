@@ -1,4 +1,5 @@
 use bun_alloc::AllocError;
+use bun_collections::VecExt as _;
 use crate::{strings, ZStr};
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
@@ -105,13 +106,8 @@ impl MutableString {
     }
 
     pub fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
-        debug_assert!(self.list.len() + amount <= self.list.capacity());
-        let old = self.list.len();
-        // SAFETY: capacity checked above; the returned slice is immediately
-        // written by the caller (matches Zig semantics where the bytes are
-        // uninitialized until written).
-        unsafe { self.list.set_len(old + amount) };
-        &mut self.list[old..]
+        // SAFETY: caller fully writes the returned slice (Zig contract).
+        unsafe { self.list.writable_slice_assume_capacity(amount) }
     }
 
     /// Increases the length of the buffer by `amount` bytes, expanding the capacity if necessary.
@@ -356,21 +352,26 @@ impl MutableString {
         self.list.extend_from_slice(char);
         Ok(())
     }
+}
 
+/// Growable string sink. Zig: `MutableString.writer()`.
+impl bun_core::io::Write for MutableString {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+        self.append(buf)?;
+        Ok(())
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl MutableString {
     #[inline]
     pub fn append_int(&mut self, int: u64) -> Result<(), AllocError> {
-        let count = bun_core::fmt::fast_digit_count(int) as usize;
-        self.list.reserve(count);
-        let old = self.list.len();
-        // SAFETY: reserved `count` bytes above; fully written below.
-        unsafe { self.list.set_len(old + count) };
-        let written = {
-            use std::io::Write as _;
-            let mut buf = &mut self.list[old..old + count];
-            write!(&mut buf, "{int}").ok();
-            count - buf.len()
-        };
-        debug_assert!(count == written);
+        let mut b = [0u8; 20];
+        self.list.extend_from_slice(bun_core::fmt::int_as_bytes(&mut b, int));
         Ok(())
     }
 
@@ -559,7 +560,6 @@ impl<'a> BufferedWriter<'a> {
 
         if pending.len() >= Self::MAX {
             self.flush()?;
-            self.context.list.reserve(bytes.len() * 2);
             // PORT NOTE: Zig wrote into `this.remain()[0..bytes.len*2]` here,
             // which after `flush()` is `this.buffer[0..bytes.len*2]` — but
             // `bytes.len*2 > MAX`, so that indexes past the stack buffer. This
@@ -568,13 +568,10 @@ impl<'a> BufferedWriter<'a> {
             // freshly-reserved context.list tail.
             // TODO(port): confirm and fix upstream.
             let old = self.context.list.len();
-            // SAFETY: reserved bytes.len*2 above; copy_utf16_into_utf8 writes
-            // `decoded.written` bytes which we then trim to.
-            unsafe { self.context.list.set_len(old + bytes.len() * 2) };
-            let decoded =
-                strings::copy_utf16_into_utf8(&mut self.context.list[old..], bytes);
-            // SAFETY: decoded.written <= bytes.len*2.
-            unsafe { self.context.list.set_len(old + decoded.written as usize) };
+            // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
+            let tail = unsafe { self.context.list.writable_slice(bytes.len() * 2) };
+            let decoded = strings::copy_utf16_into_utf8(tail, bytes);
+            self.context.list.truncate(old + decoded.written as usize);
             return Ok(pending.len());
         }
 

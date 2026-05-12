@@ -25,6 +25,31 @@ pub use jsc::ArgumentsSlice;
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
+/// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
+/// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
+/// boilerplate repeated 12× across `node_fs.rs::args::*::from_js`.
+pub trait FdArgExt: FdJsc {
+    #[inline]
+    fn from_js_required(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+        let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+        Self::from_js_validated(fd_value, ctx)?.ok_or_else(|| {
+            if fd_value.is_number() {
+                return ctx
+                    .err(
+                        jsc::ErrorCode::OUT_OF_RANGE,
+                        format_args!(
+                            "The value of \"fd\" is out of range. It must be an integer. Received {}",
+                            bun_fmt::double(fd_value.as_number())
+                        ),
+                    )
+                    .throw();
+            }
+            ctx.throw_invalid_argument_type_value(b"fd", b"number", fd_value)
+        })
+    }
+}
+impl FdArgExt for Fd {}
+
 // LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
 // struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
@@ -575,10 +600,7 @@ impl Encoding {
         if len < 3 || len > 9 {
             return None;
         }
-        let mut buf = [0u8; 9];
-        for (i, &b) in slice.iter().enumerate() {
-            buf[i] = b.to_ascii_lowercase();
-        }
+        let (buf, _) = bun_core::strings::ascii_lowercase_buf::<9>(slice)?;
         let s = &buf[..len];
         match len {
             3 if s == b"hex" => Some(Encoding::Hex),
@@ -613,22 +635,10 @@ impl Encoding {
     /// non-ASCII unit — no encoding name contains one) and dispatches to
     /// [`Encoding::from`].
     pub fn from_bun_string(s: &bun_str::String) -> Option<Encoding> {
-        let len = s.length();
-        if len < 3 || len > 9 {
-            return None;
-        }
+        // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
+        // safe — no encoding name is non-ASCII, downstream match would miss anyway.
         let mut buf = [0u8; 9];
-        if s.is_utf16() {
-            for (i, &c) in s.utf16().iter().enumerate() {
-                if c >= 0x80 {
-                    return None;
-                }
-                buf[i] = c as u8;
-            }
-        } else {
-            buf[..len].copy_from_slice(s.byte_slice());
-        }
-        Self::from(&buf[..len])
+        Self::from(s.ascii_into(&mut buf)?)
     }
 }
 
@@ -680,10 +690,14 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. The `comptime size`
-    /// is taken as a runtime arg here because callers pass non-const expressions
-    /// (e.g. `A::DIGEST_LENGTH`) and stable Rust forbids const-generic
-    /// arithmetic for the stack-buffer optimization anyway.
+    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
+    /// `encodeWith*` fns differed only in their comptime stack-buffer size
+    /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
+    /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
+    /// `size` was unused past the assert. Collapsed into a thin assertion
+    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
+    /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
+    #[inline]
     pub fn encode_with_size(
         self,
         global_object: &JSGlobalObject,
@@ -691,40 +705,7 @@ impl Encoding {
         input: &[u8],
     ) -> JsResult<JSValue> {
         debug_assert_eq!(input.len(), size);
-        // PERF(port): Zig used comptime-sized stack buffers; we heap-allocate.
-        match self {
-            Self::Base64 => {
-                let buf = bun_base64::encode_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
-            }
-            Self::Base64url => {
-                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
-            }
-            Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
-                // The byte-by-byte `write!` formatting machinery is pathologically
-                // slow in debug builds, so encode via LUT directly into the
-                // destination JS string buffer.
-                const CHARSET: &[u8; 16] = b"0123456789abcdef";
-                let (mut encoded, bytes) =
-                    bun_str::String::create_uninitialized_latin1(input.len() * 2);
-                if encoded.is_dead() {
-                    // WTF OOM — match webcore::encoding pattern; transfer the
-                    // Dead string (becomes JS empty) rather than indexing a
-                    // zero-length `bytes`.
-                    return encoded.transfer_to_js(global_object);
-                }
-                for (i, &b) in input.iter().enumerate() {
-                    bytes[i * 2] = CHARSET[(b >> 4) as usize];
-                    bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];
-                }
-                encoded.transfer_to_js(global_object)
-            }
-            Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
-            enc => crate::webcore::encoding::to_string(input, global_object, enc),
-        }
+        self.encode_with_max_size(global_object, size, input)
     }
 
     /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
@@ -735,20 +716,18 @@ impl Encoding {
         max_size: usize,
         input: &[u8],
     ) -> JsResult<JSValue> {
-        #[allow(non_snake_case)]
-        let MAX_SIZE = max_size;
         debug_assert!(
-            input.len() <= MAX_SIZE,
+            input.len() <= max_size,
             "input length ({}) should not exceed max_size ({})",
             input.len(),
-            MAX_SIZE,
+            max_size,
         );
         // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
         // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
                 let mut base64_buf =
-                    vec![0u8; bun_core::base64::standard_encoder_calc_size(MAX_SIZE * 4)];
+                    vec![0u8; bun_core::base64::standard_encoder_calc_size(max_size * 4)];
                 let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
                 let (mut encoded, bytes) = bun_str::String::create_uninitialized_latin1(encoded_len);
                 bytes.copy_from_slice(&base64_buf[..encoded_len]);
@@ -763,7 +742,6 @@ impl Encoding {
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
-                const CHARSET: &[u8; 16] = b"0123456789abcdef";
                 let (mut encoded, bytes) =
                     bun_str::String::create_uninitialized_latin1(input.len() * 2);
                 if encoded.is_dead() {
@@ -772,10 +750,7 @@ impl Encoding {
                     // zero-length `bytes`.
                     return encoded.transfer_to_js(global_object);
                 }
-                for (i, &b) in input.iter().enumerate() {
-                    bytes[i * 2] = CHARSET[(b >> 4) as usize];
-                    bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];
-                }
+                bun_core::fmt::bytes_to_hex_lower(input, bytes);
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
@@ -880,6 +855,25 @@ pub trait PathLikeExt {
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ where Self: Sized;
     fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ where Self: Sized;
     fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> where Self: Sized;
+
+    /// `from_js` + Node's `ERR_INVALID_ARG_VALUE` "<name> must be a string
+    /// or TypedArray" throw on `None`. Collapses the open-coded
+    /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
+    /// `node_fs.rs::args::*::from_js`.
+    #[inline]
+    fn from_js_required(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<PathLike>
+    where
+        Self: Sized,
+    {
+        Self::from_js(ctx, arguments)?.ok_or_else(|| {
+            ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
+        })
+    }
+
     fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,

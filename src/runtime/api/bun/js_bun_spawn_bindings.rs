@@ -82,18 +82,6 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.
-#[inline]
-fn timespec_order_ignore_epoch(a: &Timespec, b: &Timespec) -> core::cmp::Ordering {
-    if a.eql(&Timespec::EPOCH) {
-        return core::cmp::Ordering::Greater;
-    }
-    if b.eql(&Timespec::EPOCH) {
-        return core::cmp::Ordering::Less;
-    }
-    a.order(b)
-}
-
 /// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
 /// `bun_jsc::SystemError` and materialize a JS Error instance.
 fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
@@ -1744,7 +1732,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
-                match timespec_order_ignore_epoch(&bun_test_timeout, &user_timespec) {
+                match Timespec::order_ignore_epoch(bun_test_timeout, user_timespec) {
                     core::cmp::Ordering::Less => absolute_timespec = bun_test_timeout,
                     core::cmp::Ordering::Equal => {}
                     core::cmp::Ordering::Greater => absolute_timespec = user_timespec,

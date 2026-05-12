@@ -1157,60 +1157,8 @@ impl FileSink {
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
-// `SinkHandler` impl: bridges `Sink::init(self)` (vtable-erased writer). The
-// inherent `connect` returns `()`; trait wants `sys::Result<()>` to unify with
-// other sink types' fallible connect.
-impl crate::webcore::sink::SinkHandler for FileSink {
-    fn write(&mut self, data: streams::Result) -> streams::Writable {
-        FileSink::write(self, data)
-    }
-    fn write_latin1(&mut self, data: streams::Result) -> streams::Writable {
-        FileSink::write_latin1(self, data)
-    }
-    fn write_utf16(&mut self, data: streams::Result) -> streams::Writable {
-        FileSink::write_utf16(self, data)
-    }
-    fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {
-        FileSink::end(self, err)
-    }
-    fn connect(&mut self, signal: streams::Signal) -> sys::Result<()> {
-        FileSink::connect(self, signal);
-        sys::Result::Ok(())
-    }
-}
-
-// The second `Sink.JSSink(@This(), "FileSink")` arg is a comptime string used
-// for codegen symbol naming; Rust can't drive `#[link_name]` from a const
-// generic, so the resolved externs are spelled out here and surfaced via
-// `JsSinkAbi` so the generic `JSSink<FileSink>` can dispatch.
-unsafe extern "C" {
-    #[link_name = "FileSink__fromJS"]
-    safe fn FileSink__fromJS(value: JSValue) -> usize;
-    #[link_name = "FileSink__createObject"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `object`/`destructor` are stored opaquely in the JS wrapper.
-    safe fn FileSink__createObject(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue;
-    #[link_name = "FileSink__setDestroyCallback"]
-    safe fn FileSink__setDestroyCallback(value: JSValue, callback: usize);
-    #[link_name = "FileSink__assignToStream"]
-    // `&JSGlobalObject` discharges the deref'd-param precondition;
-    // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private, sole
-    // caller (`JsSinkAbi::assign_to_stream_extern`) forwards live pointers.
-    safe fn FileSink__assignToStream(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue;
-    #[link_name = "FileSink__onClose"]
-    safe fn FileSink__onClose(ptr: JSValue, reason: JSValue);
-    #[link_name = "FileSink__onReady"]
-    safe fn FileSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
-}
+crate::impl_sink_handler!(FileSink);
+crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
 // `JSSink::<Self>::js_*`) into the inherent streaming methods. Mirrors
@@ -1277,36 +1225,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn get_fd(&self) -> i32 {
         Self::get_fd(self)
-    }
-}
-
-impl crate::webcore::sink::JsSinkAbi for FileSink {
-    fn from_js_extern(value: JSValue) -> usize {
-        FileSink__fromJS(value)
-    }
-    fn create_object_extern(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue {
-        FileSink__createObject(global, object, destructor)
-    }
-    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        FileSink__setDestroyCallback(value, callback)
-    }
-    fn assign_to_stream_extern(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue {
-        FileSink__assignToStream(global, stream, ptr, jsvalue_ptr)
-    }
-    fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        FileSink__onClose(ptr, reason)
-    }
-    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        FileSink__onReady(ptr, amount, offset)
     }
 }
 

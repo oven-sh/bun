@@ -7,31 +7,52 @@ pub use crate::thread_pool::Task;
 
 pub struct WorkPool;
 
-/// A type that embeds an intrusive [`Task`] node and can be scheduled on the
-/// [`WorkPool`] by value (`Box<Self>`). Implementors declare the byte offset
-/// of their `task: Task` field; [`WorkPool::schedule_owned`] performs the
-/// `Box` → raw-pointer hand-off and the C-ABI callback shim recovers
-/// `Box<Self>` via `container_of`, so call sites never touch
-/// `Box::into_raw`/`from_raw` directly.
+/// A type that embeds an intrusive `task: Task` field. Declares the byte
+/// offset of that field once and provides the canonical container-of recovery
+/// used by every `fn(task: *mut Task)` thread-pool trampoline (the Rust
+/// equivalent of Zig's per-site `@fieldParentPtr("task", task)`).
+///
+/// Implement via [`intrusive_work_task!`]; the trait carries the safety
+/// contract so call sites need only assert "scheduled via this field".
 ///
 /// # Safety
-/// - `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)`
-///   where the field is of type [`Task`] and [`task_mut`](OwnedTask::task_mut)
-///   MUST return a borrow of that same field. The shim casts through the
-///   offset; a mismatch is UB.
-/// - [`run`](OwnedTask::run) executes on an arbitrary worker thread (hence
-///   the `Send` bound).
-pub unsafe trait OwnedTask: Send + Sized + 'static {
-    /// `core::mem::offset_of!(Self, task)`. Used only for the `container_of`
-    /// recovery in [`__callback`](OwnedTask::__callback) and the schedule
-    /// argument; the install step uses the safe [`task_mut`] accessor.
+/// `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)` and
+/// [`task_mut`](IntrusiveWorkTask::task_mut) MUST return a borrow of that
+/// same field. [`from_task_ptr`](IntrusiveWorkTask::from_task_ptr) casts
+/// through the offset; a mismatch is UB.
+pub unsafe trait IntrusiveWorkTask: Sized {
+    /// `core::mem::offset_of!(Self, task)`.
     const TASK_OFFSET: usize;
 
-    /// Safe accessor for the intrusive `task: Task` field. Implementors
-    /// return `&mut self.task`; [`WorkPool::schedule_owned`] uses this to
-    /// install the callback without raw byte-offset arithmetic.
+    /// Safe accessor for the intrusive `task: Task` field
+    /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
+    /// the callback without raw byte-offset arithmetic.
     fn task_mut(&mut self) -> &mut Task;
 
+    /// Recover `*mut Self` from a `*mut Task` pointing at `self.task` — the
+    /// single canonical `container_of` for every work-pool trampoline.
+    ///
+    /// # Safety
+    /// `task` must point to the [`Task`] field at `Self::TASK_OFFSET` inside a
+    /// live `Self` allocation that was scheduled via that field, and the
+    /// pointer's provenance must cover the whole allocation.
+    #[inline(always)]
+    unsafe fn from_task_ptr(task: *mut Task) -> *mut Self {
+        // SAFETY: caller upholds the trait safety contract above.
+        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
+    }
+}
+
+/// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
+/// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
+/// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
+/// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
+/// touch `Box::into_raw`/`from_raw` directly.
+///
+/// # Safety
+/// [`run`](OwnedTask::run) executes on an arbitrary worker thread (hence the
+/// `Send` bound).
+pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     /// Run the task. Receives ownership of the heap allocation; dropping
     /// `self` frees it (Zig: `bun.destroy(this)` at end of callback).
     fn run(self: Box<Self>);
@@ -42,25 +63,53 @@ pub unsafe trait OwnedTask: Send + Sized + 'static {
     /// `OwnedTask` implementor.
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
-        // SAFETY: `task` points to the `Task` field at `Self::TASK_OFFSET`
-        // inside a `Box<Self>` that `WorkPool::schedule_owned` leaked. The
-        // thread pool guarantees this callback fires exactly once per
-        // scheduled task, so reclaiming the `Box` here is sound.
-        let this = unsafe { Box::from_raw(bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET)) };
+        // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
+        // `WorkPool::schedule_owned` leaked. The thread pool guarantees this
+        // callback fires exactly once per scheduled task, so reclaiming the
+        // `Box` here is sound.
+        let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
         this.run();
     }
 }
 
-/// Implements [`OwnedTask`] (and the required `Send`) for a struct that
-/// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
-/// via [`WorkPool::schedule_owned`]. Expands to the `TASK_OFFSET` constant,
-/// the `task_mut` accessor, and `unsafe impl Send` — the implementor supplies
-/// only `fn run(self: Box<Self>)`.
+/// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
+/// `task: Task` field. Expands to the `TASK_OFFSET` constant and the
+/// `task_mut` accessor; brings [`IntrusiveWorkTask::from_task_ptr`] into
+/// scope for the type's `fn(*mut Task)` trampolines.
 ///
 /// ```ignore
-/// owned_task!(HashJob, task);
-/// impl HashJob { fn run_owned(self: Box<Self>) { /* ... */ } }
+/// intrusive_work_task!(ReadFile, task);
+/// intrusive_work_task!([Ctx] CryptoJob<Ctx>, task);
+/// intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 /// ```
+#[macro_export]
+macro_rules! intrusive_work_task {
+    // Generic/lifetime form. The leading `[..]` disambiguates from the
+    // plain-type arm so the `:ty` fragment below never sees a `<const ..>`
+    // and hard-errors.
+    ([$($gen:tt)*] $ty:ty, $field:ident) => {
+        // SAFETY: `TASK_OFFSET`/`task_mut` agree — `$field` is the intrusive `Task`.
+        unsafe impl<$($gen)*> $crate::work_pool::IntrusiveWorkTask for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            #[inline]
+            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
+        }
+    };
+    ($ty:ty, $field:ident) => {
+        // SAFETY: `TASK_OFFSET`/`task_mut` agree — `$field` is the intrusive `Task`.
+        unsafe impl $crate::work_pool::IntrusiveWorkTask for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            #[inline]
+            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
+        }
+    };
+}
+
+/// Implements [`OwnedTask`] (and the required `Send`) for a struct that
+/// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
+/// via [`WorkPool::schedule_owned`]. Expands to [`intrusive_work_task!`] +
+/// `unsafe impl Send` + the `run` forward — the implementor supplies only an
+/// inherent `fn run_owned(self: Box<Self>)`.
 ///
 /// The `Send` impl is part of the macro because every `OwnedTask` is *by
 /// construction* sent to a worker thread — Zig's `WorkPool.schedule` had no
@@ -70,31 +119,22 @@ pub unsafe trait OwnedTask: Send + Sized + 'static {
 /// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
 #[macro_export]
 macro_rules! owned_task {
-    // Generic form (`owned_task!([const B: bool] CpSingleTask<B>, task);`).
-    // The leading `[..]` disambiguates from the plain-type arm so the `:ty`
-    // fragment below never sees a `<const ..>` and hard-errors.
     ([$($gen:tt)*] $ty:ty, $field:ident) => {
-        // SAFETY: see plain-type arm.
+        $crate::intrusive_work_task!([$($gen)*] $ty, $field);
+        // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl<$($gen)*> ::core::marker::Send for $ty {}
-        // SAFETY: see plain-type arm.
+        // SAFETY: `run` forwards to the inherent `run_owned`.
         unsafe impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-            #[inline]
-            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
             #[inline]
             fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
         }
     };
     ($ty:ty, $field:ident) => {
-        // SAFETY: scheduled via `WorkPool::schedule_owned`; see macro doc — the
-        // type is moved to a worker thread by design (Zig had no Send check).
+        $crate::intrusive_work_task!($ty, $field);
+        // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl ::core::marker::Send for $ty {}
-        // SAFETY: `TASK_OFFSET`/`task_mut` agree (`$field` is the intrusive
-        // `Task`); `run` forwards to the inherent `run_owned`.
+        // SAFETY: `run` forwards to the inherent `run_owned`.
         unsafe impl $crate::work_pool::OwnedTask for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-            #[inline]
-            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
             #[inline]
             fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
         }

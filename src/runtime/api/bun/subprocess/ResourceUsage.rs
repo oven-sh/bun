@@ -151,10 +151,6 @@ impl ResourceUsage {
         ctx.put(global, b"involuntary", JSValue::js_number(this.rusage.nivcsw_()));
         ctx
     }
-
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
 }
 
 // ported from: src/runtime/api/bun/subprocess/ResourceUsage.zig

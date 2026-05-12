@@ -38,7 +38,12 @@ pub use unicode_draft::{
     copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8, copy_u8_into_u16,
     copy_utf16_into_utf8_impl, element_length_cp1252_into_utf16, element_length_utf8_into_utf16,
     replace_latin1_with_utf8, to_utf16_alloc_maybe_buffered, to_utf8_list_with_type_bun,
-    u16_is_lead, u16_is_trail, wtf8_sequence, BOM,
+    u16_is_lead, u16_is_trail, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
+    UTF16Replacement, BOM,
+};
+pub use bun_core::strings::{
+    decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw, u16_get_supplementary,
+    u16_is_surrogate, U16_SURROGATE_OFFSET,
 };
 
 mod escape_reg_exp { pub(super) use crate::escape_reg_exp::*; }
@@ -179,9 +184,8 @@ pub mod visible_fallback {
                     if c < 0x80 {
                         if c >= 0x20 && c != 0x7f { w += 1; }
                         i += 1;
-                    } else if (0xD800..0xDC00).contains(&c)
-                        && i + 1 < input.len()
-                        && (0xDC00..0xE000).contains(&input[i + 1])
+                    } else if bun_core::strings::u16_is_lead(c)
+                        && input.get(i + 1).copied().is_some_and(bun_core::strings::u16_is_trail)
                     {
                         // Surrogate pair → one codepoint.
                         w += 1;
@@ -387,7 +391,8 @@ pub use crate::w;
 pub use bun_core::strings::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
     element_length_latin1_into_utf8, element_length_utf16_into_utf8,
-    to_utf8_alloc_z, to_utf8_from_latin1_z,
+    encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
+    to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
 /// memmem — libc on posix, scalar fallback on windows.
@@ -539,18 +544,25 @@ pub fn contains_comptime(self_: &[u8], str: &'static [u8]) -> bool {
 
 pub use contains as includes;
 
+/// Lowercase `probe` (ASCII fold only) into a 256-byte stack buffer and hand
+/// the lowered slice to `f`. Returns `None` when `probe.len() > 256` — every
+/// caller's key set is shorter, so an oversize probe is a guaranteed miss.
+/// Bytes ≥ 0x80 pass through `to_ascii_lowercase` unchanged; all callers' keys
+/// are pure lowercase ASCII, so such probes miss regardless.
+#[inline]
+pub fn with_ascii_lowercase<R>(probe: &[u8], f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    let (buf, len) = bun_core::strings::ascii_lowercase_buf::<256>(probe)?;
+    Some(f(&buf[..len]))
+}
+
+/// Case-insensitive ASCII lookup in a `phf::Map` whose keys are already
+/// lowercase ASCII. Lowercases `self_` into a stack buffer and probes once.
+#[inline]
 pub fn in_map_case_insensitive<V: Copy>(
     self_: &[u8],
-    map: &'static phf::Map<&'static [u8], V>,
+    map: &phf::Map<&'static [u8], V>,
 ) -> Option<V> {
-    // Zig delegated to bun.String.ascii(self).inMapCaseInsensitive(map).
-    // phf doesn't do case-insensitive natively; lowercase into a stack buffer.
-    if self_.len() > 256 { return None; }
-    let mut buf = [0u8; 256];
-    for (i, &b) in self_.iter().enumerate() { buf[i] = b.to_ascii_lowercase(); }
-    map.get(&buf[..self_.len()]).copied()
-    // TODO(b2): bun.String.inMapCaseInsensitive uses ASCII-lowered key; verify
-    // all phf maps in callers store lowercase keys.
+    with_ascii_lowercase(self_, |lowered| map.get(lowered).copied()).flatten()
 }
 
 #[inline]
@@ -720,8 +732,17 @@ pub fn last_index_of_char_t<T: Eq>(self_: &[T], char: T) -> Option<usize> {
 
 #[inline]
 pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
-    // TODO(port): std.mem.lastIndexOf — using bstr cold-path helper.
+    // u8 fast path: bstr → memchr SIMD memmem (rfind). Empty needle → Some(len).
     bstr::ByteSlice::rfind(self_, str)
+}
+
+/// Generic `std.mem.lastIndexOf(T, haystack, needle)`.
+/// For `T = u8` prefer [`last_index_of`] (SIMD memmem).
+pub fn last_index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(haystack.len());
+    }
+    haystack.windows(needle.len()).rposition(|w| w == needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -1081,16 +1102,7 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len() && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub fn starts_with_generic<T: bun_core::NoUninit>(self_: &[T], str: &[T]) -> bool {
-    if str.len() > self_.len() {
-        return false;
-    }
-    eql_long(
-        reinterpret_to_u8(&self_[0..str.len()]),
-        reinterpret_to_u8(str),
-        false,
-    )
-}
+pub use bun_core::strings::{has_prefix_t as starts_with_generic, has_suffix_t as ends_with_generic};
 
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
@@ -1623,102 +1635,7 @@ impl<const N: usize> ScalarMask<N> {
 pub type AsciiVector = ScalarVec<u8, ASCII_VECTOR_SIZE>;
 pub type AsciiU16Vector = ScalarVec<u16, ASCII_U16_VECTOR_SIZE>;
 
-/// `strings.utf16Codepoint` — surrogate-pair length + decoded code point.
-/// Minimal version for `escape_html` (only `.len` is used there); the full
-/// FFFD-replacing variant lives in the gated `unicode_draft`.
-#[derive(Clone, Copy)]
-pub struct Utf16CodepointLen {
-    pub code_point: u32,
-    pub len: u8,
-}
-#[inline]
-pub fn utf16_codepoint(input: &[u16]) -> Utf16CodepointLen {
-    let c0 = u32::from(input[0]);
-    if c0 & !0x03ff == 0xd800 {
-        // high surrogate
-        if input.len() < 2 {
-            return Utf16CodepointLen { code_point: c0, len: 1 };
-        }
-        let c1 = u32::from(input[1]);
-        if c1 & !0x03ff != 0xdc00 {
-            // PORT NOTE: Zig (unicode.zig:1378) falls THROUGH the dead
-            // `if (input.len == 1)` and returns `len = 2` here. The sole
-            // caller (escape_html) advances by `.len`; preserve len=2 to
-            // match Zig's iteration behaviour.
-            return Utf16CodepointLen { code_point: c0, len: 2 };
-        }
-        Utf16CodepointLen {
-            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
-            len: 2,
-        }
-    } else {
-        Utf16CodepointLen { code_point: c0, len: 1 }
-    }
-}
-
-/// `strings.UTF16Replacement` — decoded UTF-16 codepoint with surrogate
-/// metadata. Used by `visible_utf16_width_fn` and the (gated) `unicode_draft`
-/// transcoding suite.
-#[derive(Clone, Copy)]
-pub struct UTF16Replacement {
-    pub code_point: u32,
-    pub len: U3Fast,
-    /// Explicit fail boolean to distinguish a Unicode Replacement Codepoint
-    /// that was already in the input from a genuine decode error.
-    pub fail: bool,
-    pub can_buffer: bool,
-    pub is_lead: bool,
-}
-impl Default for UTF16Replacement {
-    fn default() -> Self {
-        Self { code_point: UNICODE_REPLACEMENT, len: 0, fail: false, can_buffer: true, is_lead: false }
-    }
-}
-impl UTF16Replacement {
-    #[inline]
-    pub fn utf8_width(self) -> U3Fast {
-        match self.code_point {
-            0..=0x7F => 1,
-            0x80..=0x7FF => 2,
-            0x800..=0xFFFF => 3,
-            _ => 4,
-        }
-    }
-}
-
-/// `strings.utf16CodepointWithFFFD` — surrogate-pair decode that reports
-/// failure (`fail`/`is_lead`) instead of silently passing the lead through
-/// (unicode.zig:1378 vs. `utf16_codepoint`).
-pub fn utf16_codepoint_with_fffd(input: &[u16]) -> UTF16Replacement {
-    let c0 = u32::from(input[0]);
-    if c0 & !0x03ff == 0xd800 {
-        // surrogate pair
-        if input.len() == 1 {
-            return UTF16Replacement { len: 1, is_lead: true, ..Default::default() };
-        }
-        let c1 = u32::from(input[1]);
-        if c1 & !0x03ff != 0xdc00 {
-            // PORT NOTE: unicode.zig has a dead `if input.len() == 1` here
-            // (already excluded above); preserved fail+is_lead branch only.
-            return UTF16Replacement {
-                fail: true,
-                len: 1,
-                code_point: UNICODE_REPLACEMENT,
-                is_lead: true,
-                ..Default::default()
-            };
-        }
-        UTF16Replacement {
-            len: 2,
-            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
-            ..Default::default()
-        }
-    } else if c0 & !0x03ff == 0xdc00 {
-        UTF16Replacement { fail: true, len: 1, code_point: UNICODE_REPLACEMENT, ..Default::default() }
-    } else {
-        UTF16Replacement { code_point: c0, len: 1, ..Default::default() }
-    }
-}
+// (UTF16Replacement / utf16_codepoint{,_with_fffd} — deleted; re-exported from unicode_draft above)
 
 /// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Zig's `bun.w`.
 #[macro_export]
@@ -1923,33 +1840,7 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     None
 }
 
-const INVALID_CHAR: u8 = 0xff;
-const HEX_TABLE: [u8; 256] = {
-    let mut values: [u8; 256] = [INVALID_CHAR; 256];
-    values[b'0' as usize] = 0;
-    values[b'1' as usize] = 1;
-    values[b'2' as usize] = 2;
-    values[b'3' as usize] = 3;
-    values[b'4' as usize] = 4;
-    values[b'5' as usize] = 5;
-    values[b'6' as usize] = 6;
-    values[b'7' as usize] = 7;
-    values[b'8' as usize] = 8;
-    values[b'9' as usize] = 9;
-    values[b'A' as usize] = 10;
-    values[b'B' as usize] = 11;
-    values[b'C' as usize] = 12;
-    values[b'D' as usize] = 13;
-    values[b'E' as usize] = 14;
-    values[b'F' as usize] = 15;
-    values[b'a' as usize] = 10;
-    values[b'b' as usize] = 11;
-    values[b'c' as usize] = 12;
-    values[b'd' as usize] = 13;
-    values[b'e' as usize] = 14;
-    values[b'f' as usize] = 15;
-    values
-};
+use bun_core::fmt::{HEX_DECODE_TABLE as HEX_TABLE, HEX_INVALID as INVALID_CHAR};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum DecodeHexError {
@@ -2013,13 +1904,7 @@ fn _decode_hex_to_bytes<Char: Copy + Into<u32>, const TRUNCATE: bool>(
     Ok(dest_len - remain.len())
 }
 
-fn byte2hex(char: u8) -> u8 {
-    match char {
-        0..=9 => char + b'0',
-        10..=15 => char - 10 + b'a',
-        _ => unreachable!(),
-    }
-}
+use bun_core::fmt::hex_char_lower as byte2hex;
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
     if cfg!(debug_assertions) {
@@ -2034,18 +1919,9 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     let to_read = to_write / 2;
 
-    let remaining = &source[0..to_read];
-    let mut remaining_dest = &mut destination[..];
     // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
     // Phase B: portable_simd shuffle or LUT.
-    for &c in remaining {
-        const CHARSET: &[u8; 16] = b"0123456789abcdef";
-        remaining_dest[0] = CHARSET[(c >> 4) as usize];
-        remaining_dest[1] = CHARSET[(c & 15) as usize];
-        remaining_dest = &mut remaining_dest[2..];
-    }
-
-    to_read * 2
+    bun_core::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
 }
 
 /// Leave a single leading char
@@ -2263,18 +2139,7 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
 }
 
 // this is std.mem.trim except it doesn't forcibly change the slice to be const
-pub fn trim<'a>(slice: &'a [u8], values_to_strip: &'static [u8]) -> &'a [u8] {
-    let mut begin: usize = 0;
-    let mut end: usize = slice.len();
-
-    while begin < end && values_to_strip.contains(&slice[begin]) {
-        begin += 1;
-    }
-    while end > begin && values_to_strip.contains(&slice[end - 1]) {
-        end -= 1;
-    }
-    &slice[begin..end]
-}
+pub use bun_core::strings::trim;
 
 pub fn trim_spaces(slice: &[u8]) -> &[u8] {
     trim(slice, &WHITESPACE_CHARS)
@@ -2318,6 +2183,14 @@ pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError>
     Ok(out.into_boxed_slice())
 }
 
+// ── Lexicographic slice ordering ──────────────────────────────────────────
+// Canonical home for what Zig calls `std.mem.order`. The Zig tree had three
+// hand-rolled copies (bun.strings.order, md.entity.orderStrings,
+// ast.e.stringCompareForJavaScript); the Rust port keeps exactly one of each
+// shape here.
+
+/// Lexicographic byte-slice ordering (memcmp fast path).
+/// Semantically identical to `<[u8] as Ord>::cmp` / Zig `std.mem.order(u8, a, b)`.
 pub fn order(a: &[u8], b: &[u8]) -> Ordering {
     let len = a.len().min(b.len());
     // SAFETY: both pointers valid for `len` bytes.
@@ -2328,6 +2201,13 @@ pub fn order(a: &[u8], b: &[u8]) -> Ordering {
         -1 => Ordering::Less,
         _ => unreachable!(),
     }
+}
+
+/// Generic lexicographic slice ordering — Zig `std.mem.order(T, a, b)`.
+/// For `T = u8` prefer [`order`] (memcmp fast path).
+#[inline]
+pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
+    a.cmp(b)
 }
 
 pub fn cmp_strings_asc(_: &(), a: &[u8], b: &[u8]) -> bool {
@@ -2366,18 +2246,11 @@ impl<'a> StringArrayByIndexSorter<'a> {
     }
 }
 
-pub fn is_ascii_hex_digit(c: u8) -> bool {
-    c.is_ascii_hexdigit()
-}
-
+#[inline]
 pub fn to_ascii_hex_value(character: u8) -> u8 {
-    if cfg!(debug_assertions) {
-        debug_assert!(is_ascii_hex_digit(character));
-    }
-    match character {
-        0..=b'@' => character - b'0',
-        _ => (character - b'A' + 10) & 0xF,
-    }
+    // Zig parity: bun.strings.toASCIIHexValue (precondition-based, no Option).
+    debug_assert!(character.is_ascii_hexdigit());
+    bun_core::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
 
 /// Zig: `fn NewLengthSorter(comptime Type, comptime field) type`.
@@ -2814,9 +2687,7 @@ pub fn percent_encode_write(
         remaining = &remaining[j..];
         let code_point_len: usize = wtf8_byte_sequence_length_with_invalid(remaining[0]) as usize;
         if remaining.len() < code_point_len {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             return Err(PercentEncodeError::IncompleteUTF8);
         }
 
@@ -2855,6 +2726,36 @@ bun_core::declare_scope!(STR, hidden);
 // `log` is `bun.Output.scoped(.STR, .hidden)` — use `bun_core::scoped_log!(STR, ...)`.
 
 pub type CodePoint = i32;
+
+/// ASCII hex-digit test for code-point–width inputs (`i32` [`CodePoint`],
+/// `u16`, `u32`). Out-of-`u8`-range or negative values return `false`.
+/// For plain `u8`, call [`u8::is_ascii_hexdigit`] directly instead.
+#[inline]
+pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
+    cp.try_into().is_ok_and(|b: u8| b.is_ascii_hexdigit())
+}
+
+/// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
+/// set, stable since Unicode 4.0. Shared core of:
+///   - ECMAScript `WhiteSpace` (js_parser::lexer)
+///   - the JSON5/JS-flavoured JSON lexer (parsers::json_lexer)
+///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
+/// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
+/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs,
+/// and is ECMAScript-only; 2028/2029 are Zl/Zp, json_lexer-only).
+#[inline]
+pub const fn is_unicode_space_separator(cp: u32) -> bool {
+    matches!(
+        cp,
+        0x0020          // SPACE
+        | 0x00A0        // NO-BREAK SPACE
+        | 0x1680        // OGHAM SPACE MARK
+        | 0x2000..=0x200A // EN QUAD..HAIR SPACE
+        | 0x202F        // NARROW NO-BREAK SPACE
+        | 0x205F        // MEDIUM MATHEMATICAL SPACE
+        | 0x3000        // IDEOGRAPHIC SPACE
+    )
+}
 
 /// SIMD-accelerated iterator that yields slices of text between ANSI escape sequences.
 /// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
@@ -2934,119 +2835,15 @@ pub fn utf8_byte_sequence_length(first_byte: u8) -> u8 {
 }
 
 /// `std.mem.trimLeft(u8, str, chars)` — strip leading chars in `values_to_strip`.
-pub fn trim_left<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
-    let mut begin = 0usize;
-    while begin < slice.len() && values_to_strip.contains(&slice[begin]) {
-        begin += 1;
-    }
-    &slice[begin..]
-}
+pub use bun_core::strings::trim_left;
 
 /// `std.mem.trimRight(u8, str, chars)` — strip trailing chars in `values_to_strip`.
 pub use bun_core::strings::trim_right;
 
-/// `std.mem.replacementSize` — byte length of `input` after replacing every
-/// occurrence of `needle` with `replacement`.
-pub fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
-    if needle.is_empty() {
-        return input.len();
-    }
-    let mut size = 0usize;
-    let mut i = 0usize;
-    while i < input.len() {
-        if i + needle.len() <= input.len() && &input[i..i + needle.len()] == needle {
-            size += replacement.len();
-            i += needle.len();
-        } else {
-            size += 1;
-            i += 1;
-        }
-    }
-    size
-}
+pub use bun_core::strings::{replacement_size, replace, replace_owned};
 
-/// `std.mem.replace` — write `input` into `output` replacing every `needle`
-/// with `replacement`; returns the number of replacements made. `output` must
-/// be at least `replacement_size(input, needle, replacement)` bytes.
-pub fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
-    if needle.is_empty() {
-        output[..input.len()].copy_from_slice(input);
-        return 0;
-    }
-    let mut i = 0usize;
-    let mut o = 0usize;
-    let mut count = 0usize;
-    while i < input.len() {
-        if i + needle.len() <= input.len() && &input[i..i + needle.len()] == needle {
-            output[o..o + replacement.len()].copy_from_slice(replacement);
-            o += replacement.len();
-            i += needle.len();
-            count += 1;
-        } else {
-            output[o] = input[i];
-            o += 1;
-            i += 1;
-        }
-    }
-    count
-}
-
-/// Error from [`parse_int`] (`std.fmt.parseInt` port).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParseIntError {
-    InvalidCharacter,
-    Overflow,
-}
-
-/// `std.fmt.parseInt` — parse an integer of type `T` from `buf` in base
-/// `radix` (2..=36). Accepts an optional leading `+`/`-`. Port keeps Zig's
-/// error set: `Overflow` on range error, `InvalidCharacter` otherwise.
-pub fn parse_int<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
-where
-    T: TryFrom<i128> + TryFrom<u128>,
-{
-    debug_assert!((2..=36).contains(&radix));
-    if buf.is_empty() {
-        return Err(ParseIntError::InvalidCharacter);
-    }
-    let (neg, digits) = match buf[0] {
-        b'+' => (false, &buf[1..]),
-        b'-' => (true, &buf[1..]),
-        _ => (false, buf),
-    };
-    if digits.is_empty() {
-        return Err(ParseIntError::InvalidCharacter);
-    }
-    let radix_u = radix as u128;
-    let mut acc: u128 = 0;
-    for &c in digits {
-        let d = match c {
-            b'0'..=b'9' => (c - b'0') as u128,
-            b'a'..=b'z' => (c - b'a' + 10) as u128,
-            b'A'..=b'Z' => (c - b'A' + 10) as u128,
-            _ => return Err(ParseIntError::InvalidCharacter),
-        };
-        if d >= radix_u {
-            return Err(ParseIntError::InvalidCharacter);
-        }
-        acc = acc
-            .checked_mul(radix_u)
-            .and_then(|v| v.checked_add(d))
-            .ok_or(ParseIntError::Overflow)?;
-    }
-    if neg {
-        let signed: i128 = if acc == (i128::MAX as u128) + 1 {
-            i128::MIN
-        } else if acc > i128::MAX as u128 {
-            return Err(ParseIntError::Overflow);
-        } else {
-            -(acc as i128)
-        };
-        T::try_from(signed).map_err(|_| ParseIntError::Overflow)
-    } else {
-        T::try_from(acc).map_err(|_| ParseIntError::Overflow)
-    }
-}
+// `std.fmt.parseInt` — moved down to bun_core::fmt; re-exported for back-compat.
+pub use bun_core::fmt::{parse_int, ParseIntError};
 
 /// Compare a UTF-16 string against a UTF-8 string without allocating
 /// (`unicode.zig:utf16EqlString`).
@@ -3060,15 +2857,11 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
     let mut j: usize = 0;
     let mut i: usize = 0;
     while i < n {
-        let mut r1: i32 = text[i] as i32;
-        if (0xD800..=0xDBFF).contains(&r1) && i + 1 < n {
-            let r2: i32 = text[i + 1] as i32;
-            if (0xDC00..=0xDFFF).contains(&r2) {
-                r1 = ((r1 - 0xD800) << 10) | ((r2 - 0xDC00) + 0x10000);
-                i += 1;
-            }
-        }
-        let width = encode_wtf8_rune(&mut temp, r1 as u32) as usize;
+        // Fixes the `|`-precedence bug ported from unicode.zig:1839 — supplementary
+        // code points >= U+20000 mis-decoded with the old open-coded math.
+        let (cp, adv) = bun_core::strings::decode_wtf16_raw(&text[i..]);
+        i += adv as usize;
+        let width = encode_wtf8_rune(&mut temp, cp);
         if j + width > str.len() {
             return false;
         }
@@ -3076,7 +2869,6 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
             return false;
         }
         j += width;
-        i += 1;
     }
     j == str.len()
 }
@@ -3264,13 +3056,7 @@ pub fn to_utf16_alloc(
         // emissions matches: advance by `replacement.len.max(1)`, not 1.
         let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
         remaining = &remaining[(replacement.len as usize).max(1)..];
-        let c = replacement.code_point;
-        if c <= 0xFFFF {
-            out.push(c as u16);
-        } else {
-            out.push(unicode_draft::u16_lead(c));
-            out.push(unicode_draft::u16_trail(c));
-        }
+        push_codepoint_utf16(&mut out, replacement.code_point);
     }
     out.extend(remaining.iter().map(|&b| u16::from(b)));
     if sentinel {

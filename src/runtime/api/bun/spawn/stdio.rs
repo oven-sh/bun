@@ -30,11 +30,8 @@ pub type SpawnOptionsStdio = process::WindowsStdio;
 // Zig `bun.FD.Stdio.std_in`.
 use sys::Stdio as FdStdio;
 
-bun_output::declare_scope!(SYS, visible);
 // `const log = bun.sys.syslog;`
-macro_rules! log {
-    ($($t:tt)*) => { bun_output::scoped_log!(SYS, $($t)*) };
-}
+bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
@@ -202,8 +199,29 @@ impl Stdio {
         }
     }
 
-    #[cfg(not(windows))]
-    fn to_posix(&mut self, i: i32) -> Result {
+    pub fn to_sync(&mut self, i: u32) {
+        // Piping an empty stdin doesn't make sense
+        if i == 0 && matches!(self, Self::Pipe) {
+            *self = Self::Ignore;
+        }
+    }
+
+    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
+    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
+    /// via `heap::take`) or free it with `close_and_destroy`.
+    pub fn as_spawn_option(&mut self, i: i32) -> Result {
+        // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
+        // WindowsStdio; only three variant *constructors* differ in arity
+        // between targets, so spell those per-cfg and share the rest.
+        #[cfg(not(windows))]
+        fn buffer() -> SpawnOptionsStdio { SpawnOptionsStdio::Buffer }
+        #[cfg(windows)]
+        fn buffer() -> SpawnOptionsStdio { SpawnOptionsStdio::Buffer(create_zeroed_pipe()) }
+        #[cfg(not(windows))]
+        fn ipc() -> SpawnOptionsStdio { SpawnOptionsStdio::Ipc }
+        #[cfg(windows)]
+        fn ipc() -> SpawnOptionsStdio { SpawnOptionsStdio::Ipc(create_zeroed_pipe()) }
+
         let result = match self {
             Self::Blob(blob) => 'brk: {
                 let fd = FdStdio::from_int(i).unwrap().fd();
@@ -253,111 +271,25 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                SpawnOptionsStdio::Buffer
+                buffer()
             }
             Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 { out: d.out, to: d.to }),
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                SpawnOptionsStdio::Buffer
+                buffer()
             }
-            Self::Ipc => SpawnOptionsStdio::Ipc,
+            Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            #[cfg(not(windows))]
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            Self::Path(pathlike) => {
-                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
-            }
-            Self::Inherit => SpawnOptionsStdio::Inherit,
-            Self::Ignore => SpawnOptionsStdio::Ignore,
-        };
-        ResultT::Result(result)
-    }
-
-    #[cfg(windows)]
-    fn to_windows(&mut self, i: i32) -> Result {
-        let result = match self {
-            Self::Blob(blob) => 'brk: {
-                let fd = FdStdio::from_int(i).unwrap().fd();
-                if blob.needs_to_read_file() {
-                    if let Some(store) = blob.store() {
-                        if let StoreData::File(ref file) = store.data {
-                            match file.pathlike {
-                                PathOrFileDescriptor::Fd(store_fd) => {
-                                    if store_fd == fd {
-                                        break 'brk SpawnOptionsStdio::Inherit;
-                                    }
-
-                                    if let Some(tag) = store_fd.stdio_tag() {
-                                        match tag {
-                                            FdStdio::StdIn => {
-                                                if i == 1 || i == 2 {
-                                                    return ResultT::Err(
-                                                        ToSpawnOptsError::StdinUsedAsOut,
-                                                    );
-                                                }
-                                            }
-                                            FdStdio::StdOut | FdStdio::StdErr => {
-                                                if i == 0 {
-                                                    return ResultT::Err(
-                                                        ToSpawnOptsError::OutUsedAsStdin,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    break 'brk SpawnOptionsStdio::Pipe(store_fd);
-                                }
-                                PathOrFileDescriptor::Path(ref path) => {
-                                    break 'brk SpawnOptionsStdio::Path(
-                                        path.slice().to_vec().into_boxed_slice(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if i == 1 || i == 2 {
-                    return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
-                }
-
-                SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-            }
-            Self::Ipc => SpawnOptionsStdio::Ipc(create_zeroed_pipe()),
-            Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-            }
-            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 { out: d.out, to: d.to }),
-            Self::Path(pathlike) => {
-                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
-            }
-            Self::Inherit => SpawnOptionsStdio::Inherit,
-            Self::Ignore => SpawnOptionsStdio::Ignore,
-
+            #[cfg(windows)]
             Self::Memfd(_) => panic!("This should never happen"),
+            Self::Path(pathlike) => {
+                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
+            }
+            Self::Inherit => SpawnOptionsStdio::Inherit,
+            Self::Ignore => SpawnOptionsStdio::Ignore,
         };
         ResultT::Result(result)
-    }
-
-    pub fn to_sync(&mut self, i: u32) {
-        // Piping an empty stdin doesn't make sense
-        if i == 0 && matches!(self, Self::Pipe) {
-            *self = Self::Ignore;
-        }
-    }
-
-    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
-    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `heap::take`) or free it with `close_and_destroy`.
-    pub fn as_spawn_option(&mut self, i: i32) -> Result {
-        #[cfg(windows)]
-        {
-            self.to_windows(i)
-        }
-        #[cfg(not(windows))]
-        {
-            self.to_posix(i)
-        }
     }
 
     pub fn is_piped(&self) -> bool {

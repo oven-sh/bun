@@ -1,7 +1,7 @@
 use core::ffi::CStr;
 use std::io::Write as _;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -151,15 +151,8 @@ impl Seq {
     }
 
     fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = State::Err;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, msg, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
-        Builtin::done(interp, cmd, 1)
+        Self::state_mut(interp, cmd).state = State::Err;
+        Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -213,19 +206,9 @@ impl Seq {
             State::Idle => crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle"),
         }
     }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Seq {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Seq(s) => &mut **s,
-            _ => unreachable!(),
-        }
-    }
 }
 
 #[inline]
-fn parse_f32(bytes: &[u8]) -> Option<f32> {
-    core::str::from_utf8(bytes).ok().and_then(|s| s.parse::<f32>().ok())
-}
+fn parse_f32(bytes: &[u8]) -> Option<f32> { bun_core::fmt::parse_num(bytes) }
 
 // ported from: src/shell/builtin/seq.zig

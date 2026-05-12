@@ -224,20 +224,11 @@ impl PerMessageDeflate {
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
         if Self::can_use_libdeflate(in_buf.len()) {
-            let spare = out.spare_capacity_mut();
-            // SAFETY: libdeflate writes into the uninit spare region; we only
-            // advance len by `result.written`. `decompressor()` returns a live
-            // *mut Decompressor allocated on first use and freed in Drop.
-            let result = unsafe {
-                let spare_init: &mut [u8] = core::slice::from_raw_parts_mut(
-                    spare.as_mut_ptr().cast::<u8>(),
-                    spare.len(),
-                );
-                (*self.rare_data.decompressor()).deflate(in_buf, spare_init)
-            };
+            // SAFETY: `decompressor()` returns a live *mut Decompressor allocated
+            // on first use and freed in Drop.
+            let result = unsafe { &mut *self.rare_data.decompressor() }
+                .decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
             if result.status == libdeflate_sys::Status::Success {
-                // SAFETY: libdeflate reported `written` bytes initialized in spare capacity.
-                unsafe { out.set_len(out.len() + result.written) };
                 if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
                     return Err(DecompressError::TooLarge);
                 }

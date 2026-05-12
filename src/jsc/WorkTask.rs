@@ -1,8 +1,6 @@
-use core::mem::offset_of;
-
 use bun_io::{self as Async, KeepAlive};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
-use bun_threading::{work_pool::WorkPool, WorkPoolTask};
+use bun_threading::{work_pool::WorkPool, IntrusiveWorkTask as _, WorkPoolTask};
 
 use crate::debugger::AsyncTaskTracker;
 use crate::event_loop::EventLoop;
@@ -51,6 +49,8 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub ref_: KeepAlive,
 }
 
+bun_threading::intrusive_work_task!([Context: WorkTaskContext] WorkTask<Context>, task);
+
 // SAFETY: `WorkTask` is moved into the thread pool's queue (intrusive `task`
 // node) and back via the concurrent task queue. All access to `ctx` /
 // `global_this` is sequenced by the work-pool → on_finish → run_from_js
@@ -77,7 +77,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
             async_task_tracker: AsyncTaskTracker::init(vm),
             ref_: KeepAlive::default(),
         });
-        this.ref_.ref_(js_event_loop_ctx());
+        this.ref_.ref_(Async::js_vm_ctx());
 
         // PORT NOTE: intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
@@ -92,7 +92,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
         // has not been freed.
         let mut this = unsafe { bun_core::heap::take(this) };
-        this.ref_.unref(js_event_loop_ctx());
+        this.ref_.unref(Async::js_vm_ctx());
         // drop(this) — Box freed at scope exit
     }
 
@@ -101,11 +101,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that
-        // field, so `from_field_ptr!` recovers the live heap `Self` parent,
+        // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
-        let this: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, task)
-        };
+        let this = unsafe { Self::from_task_ptr(task) };
         // SAFETY: `this` is alive for the duration of the thread-pool callback.
         Context::run(unsafe { (*this).ctx }, this);
     }
@@ -117,7 +115,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
         let global_this = this.global_this.get();
-        this.ref_.unref(js_event_loop_ctx());
+        this.ref_.unref(Async::js_vm_ctx());
 
         let _dispatch = tracker.dispatch(global_this);
         Context::then(ctx, global_this)
@@ -126,7 +124,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn schedule(this: *mut Self) {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread.
         let this = unsafe { &mut *this };
-        this.ref_.ref_(js_event_loop_ctx());
+        this.ref_.ref_(Async::js_vm_ctx());
         this.async_task_tracker.did_schedule(this.global_this.get());
         WorkPool::schedule(&raw mut this.task);
     }
@@ -142,13 +140,6 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let task = std::ptr::from_mut(this_ref.concurrent_task.from(this, AutoDeinit::ManualDeinit));
         event_loop.enqueue_task_concurrent(task);
     }
-}
-
-/// Bridge to the aio-level `EventLoopCtx` used by `KeepAlive`. WorkTask always
-/// runs on the JS event loop, so the global `Js` ctx is the correct erasure.
-#[inline]
-fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
 // ported from: src/jsc/WorkTask.zig

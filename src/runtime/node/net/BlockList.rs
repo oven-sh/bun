@@ -67,11 +67,12 @@ fn z(s: &ZStr) -> &str {
 /// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
 /// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct BlockList {
     // Intrusive thread-safe refcount (Zig: `bun.ptr.ThreadSafeRefCount`).
-    // `bun_ptr::IntrusiveArc<BlockList>` wraps this; `ref()`/`deref()` bump it,
-    // `deref()` hitting zero calls `deinit` (here: drops the `Box`).
-    ref_count: AtomicU32,
+    // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
+    // the `Box` via the trait's default destructor.
+    ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
     // LIFETIMES.tsv: JSC_BORROW → `&JSGlobalObject`. Stored raw because this
     // struct is a heap-allocated `m_ctx` payload recovered from C++ via
     // `*mut Self`; a borrowed lifetime param cannot be threaded through that.
@@ -91,24 +92,26 @@ pub struct BlockList {
 
 impl BlockList {
     // Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-    // → `bun_ptr::IntrusiveArc<Self>` semantics. `new` boxes + leaks to raw.
+    // → trait impl + default destructor (drops the `Box`) provided by
+    // `#[derive(ThreadSafeRefCounted)]`; inherent forwarders below.
+    #[inline]
     pub fn ref_(&self) {
-        self.ref_count.fetch_add(1, AtomicOrdering::AcqRel);
+        // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: `this` is a live `heap::alloc` pointer with ref_count >= 1.
-        unsafe {
-            if (*this).ref_count.fetch_sub(1, AtomicOrdering::AcqRel) == 1 {
-                Self::deinit(this);
-            }
-        }
+    /// # Safety
+    /// `this` must point to a live `Self` and the caller must own one ref.
+    #[inline]
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
-            ref_count: AtomicU32::new(1),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             global_this: std::ptr::from_ref(global),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
@@ -121,19 +124,11 @@ impl BlockList {
     pub fn estimated_size(&self) -> usize {
         (core::mem::size_of::<Self>()
             + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
-            / (self.ref_count.load(AtomicOrdering::Acquire).max(1) as usize)
+            / (self.ref_count.get().max(1) as usize)
     }
 
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        Self::deref(Box::into_raw(self));
-    }
-
-    fn deinit(this: *mut Self) {
-        // `da_rules` is dropped by `Box` drop; `bun.destroy(this)` → `heap::take`.
-        // SAFETY: called exactly once when ref_count hits zero on a `heap::alloc` pointer.
-        unsafe { drop(bun_core::heap::take(this)) };
+        bun_ptr::finalize_js_box_noop(self);
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported

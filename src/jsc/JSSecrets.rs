@@ -1,20 +1,4 @@
-use core::mem::offset_of;
-
-use bun_io::KeepAlive;
-use bun_event_loop::AnyTask::AnyTask;
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-use crate::event_loop::ConcurrentTask;
-use crate::{JSGlobalObject, JSValue, Strong, VirtualMachineRef as VirtualMachine};
-
-pub struct SecretsJob {
-    vm: bun_ptr::BackRef<VirtualMachine>,
-    task: WorkPoolTask,
-    any_task: AnyTask,
-    poll: KeepAlive,
-    promise: Strong,
-
-    ctx: *mut SecretsJobOptions,
-}
+use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong};
 
 // Opaque pointer to C++ SecretsJobOptions struct
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
@@ -30,108 +14,50 @@ unsafe extern "C" {
     fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
 }
 
-impl SecretsJob {
-    pub fn create(
-        global: &JSGlobalObject,
-        ctx: *mut SecretsJobOptions,
-        promise: JSValue,
-    ) -> *mut SecretsJob {
-        let vm = bun_ptr::BackRef::new(global.bun_vm());
-        let job = bun_core::heap::into_raw(Box::new(SecretsJob {
-            vm,
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::run_task,
-            },
-            any_task: AnyTask::default(),
-            poll: KeepAlive::default(),
-            ctx,
-            promise: Strong::create(promise, global),
-        }));
-        // TODO(port): AnyTask::New(T, &cb).init(ptr) is a comptime type-generator in Zig.
-        // SAFETY: job was just allocated above and is non-null.
-        unsafe {
-            (*job).any_task = AnyTask {
-                ctx: core::ptr::NonNull::new(job.cast()),
-                callback: Self::run_from_js_erased,
-            };
-        }
-        job
+struct SecretsCtx {
+    ctx: *mut SecretsJobOptions,
+    promise: Strong,
+}
+
+impl AnyTaskJobCtx for SecretsCtx {
+    fn run(&mut self, global: *mut JSGlobalObject) {
+        // SAFETY: `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
+        // `global` is the creating VM's global pointer (mut provenance).
+        unsafe { Bun__SecretsJobOptions__runTask(self.ctx, global) };
     }
 
-    pub fn run_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
-        // slot — safe-fn coerces) for the `task` field initialised in
-        // `create`; the WorkPool calls back with exactly that field, so
-        // `from_field_ptr!` recovers the live heap `SecretsJob` (alive until
-        // `run_from_js` drops it).
-        let job: &mut SecretsJob = unsafe {
-            &mut *bun_core::from_field_ptr!(SecretsJob, task, task)
-        };
-        let vm = job.vm;
-        // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;
-        // moved after the FFI call since there is no early return between them.
-        // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
-        unsafe { Bun__SecretsJobOptions__runTask(job.ctx, vm.global) };
-        vm.event_loop_shared()
-            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-    }
-
-    fn run_from_js_erased(this: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
-        Self::run_from_js(this.cast::<SecretsJob>())
-    }
-
-    pub fn run_from_js(this: *mut SecretsJob) -> bun_event_loop::JsResult<()> {
-        // `defer this.deinit()` — take ownership; Drop runs at scope exit on all paths.
-        // SAFETY: `this` was produced by heap::alloc in `create` and is uniquely owned here.
-        let this = unsafe { bun_core::heap::take(this) };
-        let vm = this.vm;
-
-        if VirtualMachine::get().is_shutting_down() {
-            return Ok(());
-        }
-
-        let promise = this.promise.get();
+    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        let promise = self.promise.get();
         if promise.is_empty() {
             return Ok(());
         }
-
-        // `vm` is a `BackRef` to the live per-thread VM stored at `create`;
-        // `global()` is the safe `&'static JSGlobalObject` accessor.
-        let global = vm.global();
         // `Bun__SecretsJobOptions__runFromJS` opens a `DECLARE_THROW_SCOPE` and
         // returns via `RELEASE_AND_RETURN`, which simulates a throw to the parent
         // scope under `BUN_JSC_validateExceptionChecks=1`. Without an enclosing
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
-        unsafe { Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global, promise) };
-        scope
-            .assert_no_exception_except_termination()
-            .map_err(Into::into)
-    }
-
-    pub fn schedule(&mut self) {
-        // TODO(port): KeepAlive::ref_ takes an `EventLoopCtx` vtable, not `*mut VM`.
-        // Phase-D: route through `bun_io::get_vm_ctx` once the JSC vtable is wired.
-        // self.poll.ref_(self.vm);
-        let _ = &mut self.poll;
-        WorkPool::schedule(&raw mut self.task);
-    }
-}
-
-impl Drop for SecretsJob {
-    fn drop(&mut self) {
-        // SAFETY: ctx is the C++ SecretsJobOptions* passed to `create`; C++ side owns cleanup.
+        // SAFETY: `ctx` is a valid C++ SecretsJobOptions* held alive until Drop.
         unsafe {
-            Bun__SecretsJobOptions__deinit(self.ctx);
-        }
-        // TODO(port): self.poll.unref(self.vm) — see schedule() note.
-        // self.promise: Strong drops automatically.
-        // bun.destroy(this): handled by Box drop in run_from_js.
+            Bun__SecretsJobOptions__runFromJS(
+                self.ctx,
+                global as *const _ as *mut JSGlobalObject,
+                promise,
+            )
+        };
+        scope.assert_no_exception_except_termination()
     }
 }
+
+impl Drop for SecretsCtx {
+    fn drop(&mut self) {
+        // SAFETY: `ctx` is the C++ SecretsJobOptions* passed to `create`; C++ side owns cleanup.
+        unsafe { Bun__SecretsJobOptions__deinit(self.ctx) };
+        // `promise: Strong` drops automatically.
+    }
+}
+
+pub type SecretsJob = AnyTaskJob<SecretsCtx>;
 
 // Helper function for C++ to call with opaque pointer
 #[unsafe(no_mangle)]
@@ -140,9 +66,11 @@ pub extern "C" fn Bun__Secrets__scheduleJob(
     options: *mut SecretsJobOptions,
     promise: JSValue,
 ) {
-    let job = SecretsJob::create(global, options, promise);
-    // SAFETY: job is non-null, freshly allocated, uniquely owned.
-    unsafe { (*job).schedule() };
+    SecretsJob::create_and_schedule(
+        global,
+        SecretsCtx { ctx: options, promise: Strong::create(promise, global) },
+    )
+    .expect("SecretsCtx::init is infallible");
 }
 
 // Zig `fixDeadCodeElimination` + `comptime { _ = ... }` dropped:

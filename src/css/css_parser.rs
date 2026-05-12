@@ -5430,14 +5430,9 @@ fn len_utf16(ch: u32) -> usize {
     if (ch & 0xFFFF) == ch { 1 } else { 2 }
 }
 
+#[inline]
 fn byte_to_hex_digit(b: u8) -> Option<u32> {
-    // todo_stuff.match_byte
-    match b {
-        b'0'..=b'9' => Some(u32::from(b - b'0')),
-        b'a'..=b'f' => Some(u32::from(b - b'a' + 10)),
-        b'A'..=b'F' => Some(u32::from(b - b'A' + 10)),
-        _ => None,
-    }
+    bun_core::fmt::hex_digit_value(b).map(u32::from)
 }
 
 fn byte_to_decimal_digit(b: u8) -> Option<u32> {
@@ -5624,7 +5619,7 @@ impl Token {
         }
     }
 
-    pub fn to_css_generic<W: WriteAll>(&self, writer: &mut W) -> Result<(), W::Error> {
+    pub fn to_css_generic<W: WriteAll + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
         match self {
             Token::Ident(v) => serializer::serialize_identifier(v, writer),
             Token::AtKeyword(v) => {
@@ -5797,36 +5792,12 @@ impl Token {
 // (quoted_string→serialize_string, idhash→serialize_identifier). Phase B
 // specializes.
 
-/// Minimal byte-writer trait for `serializer` and `to_css_generic` (replaces
-/// Zig `anytype` writer).
-pub trait WriteAll {
-    type Error;
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error>;
-    fn write_byte(&mut self, b: u8) -> Result<(), Self::Error> {
-        self.write_all(&[b])
-    }
-}
-
-// Growable scratch buffer — needed by `Url::to_css` (minify length-compare
-// path) and any caller that wants to serialize into a `Vec<u8>` before
-// committing to the Printer. Mirrors Zig `std.Io.Writer.Allocating`.
-impl WriteAll for Vec<u8> {
-    type Error = core::convert::Infallible;
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
-        self.extend_from_slice(buf);
-        Ok(())
-    }
-}
-
-impl<'b> WriteAll for bun_alloc::ArenaVec<'b, u8> {
-    type Error = core::convert::Infallible;
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
-        self.extend_from_slice(buf);
-        Ok(())
-    }
-}
+/// Byte-writer trait for `serializer` and `to_css_generic` (replaces Zig
+/// `anytype` writer). Aliased to the canonical `bun_io::Write`; the associated
+/// `type Error` is dropped — every `Result<(), W::Error>` becomes
+/// `bun_io::Result<()>`. `Vec<u8>` / `ArenaVec<'_, u8>` / `Printer` all
+/// implement it upstream.
+pub use bun_io::Write as WriteAll;
 
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Num, Dimension};
@@ -6103,13 +6074,9 @@ pub mod color {
         }
     }
 
+    #[inline]
     pub fn from_hex(c: u8) -> Result<u8, ColorError> {
-        match c {
-            b'0'..=b'9' => Ok(c - b'0'),
-            b'a'..=b'f' => Ok(c - b'a' + 10),
-            b'A'..=b'F' => Ok(c - b'A' + 10),
-            _ => Err(ColorError::Parse),
-        }
+        bun_core::fmt::hex_digit_value(c).ok_or(ColorError::Parse)
     }
 
     /// <https://drafts.csswg.org/css-color/#hsl-color> except with h
@@ -6153,7 +6120,7 @@ pub mod serializer {
     use super::*;
 
     /// Write a CSS name, like a custom property name.
-    pub fn serialize_name<W: WriteAll>(value: &[u8], writer: &mut W) -> Result<(), W::Error> {
+    pub fn serialize_name<W: WriteAll + ?Sized>(value: &[u8], writer: &mut W) -> bun_io::Result<()> {
         let mut chunk_start: usize = 0;
         for (i, &b) in value.iter().enumerate() {
             let escaped: Option<&[u8]> = match b {
@@ -6182,7 +6149,7 @@ pub mod serializer {
     }
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
-    pub fn serialize_string<W: WriteAll>(value: &[u8], writer: &mut W) -> Result<(), W::Error> {
+    pub fn serialize_string<W: WriteAll + ?Sized>(value: &[u8], writer: &mut W) -> bun_io::Result<()> {
         writer.write_all(b"\"")?;
         let mut sw = CssStringWriter::new(writer);
         sw.write_str(value)?;
@@ -6204,7 +6171,7 @@ pub mod serializer {
             let mut buf = [0u8; 64];
             let mut fbs = FixedBufWriter::new(&mut buf);
             token.to_css_generic(&mut fbs).map_err(|_| dest.add_fmt_error())?;
-            let s = fbs.buffered();
+            let s = fbs.get_written();
             if value < 0.0 {
                 dest.write_str("-")?;
                 dest.write_bytes(strings::trim_leading_pattern2(s, b'-', b'0'))
@@ -6217,7 +6184,7 @@ pub mod serializer {
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
-    pub fn serialize_identifier<W: WriteAll>(value: &[u8], writer: &mut W) -> Result<(), W::Error> {
+    pub fn serialize_identifier<W: WriteAll + ?Sized>(value: &[u8], writer: &mut W) -> bun_io::Result<()> {
         if value.is_empty() {
             return Ok(());
         }
@@ -6241,7 +6208,7 @@ pub mod serializer {
         }
     }
 
-    pub fn serialize_unquoted_url<W: WriteAll>(value: &[u8], writer: &mut W) -> Result<(), W::Error> {
+    pub fn serialize_unquoted_url<W: WriteAll + ?Sized>(value: &[u8], writer: &mut W) -> bun_io::Result<()> {
         let mut chunk_start: usize = 0;
         for (i, &b) in value.iter().enumerate() {
             let hex = match b {
@@ -6260,12 +6227,12 @@ pub mod serializer {
         writer.write_all(&value[chunk_start..])
     }
 
-    pub fn write_numeric<W: WriteAll>(
+    pub fn write_numeric<W: WriteAll + ?Sized>(
         value: f32,
         int_value: Option<i32>,
         has_sign: bool,
         writer: &mut W,
-    ) -> Result<(), W::Error> {
+    ) -> bun_io::Result<()> {
         // `value >= 0` is true for negative 0.
         if has_sign && !value.is_sign_negative() {
             writer.write_all(b"+")?;
@@ -6294,42 +6261,35 @@ pub mod serializer {
         Ok(())
     }
 
-    pub fn hex_escape<W: WriteAll>(ascii_byte: u8, writer: &mut W) -> Result<(), W::Error> {
-        const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+    pub fn hex_escape<W: WriteAll + ?Sized>(ascii_byte: u8, writer: &mut W) -> bun_io::Result<()> {
         let mut bytes = [0u8; 4];
         let slice: &[u8] = if ascii_byte > 0x0F {
-            let high = (ascii_byte >> 4) as usize;
-            let low = (ascii_byte & 0x0F) as usize;
-            bytes[0] = b'\\';
-            bytes[1] = HEX_DIGITS[high];
-            bytes[2] = HEX_DIGITS[low];
-            bytes[3] = b' ';
+            let [hi, lo] = bun_core::fmt::hex_byte_lower(ascii_byte);
+            bytes = [b'\\', hi, lo, b' '];
             &bytes[0..4]
         } else {
-            bytes[0] = b'\\';
-            bytes[1] = HEX_DIGITS[ascii_byte as usize];
-            bytes[2] = b' ';
+            bytes = [b'\\', bun_core::fmt::hex_char_lower(ascii_byte), b' ', 0];
             &bytes[0..3]
         };
         writer.write_all(slice)
     }
 
-    pub fn char_escape<W: WriteAll>(ascii_byte: u8, writer: &mut W) -> Result<(), W::Error> {
+    pub fn char_escape<W: WriteAll + ?Sized>(ascii_byte: u8, writer: &mut W) -> bun_io::Result<()> {
         let bytes = [b'\\', ascii_byte];
         writer.write_all(&bytes)
     }
 
-    pub struct CssStringWriter<'w, W: WriteAll> {
+    pub struct CssStringWriter<'w, W: WriteAll + ?Sized> {
         inner: &'w mut W,
     }
 
-    impl<'w, W: WriteAll> CssStringWriter<'w, W> {
+    impl<'w, W: WriteAll + ?Sized> CssStringWriter<'w, W> {
         /// Wrap a text writer to create a `CssStringWriter`.
         pub fn new(inner: &'w mut W) -> Self {
             Self { inner }
         }
 
-        pub fn write_str(&mut self, str: &[u8]) -> Result<(), W::Error> {
+        pub fn write_str(&mut self, str: &[u8]) -> bun_io::Result<()> {
             let mut chunk_start: usize = 0;
             for (i, &b) in str.iter().enumerate() {
                 let escaped: Option<&[u8]> = match b {
@@ -6352,30 +6312,9 @@ pub mod serializer {
         }
     }
 
-    /// Minimal fixed-buffer writer for `serialize_dimension`.
-    pub struct FixedBufWriter<'a> {
-        buf: &'a mut [u8],
-        pos: usize,
-    }
-    impl<'a> FixedBufWriter<'a> {
-        pub fn new(buf: &'a mut [u8]) -> Self {
-            Self { buf, pos: 0 }
-        }
-        pub fn buffered(&self) -> &[u8] {
-            &self.buf[..self.pos]
-        }
-    }
-    impl<'a> WriteAll for FixedBufWriter<'a> {
-        type Error = ();
-        fn write_all(&mut self, src: &[u8]) -> Result<(), ()> {
-            if self.pos + src.len() > self.buf.len() {
-                return Err(());
-            }
-            self.buf[self.pos..self.pos + src.len()].copy_from_slice(src);
-            self.pos += src.len();
-            Ok(())
-        }
-    }
+    /// Fixed-buffer writer for `serialize_dimension` — alias for the canonical
+    /// `bun_io::FixedBufferStream`. Callers use `.get_written()` (was `.buffered()`).
+    pub type FixedBufWriter<'a> = bun_io::FixedBufferStream<&'a mut [u8]>;
 }
 
 // ───────────────────────────── misc utilities ─────────────────────────────

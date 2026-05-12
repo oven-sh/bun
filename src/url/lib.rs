@@ -1349,8 +1349,8 @@ impl PercentEncoding {
                 b'%' => {
                     if FAULT_TOLERANT {
                         if !(i + 3 <= input.len()
-                            && strings::is_ascii_hex_digit(input[i + 1])
-                            && strings::is_ascii_hex_digit(input[i + 2]))
+                            && input[i + 1].is_ascii_hexdigit()
+                            && input[i + 2].is_ascii_hexdigit())
                         {
                             // i do not feel good about this
                             // create-react-app's public/index.html uses %PUBLIC_URL% in various tags
@@ -1371,8 +1371,8 @@ impl PercentEncoding {
                         }
                     } else {
                         if !(i + 3 <= input.len()
-                            && strings::is_ascii_hex_digit(input[i + 1])
-                            && strings::is_ascii_hex_digit(input[i + 2]))
+                            && input[i + 1].is_ascii_hexdigit()
+                            && input[i + 2].is_ascii_hexdigit())
                         {
                             return Err(DecodeError::DecodingError);
                         }

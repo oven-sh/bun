@@ -13,6 +13,8 @@ scopeguard.workspace = true
 bun_analytics.workspace = true
 bun_core.workspace = true
 bun_sys.workspace = true
+enumset.workspace = true
+strum.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true

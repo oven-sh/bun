@@ -593,23 +593,8 @@ impl HTMLRewriterLoader {
     pub fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
         webcore::sink::UTF8Fallback::write_latin1(self, data, HTMLRewriterLoader::write)
     }
-}
 
-impl webcore::sink::SinkHandler for HTMLRewriterLoader {
-    fn write(&mut self, data: StreamResult) -> streams::Writable {
-        HTMLRewriterLoader::write(self, data)
-    }
-    fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
-        HTMLRewriterLoader::write_latin1(self, data)
-    }
-    fn write_utf16(&mut self, data: StreamResult) -> streams::Writable {
-        HTMLRewriterLoader::write_utf16(self, data)
-    }
-    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
-        HTMLRewriterLoader::connect(self, signal);
-        Ok(())
-    }
-    fn end(&mut self, err: Option<bun_sys::Error>) -> bun_sys::Result<()> {
+    pub fn end(&mut self, err: Option<bun_sys::Error>) -> bun_sys::Result<()> {
         // PORT NOTE: Zig HTMLRewriterLoader has no `end` (sink() is dead code
         // there). On input-stream end, flush the rewriter (which calls
         // OutputSink::done → self.done()) or fail.
@@ -625,6 +610,8 @@ impl webcore::sink::SinkHandler for HTMLRewriterLoader {
         Ok(())
     }
 }
+
+crate::impl_sink_handler!(HTMLRewriterLoader);
 
 impl lolhtml::OutputSink for HTMLRewriterLoader {
     fn write(&mut self, bytes: &[u8]) {
@@ -1587,12 +1574,7 @@ impl TextChunk {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
 impl WrapperLike for TextChunk {
@@ -1626,12 +1608,7 @@ pub struct DocType {
 impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
         bun_core::heap::into_raw(Box::new(DocType {
@@ -1778,12 +1755,7 @@ impl DocEnd {
         Ok(self.append_(call_frame, global, content, opts))
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
 impl WrapperLike for DocEnd {
@@ -1936,12 +1908,7 @@ impl Comment {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 }
 
 impl WrapperLike for Comment {
@@ -2011,12 +1978,7 @@ impl EndTag {
         }))
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 
     fn content_handler(
         &self,
@@ -2281,12 +2243,7 @@ impl Element {
         }))
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1.
-        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
-        // held one ref, which this call releases.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
+    pub fn finalize(self: Box<Self>) { bun_ptr::finalize_js_box_noop(self); }
 
     /// Detach every `AttributeIterator` we handed to JS. Called when the
     /// underlying attribute buffer is about to become invalid — either because

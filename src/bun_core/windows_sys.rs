@@ -1,21 +1,18 @@
 //! Minimal Win32 ABI surface for `bun_core`'s `#[cfg(windows)]` paths.
 //!
 //! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
-//! POD typedefs/structs and kernel32 externs are re-exported from the tier-0
-//! leaf `bun_windows_sys` (which has zero `bun_*` deps, so no cycle); only the
-//! `bun_core`-specific console consts and PEB view live here. All declarations
-//! are zero-cost FFI (`extern "system"` = `__stdcall`, which on x64 is the
-//! same as `extern "C"`).
+//! POD typedefs/structs, kernel32 externs, and the TEB→PEB chain are
+//! re-exported from the tier-0 leaf `bun_windows_sys` (which has zero `bun_*`
+//! deps, so no cycle); only the `bun_core`-specific console consts and the
+//! `Zeroable` impls live here. All declarations are zero-cost FFI
+//! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
-use core::ffi::c_void;
-
 pub use bun_windows_sys::{
     BOOL, COORD, CONSOLE_SCREEN_BUFFER_INFO, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
-    SMALL_RECT, TRUE, WCHAR, WORD,
+    SHORT, SMALL_RECT, TRUE, WCHAR, WORD,
 };
-pub type SHORT = i16;
 
 pub const STD_INPUT_HANDLE: DWORD = (-10i32) as DWORD;
 pub const STD_OUTPUT_HANDLE: DWORD = (-11i32) as DWORD;
@@ -37,90 +34,20 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // ──────────────────────────────────────────────────────────────────────────
 // PEB access (`std.os.windows.peb()`). `bun_core::output::windows_stdio`
 // reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
-// handles before libuv touches them.
+// handles before libuv touches them. Canonical structs/asm live in the tier-0
+// `bun_windows_sys` leaf and are re-exported here for the
+// `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
-/// `UNICODE_STRING` (`ntdef.h`).
 pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
-
-/// `CURDIR` (`winternl.h` / phnt) — `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`.
-#[repr(C)]
-pub struct Curdir {
-    pub DosPath: UnicodeString,
-    pub Handle: HANDLE,
-}
+pub use bun_windows_sys::{
+    CURDIR, Curdir, PEB, PebView, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
+};
 
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
 #[cfg(windows)]
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
-
-#[repr(C)]
-pub struct ProcessParameters {
-    // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
-    _reserved1: [u8; 16],
-    // {ConsoleHandle, ConsoleFlags+pad} — 2 × pointer-size.
-    _reserved2: [*mut c_void; 2],
-    pub hStdInput: HANDLE,
-    pub hStdOutput: HANDLE,
-    pub hStdError: HANDLE,
-    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. The handle
-    /// is what Zig's `std.fs.cwd().fd` returns on Windows; `Fd::cwd()` reads
-    /// it so `openat(Fd::cwd(), …)` resolves relative paths against the live
-    /// process cwd via `NtCreateFile`'s `RootDirectory`.
-    pub CurrentDirectory: Curdir,
-    pub DllPath: UnicodeString,
-    pub ImagePathName: UnicodeString,
-    pub CommandLine: UnicodeString,
-    // (fields beyond CommandLine are not read here)
-}
-// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20,
-// `CurrentDirectory.Handle` at 0x48, and `ImagePathName` at 0x60 on x64.
-const _: () = assert!(core::mem::offset_of!(ProcessParameters, hStdInput) == 0x20);
-const _: () = assert!(
-    core::mem::offset_of!(ProcessParameters, CurrentDirectory)
-        + core::mem::offset_of!(Curdir, Handle) == 0x48
-);
-const _: () = assert!(core::mem::offset_of!(ProcessParameters, ImagePathName) == 0x60);
-#[repr(C)]
-pub struct PebView {
-    _reserved1: [u8; 2],
-    pub BeingDebugged: u8,
-    _reserved2: [u8; 1],
-    _reserved3: [*mut c_void; 2],
-    pub Ldr: *mut c_void,
-    // Raw pointer, NOT `&'static`: the OS/CRT mutate `RTL_USER_PROCESS_PARAMETERS`
-    // out-of-band (e.g. `SetStdHandle()` writes `hStd*`), so a Rust shared
-    // reference would assert false immutability to the optimizer (UB).
-    pub ProcessParameters: *const ProcessParameters,
-}
-
-/// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `__readgsqword(0x60)`.
-///
-/// Returns a raw pointer (NOT `&'static PebView`): the PEB is owned and mutated
-/// by the OS/CRT behind Rust's back (`SetStdHandle`, debugger toggling
-/// `BeingDebugged`, …). Materializing a `&'static` to it would be UB under
-/// Rust's aliasing rules. Callers must read fields through raw-pointer deref.
-#[inline]
-pub fn peb() -> *const PebView {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: reading `gs:[0x60]` is the documented Windows-x64 ABI for the
-    // current thread's PEB pointer; no caller precondition.
-    unsafe {
-        let p: *const PebView;
-        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
-        p
-    }
-    #[cfg(target_arch = "aarch64")]
-    // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
-    // pointer field. Both are valid for the calling thread's lifetime.
-    unsafe {
-        // TEB at x18; PEB at TEB+0x60.
-        let teb: *const u8;
-        core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, pure, readonly));
-        *(teb.add(0x60) as *const *const PebView)
-    }
-}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.

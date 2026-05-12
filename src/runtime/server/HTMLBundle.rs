@@ -42,6 +42,9 @@ use debug_scope::HTMLBundle as debug;
 // hence the ref count alongside the JS wrapper.
 // PORT NOTE (§Pointers): `*mut HTMLBundle` is the m_ctx payload of a
 // `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(debug_name = "HTMLBundle")]
 pub struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
     // JSC_BORROW field on heap struct.
@@ -60,25 +63,16 @@ const _: () = {
     // lacks `#[repr(C)]` so rustc lints anyway.
     // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
     // macro (avoids `clashing_extern_declarations`).
-    #[allow(improper_ctypes)]
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "HTMLBundle__fromJS"]
-        safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
-        #[link_name = "HTMLBundle__fromJSDirect"]
-        safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
-        #[link_name = "HTMLBundle__create"]
-        safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
-    }
-    #[allow(improper_ctypes)]
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "HTMLBundle__fromJS"]
-        safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
-        #[link_name = "HTMLBundle__fromJSDirect"]
-        safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
-        #[link_name = "HTMLBundle__create"]
-        safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+    bun_jsc::jsc_abi_extern! {
+        #[allow(improper_ctypes)]
+        {
+            #[link_name = "HTMLBundle__fromJS"]
+            safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
+            #[link_name = "HTMLBundle__fromJSDirect"]
+            safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+            #[link_name = "HTMLBundle__create"]
+            safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+        }
     }
 
     impl bun_jsc::JsClass for HTMLBundle {
@@ -117,25 +111,6 @@ const _: () = {
     }
 };
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-impl RefCounted for HTMLBundle {
-    type DestructorCtx = ();
-    fn debug_name() -> &'static str {
-        "HTMLBundle"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live HTMLBundle; field projection is in-bounds.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: refcount hit zero; allocated via Box (RefPtr::new / init()).
-        // `path: Box<[u8]>` auto-drops; dealloc handled by heap::take.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-}
-
-// `pub const ref/deref = RefCount.ref/deref` — provided by IntrusiveRc<HTMLBundle>.
-
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
     pub fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
@@ -149,10 +124,7 @@ impl HTMLBundle {
 
     /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is the live m_ctx payload; `deref` frees on count==0.
-        unsafe { RefCount::<HTMLBundle>::deref(Box::into_raw(self)) };
+        bun_ptr::finalize_js_box_noop(self);
     }
 
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
@@ -176,6 +148,9 @@ pub type HTMLBundleRoute = Route;
 // (non-Copy). `*mut Route` is recovered from uws userdata and the
 // `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
+// `bun.ptr.RefCount(Route, "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" })`
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
     // PORT NOTE: FFI userdata — *Route is recovered from uws callback
     // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
@@ -788,23 +763,6 @@ impl Route {
                 }
             }
         }
-    }
-}
-
-// `bun.ptr.RefCount(Route, "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" })`
-impl RefCounted for Route {
-    type DestructorCtx = ();
-    fn debug_name() -> &'static str {
-        "HTMLBundleRoute"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Route; field projection is in-bounds.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: refcount hit zero; allocated via Box (RefPtr::new / init()).
-        // Drop impl asserts pending_responses is empty and frees owned fields.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

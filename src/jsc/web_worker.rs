@@ -71,11 +71,7 @@ use bun_threading::{Futex, Mutex};
 use crate::virtual_machine::{self, runtime_hooks, VirtualMachine};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
 
-bun_core::declare_scope!(Worker, hidden);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(Worker, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, Worker, hidden);
 
 // ---- Immutable after `create()` (safe from any thread) ----------------------
 
@@ -395,14 +391,6 @@ pub extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void
         .unwrap_or(core::ptr::null_mut())
 }
 
-/// Bridge to the aio-level `EventLoopCtx` used by `KeepAlive`. `set_ref` /
-/// `release_parent_poll_ref` / `create` are all called on the PARENT thread,
-/// so the JS-tier event-loop ctx for the current thread IS the parent's loop.
-#[inline]
-fn parent_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 impl WebWorker {
     pub fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
@@ -574,8 +562,8 @@ impl WebWorker {
         // worker keeping the process alive.
         if !default_unref {
             // SAFETY: `worker` is a fresh heap allocation; not yet shared.
-            // `parent_event_loop_ctx()` resolves to this (parent) thread's loop.
-            unsafe { &*worker }.with_parent_poll_ref(|p| p.ref_(parent_event_loop_ctx()));
+            // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
+            unsafe { &*worker }.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
         }
 
         // Register BEFORE spawning so terminateAllAndWait() can never miss a
@@ -608,7 +596,7 @@ impl WebWorker {
             Err(_) => {
                 live_workers::unregister(worker);
                 // SAFETY: `worker` not yet shared (spawn failed); parent thread.
-                unsafe { &*worker }.with_parent_poll_ref(|p| p.unref(parent_event_loop_ctx()));
+                unsafe { &*worker }.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 Self::destroy(worker);
                 *error_message = BunString::static_(b"Failed to spawn worker thread");
                 core::ptr::null_mut()
@@ -645,13 +633,13 @@ impl WebWorker {
     #[unsafe(export_name = "WebWorker__setRef")]
     pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
-        // only. `parent_event_loop_ctx()` resolves to this (parent) thread's
+        // only. `bun_io::js_vm_ctx()` resolves to this (parent) thread's
         // loop, which IS `this.parent`'s loop.
         unsafe { &*this }.with_parent_poll_ref(|poll| {
             if value {
-                poll.ref_(parent_event_loop_ctx());
+                poll.ref_(bun_io::js_vm_ctx());
             } else {
-                poll.unref(parent_event_loop_ctx());
+                poll.unref(bun_io::js_vm_ctx());
             }
         });
     }
@@ -705,7 +693,7 @@ impl WebWorker {
     pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
         // only.
-        unsafe { &*this }.with_parent_poll_ref(|p| p.unref(parent_event_loop_ctx()));
+        unsafe { &*this }.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
     /// Non-owning back-reference to the parent VM. See field doc for validity

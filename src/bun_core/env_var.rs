@@ -425,9 +425,7 @@ pub(crate) mod kind {
                 };
                 match cached {
                     StoredType::Unknown => {
-                        #[cold]
-                        fn cold() {}
-                        cold();
+                        crate::hint::cold();
                         CacheOutput::Unknown
                     }
                     StoredType::NotSet => CacheOutput::NotSet,
@@ -549,9 +547,7 @@ pub(crate) mod kind {
             pub(crate) fn get_cached(&self) -> Output {
                 match self.value.load(Ordering::Relaxed) {
                     UNKNOWN_SENTINEL => {
-                        #[cold]
-                        fn cold() {}
-                        cold();
+                        crate::hint::cold();
                         CacheOutput::Unknown
                     }
                     NOT_SET_SENTINEL => CacheOutput::NotSet,
@@ -768,9 +764,7 @@ macro_rules! platform_specific_new {
                 // Inline the logic from get() without calling assert_platform_supported()
                 match CACHE.get_cached() {
                     CacheOutput::Unknown => {
-                        #[cold]
-                        fn cold() {}
-                        cold();
+                        $crate::hint::cold();
 
                         let env_var = $crate::getenv_z(k);
                         let maybe_reloaded = CACHE.deser_and_invalidate(env_var);
@@ -835,9 +829,7 @@ macro_rules! platform_specific_new {
 
                 match cached_result {
                     CacheOutput::Unknown => {
-                        #[cold]
-                        fn cold() {}
-                        cold();
+                        crate::hint::cold();
                         get_force_reload()
                     }
                     CacheOutput::NotSet => {

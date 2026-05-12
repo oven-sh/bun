@@ -16,6 +16,7 @@ use bun_str::ZStr;
 use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{WindowsNamedPipe, Handlers as NamedPipeHandlers};
 use crate::api::{TCPSocket, TLSSocket};
+use crate::socket::NewSocket;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(not(windows))]
@@ -99,6 +100,34 @@ fn socket_from_named_pipe<const SSL: bool>(pipe: *mut WindowsNamedPipe) -> uws::
     }
 }
 
+/// Dispatch a `SocketType` value to a single body written generically over
+/// `NewSocket<SSL>`. Binds the inner `*mut NewSocket<{true|false}>` as `$s`
+/// and a per-arm `const $ssl: bool` so the body can call
+/// `NewSocket::on_x($s, socket_from_named_pipe::<$ssl>(..), ..)` once instead
+/// of hand-duplicating the `Tls`/`Tcp` arms. `SocketType::None` is a no-op.
+///
+/// Takes the `SocketType` by *value* (Copy) — not `*mut Self` — so callers
+/// that must snapshot before mutating (`on_close`) or branch and re-match
+/// (`on_error`) pass their saved copy; see the Stacked-Borrows note on the
+/// `on_*` block below.
+macro_rules! match_socket {
+    ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
+        match $scrutinee {
+            SocketType::Tls($s) => {
+                #[allow(dead_code)]
+                const $ssl: bool = true;
+                $body
+            }
+            SocketType::Tcp($s) => {
+                #[allow(dead_code)]
+                const $ssl: bool = false;
+                $body
+            }
+            SocketType::None => {}
+        }
+    };
+}
+
 // ── NamedPipeHandlers callbacks ──────────────────────────────────────────────
 //
 // All eight `on_*` handlers below take `this: *mut Self` (NOT `&mut self`).
@@ -120,157 +149,73 @@ impl WindowsNamedPipeContext {
         // and `socket` are disjoint from the caller's `&mut named_pipe`.
         unsafe { (*this).is_open = true };
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: `tls` is kept alive by the +1 ref taken in `create()`.
-                // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
-                unsafe { TLSSocket::on_open(tls, socket_from_named_pipe::<true>(pipe)) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: `tcp` is kept alive by the +1 ref taken in `create()`.
-                unsafe { TCPSocket::on_open(tcp, socket_from_named_pipe::<false>(pipe)) };
-            }
-            SocketType::None => {}
-        }
+        // SAFETY: `s` is kept alive by the +1 ref taken in `create()`.
+        // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe)) });
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: see `on_open`.
-                unsafe { TLSSocket::on_data(tls, socket_from_named_pipe::<true>(pipe), decoded_data) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: see `on_open`.
-                unsafe { TCPSocket::on_data(tcp, socket_from_named_pipe::<false>(pipe), decoded_data) };
-            }
-            SocketType::None => {}
-        }
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { NewSocket::on_data(s, socket_from_named_pipe::<SSL>(pipe), decoded_data) });
     }
 
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: see `on_open`.
-                let _ = unsafe { TLSSocket::on_handshake(tls, socket_from_named_pipe::<true>(pipe), success as i32, ssl_error) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: see `on_open`.
-                let _ = unsafe { TCPSocket::on_handshake(tcp, socket_from_named_pipe::<false>(pipe), success as i32, ssl_error) };
-            }
-            SocketType::None => {}
-        }
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { _ = NewSocket::on_handshake(s, socket_from_named_pipe::<SSL>(pipe), success as i32, ssl_error) });
     }
 
     fn on_end(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: see `on_open`.
-                unsafe { TLSSocket::on_end(tls, socket_from_named_pipe::<true>(pipe)) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: see `on_open`.
-                unsafe { TCPSocket::on_end(tcp, socket_from_named_pipe::<false>(pipe)) };
-            }
-            SocketType::None => {}
-        }
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe)) });
     }
 
     fn on_writable(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: see `on_open`.
-                unsafe { TLSSocket::on_writable(tls, socket_from_named_pipe::<true>(pipe)) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: see `on_open`.
-                unsafe { TCPSocket::on_writable(tcp, socket_from_named_pipe::<false>(pipe)) };
-            }
-            SocketType::None => {}
-        }
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { NewSocket::on_writable(s, socket_from_named_pipe::<SSL>(pipe)) });
     }
 
     fn on_error(this: *mut Self, err: SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy; `global_this` is a
-        // disjoint field so a short-lived `&` to it does not touch `named_pipe`'s
-        // borrow stack.
+        // disjoint field so a short-lived `&` does not touch `named_pipe`'s stack.
         if unsafe { (*this).is_open } {
-            match unsafe { (*this).socket } {
-                SocketType::Tls(tls) => {
-                    let js_err = err.to_js(unsafe { &(*this).global_this });
-                    // SAFETY: see `on_open`.
-                    unsafe { (*tls).handle_error(js_err) };
-                }
-                SocketType::Tcp(tcp) => {
-                    let js_err = err.to_js(unsafe { &(*this).global_this });
-                    // SAFETY: see `on_open`.
-                    unsafe { (*tcp).handle_error(js_err) };
-                }
-                SocketType::None => {}
-            }
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| {
+                let js_err = err.to_js(unsafe { &(*this).global_this });
+                // SAFETY: see `on_open`.
+                unsafe { (*s).handle_error(js_err) };
+            });
         } else {
-            match unsafe { (*this).socket } {
-                SocketType::Tls(tls) => {
-                    // SAFETY: see `on_open`.
-                    let _ = unsafe { TLSSocket::handle_connect_error(tls, err.errno as i32) };
-                }
-                SocketType::Tcp(tcp) => {
-                    // SAFETY: see `on_open`.
-                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, err.errno as i32) };
-                }
-                SocketType::None => {}
-            }
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+                unsafe { _ = NewSocket::handle_connect_error(s, err.errno as i32) });
         }
     }
 
     fn on_timeout(this: *mut Self) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match unsafe { (*this).socket } {
-            SocketType::Tls(tls) => {
-                // SAFETY: see `on_open`.
-                unsafe { TLSSocket::on_timeout(tls, socket_from_named_pipe::<true>(pipe)) };
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: see `on_open`.
-                unsafe { TCPSocket::on_timeout(tcp, socket_from_named_pipe::<false>(pipe)) };
-            }
-            SocketType::None => {}
-        }
+        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+            unsafe { NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe)) });
     }
 
     fn on_close(this: *mut Self) {
-        // SAFETY: see `on_open`. `socket` is disjoint from `named_pipe`; we read
-        // it by Copy then overwrite via raw place — no `&mut *this` formed.
+        // SAFETY: see `on_open`. Snapshot `socket` BEFORE clearing it, then match
+        // the snapshot — the macro must not read `(*this).socket` directly here.
         let socket = unsafe { (*this).socket };
         unsafe { (*this).socket = SocketType::None };
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match socket {
-            SocketType::Tls(tls) => {
-                // SAFETY: `tls` held a +1 ref from `create()`; release it after dispatch.
-                unsafe {
-                    let _ = TLSSocket::on_close(tls, socket_from_named_pipe::<true>(pipe), 0, None);
-                    (*tls).deref();
-                }
-            }
-            SocketType::Tcp(tcp) => {
-                // SAFETY: `tcp` held a +1 ref from `create()`; release it after dispatch.
-                unsafe {
-                    let _ = TCPSocket::on_close(tcp, socket_from_named_pipe::<false>(pipe), 0, None);
-                    (*tcp).deref();
-                }
-            }
-            SocketType::None => {}
-        }
-
+        // SAFETY: `s` held a +1 ref from `create()`; release it after dispatch.
+        match_socket!(socket, |s: NewSocket<SSL>| unsafe {
+            _ = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            (*s).deref();
+        });
         // SAFETY: `this` is the live ctx pointer registered in create();
         // releasing the named-pipe's ref may schedule deinit.
         unsafe { Self::deref(this) };
@@ -389,12 +334,8 @@ impl WindowsNamedPipeContext {
 
         // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
         // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
-        match socket {
-            // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
-            SocketType::Tls(tls) => unsafe { (*tls).ref_() },
-            SocketType::Tcp(tcp) => unsafe { (*tcp).ref_() },
-            SocketType::None => {}
-        }
+        // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
+        match_socket!(socket, |s: NewSocket<SSL>| unsafe { (*s).ref_() });
 
         this
     }
@@ -417,18 +358,10 @@ impl WindowsNamedPipeContext {
 
         // PORT NOTE: reshaped for borrowck — errdefer references `socket` which was moved into `this`
         let mut guard = scopeguard::guard(this, |this| {
-            // SAFETY: `this` is live; create() returned it and no deref has fired yet
-            match unsafe { (*this).socket } {
-                SocketType::Tls(tls) => {
-                    // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { TLSSocket::handle_connect_error(tls, SystemErrno::ENOENT as i32) };
-                }
-                SocketType::Tcp(tcp) => {
-                    // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, SystemErrno::ENOENT as i32) };
-                }
-                SocketType::None => {}
-            }
+            // SAFETY: `this` is live; create() returned it and no deref has fired yet.
+            // +1 ref held on the inner socket; live until `Self::deref` below.
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+                unsafe { _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32) });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
             unsafe { Self::deref(this) };
@@ -454,18 +387,10 @@ impl WindowsNamedPipeContext {
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
         let mut guard = scopeguard::guard(this, |this| {
-            // SAFETY: `this` is live; create() returned it and no deref has fired yet
-            match unsafe { (*this).socket } {
-                SocketType::Tls(tls) => {
-                    // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { TLSSocket::handle_connect_error(tls, SystemErrno::ENOENT as i32) };
-                }
-                SocketType::Tcp(tcp) => {
-                    // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, SystemErrno::ENOENT as i32) };
-                }
-                SocketType::None => {}
-            }
+            // SAFETY: `this` is live; create() returned it and no deref has fired yet.
+            // +1 ref held on the inner socket; live until `Self::deref` below.
+            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>|
+                unsafe { _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32) });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
             unsafe { Self::deref(this) };
@@ -502,12 +427,9 @@ impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
         // Zig `deinit`: deref the wrapped socket, then `named_pipe.deinit()`.
-        match core::mem::replace(&mut self.socket, SocketType::None) {
-            // SAFETY: +1 ref taken in `create()`; this is the matching release.
-            SocketType::Tls(tls) => unsafe { (*tls).deref() },
-            SocketType::Tcp(tcp) => unsafe { (*tcp).deref() },
-            SocketType::None => {}
-        }
+        // SAFETY: +1 ref taken in `create()`; this is the matching release.
+        match_socket!(core::mem::replace(&mut self.socket, SocketType::None),
+            |s: NewSocket<SSL>| unsafe { (*s).deref() });
         // `named_pipe` drops via field destructor after this.
     }
 }

@@ -53,13 +53,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;
             // every offset we read is inside that block until we observe the terminating empty string.
-            let str_len = unsafe {
-                let mut n = 0usize;
-                while *wtf16_buf.add(len + n) != 0 {
-                    n += 1;
-                }
-                n
-            };
+            let str_len = unsafe { bun_core::ffi::wcslen(wtf16_buf.add(len)) };
             len += str_len + 1; // each string is null-terminated
             if str_len == 0 {
                 break; // array ends with empty null-terminated string

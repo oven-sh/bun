@@ -243,14 +243,6 @@ fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
     }
 }
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 #[derive(Copy, Clone)]
 pub struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
@@ -533,10 +525,83 @@ pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JS
     object
 }
 
-// ─── HashJob ──────────────────────────────────────────────────────────────
+// ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
+//
+// HashJob/HashResult and VerifyJob/VerifyResult in the Zig source are
+// byte-for-byte twins differing only in (a) extra input fields, (b) success
+// payload type + JS conversion, (c) the verb in the error message. Collapse
+// both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
+// `PasswordOp` carrying exactly those three axes.
 
-struct HashJob {
+trait PasswordOp: 'static {
+    /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
+    type Value;
+    /// "hashing" | "verification" — slotted into the JS Error message.
+    const ERR_VERB: &'static str;
+    /// Off-thread compute. `self` borrows the op so its inputs stay owned by
+    /// the job and are `free_sensitive`d in the job's / op's `Drop`.
+    fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
+    /// Convert the success payload to a `JSValue` on the JS thread.
+    fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
+}
+
+struct HashOp {
     algorithm: AlgorithmValue,
+}
+impl PasswordOp for HashOp {
+    type Value = Box<[u8]>;
+    const ERR_VERB: &'static str = "hashing";
+    fn compute(&self, password: &[u8]) -> Result<Box<[u8]>, HashError> {
+        PasswordObject::hash(password, self.algorithm)
+    }
+    fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
+        JscZigString::init(&value).to_js(g)
+        // `value` drops here — Zig: defer bun.default_allocator.free(value)
+    }
+}
+
+struct VerifyOp {
+    prev_hash: Box<[u8]>,
+    algorithm: Option<Algorithm>,
+}
+impl Drop for VerifyOp {
+    fn drop(&mut self) {
+        // bun.freeSensitive — volatile-zero then free; the job's Drop handles
+        // `password`, this handles the op-specific `prev_hash`.
+        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
+    }
+}
+impl PasswordOp for VerifyOp {
+    type Value = bool;
+    const ERR_VERB: &'static str = "verification";
+    fn compute(&self, password: &[u8]) -> Result<bool, HashError> {
+        PasswordObject::verify(password, &self.prev_hash, self.algorithm)
+    }
+    fn to_js(value: bool, _g: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(value)
+    }
+}
+
+/// Build the JS `Error` instance for a failed hash/verify, with `code` set
+/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (Zig: `toErrorInstance`).
+fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
+    let mut error_code: Vec<u8> = Vec::new();
+    write!(
+        &mut error_code,
+        "PASSWORD{}",
+        PascalToUpperUnderscoreCaseFormatter { input: err.name().as_bytes() }
+    )
+    .expect("unreachable"); // bun.handleOom
+    let instance = g.create_error_instance(format_args!(
+        "Password {verb} failed with error \"{}\"",
+        err.name()
+    ));
+    instance.put(g, b"code", JscZigString::init(&error_code).to_js(g));
+    instance
+}
+
+struct PasswordJob<Op: PasswordOp> {
+    op: Op,
     password: Box<[u8]>,
     promise: JSPromiseStrong,
     event_loop: *mut EventLoop,
@@ -545,182 +610,110 @@ struct HashJob {
     task: WorkPoolTask,
 }
 
-impl Drop for HashJob {
+impl<Op: PasswordOp> Drop for PasswordJob<Op> {
     fn drop(&mut self) {
         // promise: Drop on JSPromiseStrong handles deinit.
-        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so the
-        // field's own Drop sees an empty slice afterwards.
+        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
+        // the field's own Drop sees an empty slice afterwards. Any op-owned
+        // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
         bun_alloc::free_sensitive(core::mem::take(&mut self.password));
     }
 }
 
-bun_threading::owned_task!(HashJob, task);
+bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
 
-impl HashJob {
-    pub fn get_value(password: &[u8], algorithm: AlgorithmValue) -> HashResultValue {
-        match PasswordObject::hash(password, algorithm) {
-            Ok(value) => HashResultValue::Hash(value),
-            Err(err) => HashResultValue::Err(err),
-        }
-    }
-
+impl<Op: PasswordOp> PasswordJob<Op> {
     fn run_owned(mut self: Box<Self>) {
-        let result = HashResult::new(HashResult {
-            value: HashJob::get_value(&self.password, self.algorithm),
+        let value = self.op.compute(&self.password);
+        let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
+            value,
             task: AnyTask::default(), // overwritten below
             promise: core::mem::take(&mut self.promise),
             global: self.global,
             r#ref: core::mem::take(&mut self.r#ref),
-        });
-        // this.promise = .empty / this.ref = .{} — handled by mem::take above
-
-        // SAFETY: `result` was just returned from heap::alloc in `HashResult::new`;
-        // not yet shared (enqueue happens after this write).
+        }));
+        // SAFETY: `result` was just heap-allocated and is not yet shared
+        // (enqueue happens after this write).
         unsafe {
-            // Zig: `AnyTask.New(HashResult, run_from_js).init(result)` — construct directly
-            // since Rust `New<T>` cannot carry a comptime callback param.
-            (*result).task = AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(result).cast()),
-                callback: HashResult::run_from_js_erased,
-            };
+            (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
-        // `result` is a valid heap::alloc allocation, ownership transfers to the
-        // event loop here. `task` is an intrusive field at a stable address.
+        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
+        // job; ownership of `result` transfers to the event loop here. `task` is
+        // an intrusive field at a stable address.
         unsafe {
             (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
         }
-        // `self: Box<Self>` drops here; Drop runs secure_zero on the password.
+        // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
 
-struct HashResult {
-    value: HashResultValue,
+struct PasswordResult<Op: PasswordOp> {
+    value: Result<Op::Value, HashError>,
     r#ref: KeepAlive,
-
     task: AnyTask,
     promise: JSPromiseStrong,
     global: *const JSGlobalObject,
 }
 
-impl HashResult {
-    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
-    #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
+impl<Op: PasswordOp> PasswordResult<Op> {
+    fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
+        Self::run_from_js(p).map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
+    }
+
+    fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
+        // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
+        // event loop hands sole ownership to this callback. Reclaim the Box once
+        // up-front so all fields drop on scope exit (no `mem::replace` dance).
+        let this = *unsafe { bun_core::heap::take(this) };
+        let PasswordResult { value, mut r#ref, mut promise, global, task: _ } = this;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
-        unsafe { &*self.global }
-    }
-
-    pub fn new(init: HashResult) -> *mut HashResult {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
-    /// and forwards to `run_from_js`.
-    fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p.cast::<HashResult>())
-            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
-    }
-
-    // TODO(port): bun.JSTerminated!void — confirm error type name in bun_jsc.
-    pub fn run_from_js(this: *mut HashResult) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by heap::alloc and is uniquely owned here.
-        let this_ref = unsafe { &mut *this };
-        let mut promise = core::mem::take(&mut this_ref.promise);
-        // defer promise.deinit() — Drop on JSPromiseStrong at scope exit.
-        let global = this_ref.global();
-        this_ref.r#ref.unref(vm_ctx());
-        match core::mem::replace(&mut this_ref.value, HashResultValue::Hash(Box::default())) {
-            // TODO(port): the Zig leaves `value` in place and reads `this.value` again
-            // for `toErrorInstance`; here we move it out once. Behaviour identical.
-            HashResultValue::Err(err) => {
-                let error_instance =
-                    HashResultValue::Err(err).to_error_instance(global);
-                // SAFETY: `this` came from heap::alloc in `HashResult::new`; the event
-                // loop hands sole ownership to this callback. `this_ref` is not used again.
-                unsafe { drop(bun_core::heap::take(this)) };
+        let global = unsafe { &*global };
+        r#ref.unref(bun_io::js_vm_ctx());
+        match value {
+            Err(err) => {
+                let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
-            HashResultValue::Hash(value) => {
-                let js_string = JscZigString::init(&value).to_js(global);
-                drop(value); // Zig: defer bun.default_allocator.free(value)
-                // SAFETY: `this` came from heap::alloc in `HashResult::new`; the event
-                // loop hands sole ownership to this callback. `this_ref` is not used again.
-                unsafe { drop(bun_core::heap::take(this)) };
-                promise.resolve(global, js_string)?;
+            Ok(v) => {
+                let js = Op::to_js(v, global);
+                promise.resolve(global, js)?;
             }
         }
         Ok(())
     }
 }
 
-enum HashResultValue {
-    Err(HashError),
-    Hash(Box<[u8]>),
-}
-
-impl HashResultValue {
-    pub fn to_error_instance(&self, global_object: &JSGlobalObject) -> JSValue {
-        let HashResultValue::Err(err) = self else {
-            unreachable!()
-        };
-        let mut error_code: Vec<u8> = Vec::new();
-        write!(
-            &mut error_code,
-            "PASSWORD{}",
-            PascalToUpperUnderscoreCaseFormatter {
-                input: err.name().as_bytes()
-            }
-        )
-        .expect("unreachable"); // bun.handleOom
-        let instance = global_object.create_error_instance(format_args!(
-            "Password hashing failed with error \"{}\"",
-            err.name()
-        ));
-        instance.put(
-            global_object,
-            b"code",
-            JscZigString::init(&error_code).to_js(global_object),
-        );
-        instance
-    }
-}
-
 // ─── hash / verify entry points ───────────────────────────────────────────
 
 impl JSPasswordObject {
-    pub fn hash<const SYNC: bool>(
+    /// Shared body of `hash`/`verify`: sync path computes inline and either
+    /// throws or returns the converted value; async path boxes a
+    /// `PasswordJob<Op>`, refs the loop, and schedules it.
+    fn run<Op: PasswordOp, const SYNC: bool>(
         global_object: &JSGlobalObject,
         password: Box<[u8]>,
-        algorithm: AlgorithmValue,
+        op: Op,
     ) -> JsResult<JSValue> {
         debug_assert!(!password.is_empty()); // caller must check
 
         if SYNC {
-            let value = HashJob::get_value(&password, algorithm);
-            match value {
-                HashResultValue::Err(_) => {
-                    let error_instance = value.to_error_instance(global_object);
-                    return Err(global_object.throw_value(error_instance));
+            return match op.compute(&password) {
+                Err(err) => {
+                    let error_instance =
+                        password_error_instance(&err, Op::ERR_VERB, global_object);
+                    Err(global_object.throw_value(error_instance))
                 }
-                HashResultValue::Hash(h) => {
-                    let js = JscZigString::init(&h).to_js(global_object);
-                    return Ok(js);
-                }
-            }
-            #[allow(unreachable_code)]
-            {
-                unreachable!()
-            }
+                Ok(v) => Ok(Op::to_js(v, global_object)),
+            };
         }
 
         let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
 
-        let mut job = Box::new(HashJob {
-            algorithm,
+        let mut job = Box::new(PasswordJob::<Op> {
+            op,
             password,
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
@@ -729,10 +722,18 @@ impl JSPasswordObject {
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),
         });
-        job.r#ref.ref_(vm_ctx());
+        job.r#ref.ref_(bun_io::js_vm_ctx());
         WorkPool::schedule_owned(job);
 
         Ok(promise_value)
+    }
+
+    pub fn hash<const SYNC: bool>(
+        global_object: &JSGlobalObject,
+        password: Box<[u8]>,
+        algorithm: AlgorithmValue,
+    ) -> JsResult<JSValue> {
+        Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
     }
 
     pub fn verify<const SYNC: bool>(
@@ -741,43 +742,7 @@ impl JSPasswordObject {
         prev_hash: Box<[u8]>,
         algorithm: Option<Algorithm>,
     ) -> JsResult<JSValue> {
-        debug_assert!(!password.is_empty()); // caller must check
-
-        if SYNC {
-            let value = VerifyJob::get_value(&password, &prev_hash, algorithm);
-            match value {
-                VerifyResultValue::Err(_) => {
-                    let error_instance = value.to_error_instance(global_object);
-                    return Err(global_object.throw_value(error_instance));
-                }
-                VerifyResultValue::Pass(pass) => {
-                    return Ok(JSValue::js_boolean(pass));
-                }
-            }
-            #[allow(unreachable_code)]
-            {
-                unreachable!()
-            }
-        }
-
-        let promise = JSPromiseStrong::init(global_object);
-        let promise_value = promise.value();
-
-        let mut job = Box::new(VerifyJob {
-            algorithm,
-            password,
-            prev_hash,
-            promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
-            global: std::ptr::from_ref(global_object),
-            r#ref: KeepAlive::default(),
-            task: WorkPoolTask::default(),
-        });
-        job.r#ref.ref_(vm_ctx());
-        WorkPool::schedule_owned(job);
-
-        Ok(promise_value)
+        Self::run::<VerifyOp, SYNC>(global_object, password, VerifyOp { prev_hash, algorithm })
     }
 }
 
@@ -862,160 +827,6 @@ pub fn js_password_object_hash_sync(
         Box::<[u8]>::from(string_or_buffer.slice()),
         algorithm,
     )
-}
-
-// ─── VerifyJob ────────────────────────────────────────────────────────────
-
-struct VerifyJob {
-    algorithm: Option<Algorithm>,
-    password: Box<[u8]>,
-    prev_hash: Box<[u8]>,
-    promise: JSPromiseStrong,
-    event_loop: *mut EventLoop,
-    global: *const JSGlobalObject,
-    r#ref: KeepAlive,
-    task: WorkPoolTask,
-}
-
-impl Drop for VerifyJob {
-    fn drop(&mut self) {
-        // promise: Drop on JSPromiseStrong handles deinit.
-        // bun.freeSensitive — volatile-zero the buffers then free; take the Boxes so the
-        // fields' own Drop sees empty slices afterwards.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
-        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
-    }
-}
-
-bun_threading::owned_task!(VerifyJob, task);
-
-impl VerifyJob {
-    pub fn get_value(
-        password: &[u8],
-        prev_hash: &[u8],
-        algorithm: Option<Algorithm>,
-    ) -> VerifyResultValue {
-        match PasswordObject::verify(password, prev_hash, algorithm) {
-            Ok(pass) => VerifyResultValue::Pass(pass),
-            Err(err) => VerifyResultValue::Err(err),
-        }
-    }
-
-    fn run_owned(mut self: Box<Self>) {
-        let result = VerifyResult::new(VerifyResult {
-            value: VerifyJob::get_value(&self.password, &self.prev_hash, self.algorithm),
-            task: AnyTask::default(),
-            promise: core::mem::take(&mut self.promise),
-            global: self.global,
-            r#ref: core::mem::take(&mut self.r#ref),
-        });
-
-        // SAFETY: `result` was just returned from heap::alloc in `VerifyResult::new`;
-        // not yet shared (enqueue happens after this write).
-        unsafe {
-            // Zig: `AnyTask.New(VerifyResult, run_from_js).init(result)` — construct directly
-            // since Rust `New<T>` cannot carry a comptime callback param.
-            (*result).task = AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(result).cast()),
-                callback: VerifyResult::run_from_js_erased,
-            };
-        }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
-        // `result` is a valid heap::alloc allocation, ownership transfers to the
-        // event loop here. `task` is an intrusive field at a stable address.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
-            ));
-        }
-        // `self: Box<Self>` drops here; Drop runs secure_zero on password/prev_hash.
-    }
-}
-
-struct VerifyResult {
-    value: VerifyResultValue,
-    r#ref: KeepAlive,
-
-    task: AnyTask,
-    promise: JSPromiseStrong,
-    global: *const JSGlobalObject,
-}
-
-impl VerifyResult {
-    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
-    #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
-        // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
-        unsafe { &*self.global }
-    }
-
-    pub fn new(init: VerifyResult) -> *mut VerifyResult {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
-    /// and forwards to `run_from_js`.
-    fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p.cast::<VerifyResult>())
-            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
-    }
-
-    pub fn run_from_js(this: *mut VerifyResult) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by heap::alloc in `VerifyResult::new` and is
-        // uniquely owned here (event loop hands sole ownership to this callback).
-        let this_ref = unsafe { &mut *this };
-        let mut promise = core::mem::take(&mut this_ref.promise);
-        let global = this_ref.global();
-        this_ref.r#ref.unref(vm_ctx());
-        match this_ref.value {
-            VerifyResultValue::Err(_) => {
-                let error_instance = this_ref.value.to_error_instance(global);
-                // SAFETY: `this` came from heap::alloc in `VerifyResult::new`;
-                // `this_ref` is not used again after this point.
-                unsafe { drop(bun_core::heap::take(this)) };
-                promise.reject_with_async_stack(global, Ok(error_instance))?;
-            }
-            VerifyResultValue::Pass(pass) => {
-                // SAFETY: `this` came from heap::alloc in `VerifyResult::new`;
-                // `this_ref` is not used again after this point.
-                unsafe { drop(bun_core::heap::take(this)) };
-                promise.resolve(global, JSValue::js_boolean(pass))?;
-            }
-        }
-        Ok(())
-    }
-}
-
-enum VerifyResultValue {
-    Err(HashError),
-    Pass(bool),
-}
-
-impl VerifyResultValue {
-    pub fn to_error_instance(&self, global_object: &JSGlobalObject) -> JSValue {
-        let VerifyResultValue::Err(err) = self else {
-            unreachable!()
-        };
-        let mut error_code: Vec<u8> = Vec::new();
-        write!(
-            &mut error_code,
-            "PASSWORD{}",
-            PascalToUpperUnderscoreCaseFormatter {
-                input: err.name().as_bytes()
-            }
-        )
-        .expect("unreachable");
-        let instance = global_object.create_error_instance(format_args!(
-            "Password verification failed with error \"{}\"",
-            err.name()
-        ));
-        instance.put(
-            global_object,
-            b"code",
-            JscZigString::init(&error_code).to_js(global_object),
-        );
-        instance
-    }
 }
 
 // ─── verify host functions ────────────────────────────────────────────────

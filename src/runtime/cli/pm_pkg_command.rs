@@ -955,20 +955,9 @@ impl PmPkgCommand {
 // ───── helpers ────────────────────────────────────────────────────────────
 
 #[inline]
-fn parse_usize(s: &[u8]) -> Option<usize> {
-    // Digits are ASCII; from_utf8 cannot fail on valid integer literals, and
-    // parse() rejects on non-digit bytes — matches std.fmt.parseInt(usize, s, 10).
-    core::str::from_utf8(s).ok()?.parse::<usize>().ok()
-}
-
+fn parse_usize(s: &[u8]) -> Option<usize> { bun_core::fmt::parse_int(s, 10).ok() }
 #[inline]
-fn parse_i64(s: &[u8]) -> Option<i64> {
-    core::str::from_utf8(s).ok()?.parse::<i64>().ok()
-}
-
-#[inline]
-fn parse_f64(s: &[u8]) -> Option<f64> {
-    core::str::from_utf8(s).ok()?.parse::<f64>().ok()
-}
+fn parse_i64(s: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(s, 10).ok() }
+use bun_core::fmt::parse_f64;
 
 // ported from: src/cli/pm_pkg_command.zig

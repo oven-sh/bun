@@ -17,6 +17,10 @@
 #[path = "MutableString.rs"] pub mod mutable_string;
 pub mod wtf;
 
+// Canonical byte-oriented `Write` trait — re-exported by `bun_io::write`.
+pub mod write;
+pub use write::Write;
+
 // `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI.
 #[path = "immutable.rs"] pub mod immutable;
 
@@ -559,37 +563,43 @@ impl String {
         }
     }
 
-    /// `bun.String.inMapCaseInsensitive` (string.zig) — case-insensitive ASCII
-    /// lookup against a phf map. The Zig version dispatches through
-    /// `ComptimeStringMap.getWithEqlList`; here we lowercase into a stack
-    /// buffer and probe the phf map directly. Keys longer than 64 bytes or
-    /// containing non-ASCII code units never match (all callers' maps have
-    /// short ASCII keys).
-    pub fn in_map_case_insensitive<V: Copy>(
-        &self,
-        map: &'static phf::Map<&'static [u8], V>,
-    ) -> Option<V> {
+    /// Narrow this string into `dst` iff it is non-empty, fits, and every code
+    /// unit is ASCII (`< 0x80`). UTF-16 narrows via
+    /// [`strings::narrow_ascii_u16`]; 8-bit copies after rejecting any high
+    /// Latin-1 byte. Returns `Some(&mut dst[..len])` on success. Zig open-codes
+    /// this per call site (e.g. `inMapCaseInsensitive`, `Encoding.from`).
+    pub fn ascii_into<'a>(&self, dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
         let len = self.length();
-        if len == 0 || len > 64 {
+        if len == 0 || len > dst.len() {
             return None;
         }
-        let mut buf = [0u8; 64];
         if self.is_utf16() {
-            for (i, &c) in self.utf16().iter().enumerate() {
-                if c >= 0x80 {
-                    return None;
-                }
-                buf[i] = (c as u8).to_ascii_lowercase();
-            }
+            bun_core::strings::narrow_ascii_u16(self.utf16(), dst)
         } else {
-            for (i, &b) in self.byte_slice().iter().enumerate() {
-                if b >= 0x80 {
-                    return None;
-                }
-                buf[i] = b.to_ascii_lowercase();
+            let src = self.byte_slice();
+            if strings::first_non_ascii(src).is_some() {
+                return None;
             }
+            let dst = &mut dst[..len];
+            dst.copy_from_slice(src);
+            Some(dst)
         }
-        map.get(&buf[..len]).copied()
+    }
+
+    /// `bun.String.inMapCaseInsensitive` (string.zig) — case-insensitive ASCII
+    /// lookup against a phf map whose keys are lowercase ASCII. UTF-16 inputs
+    /// are narrowed (non-ASCII code unit ⇒ miss); 8-bit inputs delegate
+    /// straight to [`strings::in_map_case_insensitive`].
+    pub fn in_map_case_insensitive<V: Copy>(
+        &self,
+        map: &phf::Map<&'static [u8], V>,
+    ) -> Option<V> {
+        if self.is_utf16() {
+            let mut buf = [0u8; 256];
+            strings::in_map_case_insensitive(self.ascii_into(&mut buf)?, map)
+        } else {
+            strings::in_map_case_insensitive(self.byte_slice(), map)
+        }
     }
 
     /// `bun.String.trunc` (string.zig:317) — clamp to `len` code units. The
@@ -2193,23 +2203,7 @@ pub mod lexer {
     pub fn is_identifier_part(c: u32) -> bool {
         is_identifier_continue(c)
     }
-    /// Whole-string check. Port of `js_lexer.isIdentifier`.
-    pub fn is_identifier(s: &[u8]) -> bool {
-        if s.is_empty() {
-            return false;
-        }
-        let iter = crate::strings::CodepointIterator::init(s);
-        let mut cur = crate::strings::Cursor::default();
-        if !iter.next(&mut cur) || !is_identifier_start(cur.c as u32) {
-            return false;
-        }
-        while iter.next(&mut cur) {
-            if !is_identifier_continue(cur.c as u32) {
-                return false;
-            }
-        }
-        true
-    }
+    pub use crate::identifier::{is_identifier, is_identifier_utf16};
 }
 
 pub mod lexer_tables {
@@ -2268,36 +2262,52 @@ pub mod printer {
     use crate::immutable::{self as strings, Encoding as StrEncoding};
     use crate::mutable_string::MutableString;
 
-    const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
-    const FIRST_ASCII: i32 = 0x20;
-    const LAST_ASCII: i32 = 0x7E;
-    const FIRST_HIGH_SURROGATE: i32 = 0xD800;
-    const FIRST_LOW_SURROGATE: i32 = 0xDC00;
-    const LAST_LOW_SURROGATE: i32 = 0xDFFF;
+    use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS;
 
-    /// Minimal byte-sink so `write_pre_quoted_string` works for both
-    /// `core::fmt::Formatter` and `MutableString` without an `io::Write` bound.
-    pub trait PrinterWriter {
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
+    pub const FIRST_ASCII: u32 = 0x20;
+    pub const LAST_ASCII: u32 = 0x7E;
+    pub const FIRST_HIGH_SURROGATE: u32 = 0xD800;
+    pub const FIRST_LOW_SURROGATE: u32 = 0xDC00;
+    pub const LAST_LOW_SURROGATE: u32 = 0xDFFF;
+
+    /// Encode a BMP code unit (`c <= 0xFFFF`, including lone surrogates) as the
+    /// 6-byte sequence `\uHHHH` (uppercase hex). Caller feeds the result to its
+    /// own byte sink.
+    #[inline]
+    pub fn bmp_escape(c: u32) -> [u8; 6] {
+        let k = c as usize;
+        [
+            b'\\', b'u',
+            HEX_CHARS[(k >> 12) & 15],
+            HEX_CHARS[(k >> 8) & 15],
+            HEX_CHARS[(k >> 4) & 15],
+            HEX_CHARS[k & 15],
+        ]
     }
-    impl PrinterWriter for MutableString {
-        #[inline]
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-            self.append(bytes).map_err(Into::into)
-        }
+
+    /// Encode a supplementary code point (`c > 0xFFFF`) as a 12-byte UTF-16
+    /// surrogate-pair `\uHHHH\uHHHH` escape (uppercase hex).
+    #[inline]
+    pub fn surrogate_pair_escape(c: u32) -> [u8; 12] {
+        let k = (c - 0x10000) as usize;
+        let lo = FIRST_HIGH_SURROGATE as usize + ((k >> 10) & 0x3FF);
+        let hi = FIRST_LOW_SURROGATE as usize + (k & 0x3FF);
+        [
+            b'\\', b'u',
+            HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
+            b'\\', b'u',
+            HEX_CHARS[hi >> 12], HEX_CHARS[(hi >> 8) & 15], HEX_CHARS[(hi >> 4) & 15], HEX_CHARS[hi & 15],
+        ]
     }
-    impl PrinterWriter for Vec<u8> {
-        #[inline]
-        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-            self.extend_from_slice(bytes);
-            Ok(())
-        }
-    }
+
+    /// Byte-sink alias so `write_pre_quoted_string` works for `Vec<u8>`,
+    /// `MutableString`, and any other `bun_core::io::Write` sink.
+    pub use bun_core::io::Write as PrinterWriter;
 
     #[inline]
     pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
-        if c <= LAST_ASCII {
-            c >= FIRST_ASCII
+        if c <= LAST_ASCII as i32 {
+            c >= FIRST_ASCII as i32
                 && c != b'\\' as i32
                 && c != b'"' as i32
                 && c != b'\'' as i32
@@ -2308,7 +2318,7 @@ pub mod printer {
                 && c != 0xFEFF
                 && c != 0x2028
                 && c != 0x2029
-                && (c < FIRST_HIGH_SURROGATE || c > LAST_LOW_SURROGATE)
+                && (c < FIRST_HIGH_SURROGATE as i32 || c > LAST_LOW_SURROGATE as i32)
         }
     }
 
@@ -2430,30 +2440,9 @@ pub mod printer {
                             HEX_CHARS[k & 0xF],
                         ])?;
                     } else if c <= 0xFFFF {
-                        let k = c as usize;
-                        writer.write_all(&[
-                            b'\\', b'u',
-                            HEX_CHARS[(k >> 12) & 0xF],
-                            HEX_CHARS[(k >> 8) & 0xF],
-                            HEX_CHARS[(k >> 4) & 0xF],
-                            HEX_CHARS[k & 0xF],
-                        ])?;
+                        writer.write_all(&bmp_escape(c as u32))?;
                     } else {
-                        let k = c - 0x10000;
-                        let lo = (FIRST_HIGH_SURROGATE + ((k >> 10) & 0x3FF)) as usize;
-                        let hi = (FIRST_LOW_SURROGATE + (k & 0x3FF)) as usize;
-                        writer.write_all(&[
-                            b'\\', b'u',
-                            HEX_CHARS[lo >> 12],
-                            HEX_CHARS[(lo >> 8) & 15],
-                            HEX_CHARS[(lo >> 4) & 15],
-                            HEX_CHARS[lo & 15],
-                            b'\\', b'u',
-                            HEX_CHARS[hi >> 12],
-                            HEX_CHARS[(hi >> 8) & 15],
-                            HEX_CHARS[(hi >> 4) & 15],
-                            HEX_CHARS[hi & 15],
-                        ])?;
+                        writer.write_all(&surrogate_pair_escape(c as u32))?;
                     }
                 }
             }

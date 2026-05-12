@@ -89,10 +89,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .sub(Owner::CHANNEL_OFFSET)
-                .cast::<Owner>()
+            &mut *bun_ptr::container_of::<Owner, _>(std::ptr::from_mut(self), Owner::CHANNEL_OFFSET)
         }
     }
 }

@@ -74,23 +74,16 @@ impl Integrity {
         }
 
         while i < end {
-            let x0: u16 = match buf[i] {
-                b'0'..=b'9' => (buf[i] - b'0') as u16,
-                b'A'..=b'Z' => (buf[i] - b'A' + 10) as u16,
-                b'a'..=b'z' => (buf[i] - b'a' + 10) as u16,
-                _ => return Err(bun_core::err!("InvalidCharacter")),
-            };
+            // npm sha1 strings are always [0-9a-f]; canonical hex_digit_value
+            // narrows the original over-broad b'g'..=b'z' acceptance.
+            let x0 = bun_core::fmt::hex_digit_value(buf[i])
+                .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
             i += 1;
-
-            let x1: u16 = match buf[i] {
-                b'0'..=b'9' => (buf[i] - b'0') as u16,
-                b'A'..=b'Z' => (buf[i] - b'A' + 10) as u16,
-                b'a'..=b'z' => (buf[i] - b'a' + 10) as u16,
-                _ => return Err(bun_core::err!("InvalidCharacter")),
-            };
+            let x1 = bun_core::fmt::hex_digit_value(buf[i])
+                .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
 
             // parse hex integer
-            integrity.value[out_i] = (x0 << 4 | x1) as u8;
+            integrity.value[out_i] = (x0 << 4) | x1;
 
             out_i += 1;
             i += 1;

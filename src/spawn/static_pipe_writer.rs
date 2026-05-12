@@ -33,6 +33,10 @@ pub trait StaticPipeWriterProcess {
 ///
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
+// Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
+// `_deinit` maps to `impl Drop` below; the final `bun.destroy` (Box free) is
+// the derive's default destructor (`drop(heap::take(this))`).
+#[derive(bun_ptr::RefCounted)]
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
     pub ref_count: RefCount<Self>,
@@ -49,25 +53,6 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     // pointer so the per-access unsafe derefs are gone; the backing storage
     // (`self.source`) outlives `self` by construction.
     pub buffer: RawSlice<u8>,
-}
-
-// Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
-// Zig: `pub const ref = WriterRefCount.ref; pub const deref = WriterRefCount.deref;`
-// In Rust the intrusive refcount methods come from `bun_ptr::RefCount` /
-// `bun_ptr::RefCounted`; the `_deinit` destructor maps to `impl Drop` below,
-// and the final `bun.destroy` (Box free) is performed inside
-// `RefCounted::destructor` when the count reaches zero.
-impl<P: StaticPipeWriterProcess> RefCounted for StaticPipeWriter<P> {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _: ()) {
-        // SAFETY: refcount hit 0; allocated via `heap::alloc` in `create()`.
-        // `Drop` (below) performs `_deinit`'s `writer.end(); source.detach()`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
 }
 
 // Zig: `const print = bun.Output.scoped(.StaticPipeWriter, .visible);`

@@ -146,26 +146,8 @@ pub mod gen_ {
     // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
     // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape) — `jsc.conv` is
     // the System V ABI on Windows-x64 and the C ABI everywhere else, matching
-    // `bun_jsc::host_fn::JsHostFn`. Rust forbids macros in the `extern "<abi>"`
-    // string position, so cfg-duplicate the block.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsHomedir(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsHostname(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsLoadavg(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsNetworkInterfaces(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsRelease(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsTotalmem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsUptime(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsUserInfo(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsVersion(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-        fn bindgen_Node_os_jsSetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
+    // `bun_jsc::host_fn::JsHostFn`.
+    bun_jsc::jsc_abi_extern! {
         fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
         fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
         fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
@@ -321,7 +303,8 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         };
         // file closed on Drop
 
-        let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+        file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+        let contents = file_buf.as_slice();
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
 
@@ -364,7 +347,8 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     if let Ok(file) = bun_sys::File::open(bun_core::zstr!("/proc/cpuinfo"), bun_sys::O::RDONLY, 0) {
         // file closed on Drop
 
-        let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+        file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+        let contents = file_buf.as_slice();
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
 
@@ -380,7 +364,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
                     cpu.put(global_this, b"model", ZigString::static_("unknown").with_encoding().to_js(global_this));
                 }
                 // If this line starts a new processor, parse the index from the line
-                let digits = trim_bytes(&line[KEY_PROCESSOR.len()..], b" \t\n");
+                let digits = strings::trim(&line[KEY_PROCESSOR.len()..], b" \t\n");
                 cpu_index = parse_u32(digits)?;
                 if cpu_index >= num_cpus {
                     return Err(OsError::Any);
@@ -425,9 +409,10 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
             // file closed on Drop
 
-            let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+            file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
+            let contents = file_buf.as_slice();
 
-            let digits = trim_bytes(contents, b" \n");
+            let digits = strings::trim(contents, b" \n");
             let speed = parse_u64(digits).unwrap_or(0) / 1000;
 
             cpu.put(global_this, b"speed", JSValue::js_number(speed as f64));
@@ -1520,33 +1505,13 @@ impl NetmaskInt for u128 {
 
 #[inline]
 fn parse_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
-    // TODO(port): std.fmt.parseInt → bun_str/bun_core integer parser over &[u8]
-    core::str::from_utf8(s)
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .ok_or(bun_core::err!("InvalidCharacter"))
+    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
 }
-
 #[inline]
 fn parse_u32(s: &[u8]) -> Result<u32, bun_core::Error> {
-    core::str::from_utf8(s)
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .ok_or(bun_core::err!("InvalidCharacter"))
+    bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
 }
 
-#[inline]
-fn trim_bytes<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    let mut start = 0;
-    let mut end = s.len();
-    while start < end && chars.contains(&s[start]) {
-        start += 1;
-    }
-    while end > start && chars.contains(&s[end - 1]) {
-        end -= 1;
-    }
-    &s[start..end]
-}
 
 #[cfg(windows)]
 #[inline]

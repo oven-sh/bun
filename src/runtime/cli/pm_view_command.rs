@@ -16,12 +16,7 @@ use bun_js_printer as JSPrinter;
 use bstr::BStr;
 use bun_alloc::{Arena as Bump, AllocError}; // bumpalo::Bump re-export
 
-/// Helper: write `args` into `buf` and return the written subslice.
-/// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
-#[inline]
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
-    bun_fmt::buf_print(buf, args).expect("unreachable")
-}
+use bun_core::fmt::buf_print_infallible as buf_print;
 
 pub fn view(
     manager: &mut PackageManager,

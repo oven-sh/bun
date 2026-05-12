@@ -529,3 +529,239 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
     };
     expanded.into()
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// #[derive(RefCounted)]  — intrusive single-thread `RefCount<Self>` mixin
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Third sibling of CellRefCounted / ThreadSafeRefCounted. Ports Zig's
+// `bun.ptr.RefCount(@This(), "ref_count", destructor, .{ .debug_name = … })`
+// comptime mixin (src/ptr/ref_count.zig:67) — the form taken by ~17 Rust
+// hand-rolls that all spell out `type DestructorCtx = (); get_ref_count =
+// &raw mut (*this).ref_count; destructor = drop(heap::take(this))`.
+//
+// Struct-level attribute:
+//   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
+//                                         `drop(::bun_core::heap::take(this))`
+//   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
+//                                         (Zig `.{ .debug_name = … }` option)
+//
+// Field selection follows the shared `find_ref_count_field` rules (a
+// `#[ref_count]`-annotated field, else a field literally named `ref_count`).
+//
+// Unlike `CellRefCounted` this emits **no** inherent `ref_()`/`deref()`
+// forwarders and **no** `AnyRefCounted` impl: `bun_ptr::ref_count` already
+// provides a blanket `impl<T: RefCounted> AnyRefCounted for T`, and several
+// migrated structs keep their own bespoke `ref_`/`r#ref`/`deref` thin
+// wrappers — emitting inherent fns here would collide.
+
+/// Parse the struct-level `#[ref_count(destroy = …, debug_name = "…")]`
+/// attribute (both keys optional, either order).
+fn parse_ref_count_attrs(
+    attrs: &[syn::Attribute],
+) -> Result<(Option<syn::Expr>, Option<LitStr>), syn::Error> {
+    let mut destroy = None;
+    let mut debug_name = None;
+    for a in attrs {
+        if !a.path().is_ident("ref_count") {
+            continue;
+        }
+        if let Meta::List(_) = &a.meta {
+            a.parse_nested_meta(|meta| {
+                if meta.path.is_ident("destroy") {
+                    destroy = Some(meta.value()?.parse::<syn::Expr>()?);
+                    Ok(())
+                } else if meta.path.is_ident("debug_name") {
+                    debug_name = Some(meta.value()?.parse::<LitStr>()?);
+                    Ok(())
+                } else {
+                    Err(meta.error("unknown ref_count attribute key"))
+                }
+            })?;
+        }
+    }
+    Ok((destroy, debug_name))
+}
+
+/// `#[derive(RefCounted)]` — see module comment above.
+#[proc_macro_derive(RefCounted, attributes(ref_count))]
+pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+
+    let fields = match &input.data {
+        Data::Struct(s) => &s.fields,
+        _ => {
+            return syn::Error::new_spanned(name, "RefCounted: only structs are supported")
+                .to_compile_error()
+                .into()
+        }
+    };
+
+    let field = match find_ref_count_field(fields) {
+        Ok(f) => f,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let (destroy, debug_name) = match parse_ref_count_attrs(&input.attrs) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    let destructor_body = match destroy {
+        Some(path) => quote! {
+            // SAFETY: trait contract — refcount hit zero, `this` is the
+            // sole live owner of its allocation.
+            #[allow(unused_unsafe)]
+            unsafe { (#path)(this) }
+        },
+        None => quote! {
+            // SAFETY: trait contract — refcount hit zero; allocated via
+            // `heap::alloc`/`Box::into_raw`. `Drop` runs on the boxed value.
+            drop(unsafe { ::bun_core::heap::take(this) });
+        },
+    };
+    let debug_name_impl = debug_name.map(|lit| {
+        quote! {
+            #[inline]
+            fn debug_name() -> &'static str { #lit }
+        }
+    });
+
+    quote! {
+        impl #impl_g ::bun_ptr::RefCounted for #name #ty_g #where_g {
+            type DestructorCtx = ();
+            #debug_name_impl
+            #[inline]
+            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe { &raw mut (*this).#field }
+            }
+            #[inline]
+            unsafe fn destructor(this: *mut Self, _ctx: ()) {
+                #destructor_body
+            }
+        }
+    }
+    .into()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// #[derive(EnumTag)]
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Rust port of Zig's `union(Tag)` / `std.meta.Tag(T)` language built-in.
+// Every Zig tagged-union ported to a Rust `enum` lost the implicit
+// data→discriminant projection and grew a hand-written
+// `fn tag(&self) -> Tag { match self { Self::A(..) => Tag::A, … } }` (14
+// copies, 160+ arms total — see ast/expr.rs, ast/stmt.rs, shell_parser, etc.;
+// stmt.rs:466 literally comments "Zig got this for free from `union(Tag)`").
+//
+// Two modes:
+//
+//   • `#[enum_tag(existing = path::to::Tag)]`  (PRIMARY — used by all 14
+//     migrated sites). Emits ONLY the inherent `const fn tag(&self) -> Tag`
+//     and `From<&Data> for Tag`. The tag type is left untouched — it may be a
+//     real `enum`, a `#[repr(transparent)] struct Tag(u8)` with sparse
+//     associated `pub const Variant: Tag`, or anything else that exposes a
+//     `Tag::Variant` per data variant. No `From<Tag> for &'static str`, no
+//     iterator — those belong on the existing tag type if needed.
+//
+//   • bare `#[derive(EnumTag)]` — also generates a fresh
+//     `pub enum <Name>Tag { … }` mirror (one fieldless variant per data
+//     variant). Unused by the current dedup but kept for future ports that
+//     don't already have a hand-written tag enum to point at.
+//
+// The emitted `tag()` is `pub const fn` and matches every variant shape
+// (unit / tuple / struct) by using `Self::V { .. }` arms.
+
+/// `#[derive(EnumTag)]` — see module comment above.
+#[proc_macro_derive(EnumTag, attributes(enum_tag))]
+pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+
+    let variants = match &input.data {
+        Data::Enum(e) => &e.variants,
+        _ => {
+            return syn::Error::new_spanned(name, "EnumTag: only enums are supported")
+                .to_compile_error()
+                .into()
+        }
+    };
+
+    // Parse optional `#[enum_tag(existing = path::to::Tag)]`.
+    let mut existing: Option<syn::Path> = None;
+    for a in &input.attrs {
+        if !a.path().is_ident("enum_tag") {
+            continue;
+        }
+        let parsed = a.parse_nested_meta(|meta| {
+            if meta.path.is_ident("existing") {
+                existing = Some(meta.value()?.parse()?);
+                Ok(())
+            } else {
+                Err(meta.error("unknown enum_tag attribute key; expected `existing = <path>`"))
+            }
+        });
+        if let Err(e) = parsed {
+            return e.to_compile_error().into();
+        }
+    }
+
+    // Use `#name::V { .. }` (not `Self::V`) so the same arm tokens work in
+    // both the inherent `impl #name` block AND the `impl From<&#name> for Tag`
+    // block — inside the latter `Self` would resolve to the *tag* type.
+    let arms = variants.iter().map(|v| {
+        let ident = &v.ident;
+        match &v.fields {
+            Fields::Unit => quote! { #name::#ident },
+            _ => quote! { #name::#ident { .. } },
+        }
+    });
+    let tag_idents = variants.iter().map(|v| &v.ident);
+
+    if let Some(tag_path) = existing {
+        let arms2 = arms.clone();
+        let tag_idents2 = tag_idents.clone();
+        return quote! {
+            impl #impl_g #name #ty_g #where_g {
+                /// Data → discriminant projection (Zig `union(Tag)` built-in).
+                #[inline]
+                pub const fn tag(&self) -> #tag_path {
+                    match self {
+                        #( #arms => #tag_path::#tag_idents, )*
+                    }
+                }
+            }
+            impl #impl_g ::core::convert::From<&#name #ty_g> for #tag_path #where_g {
+                #[inline]
+                fn from(d: &#name #ty_g) -> Self {
+                    match d {
+                        #( #arms2 => #tag_path::#tag_idents2, )*
+                    }
+                }
+            }
+        }
+        .into();
+    }
+
+    // Fallback: synthesise `<Name>Tag`.
+    let tag_name = syn::Ident::new(&format!("{name}Tag"), name.span());
+    let tag_variants = variants.iter().map(|v| &v.ident);
+    quote! {
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub enum #tag_name { #( #tag_variants, )* }
+        impl #impl_g #name #ty_g #where_g {
+            /// Data → discriminant projection (Zig `union(Tag)` built-in).
+            #[inline]
+            pub const fn tag(&self) -> #tag_name {
+                match self {
+                    #( #arms => #tag_name::#tag_idents, )*
+                }
+            }
+        }
+    }
+    .into()
+}

@@ -36,12 +36,8 @@ use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 #[path = "websocket_client/WebSocketProxyTunnel.rs"]    pub mod websocket_proxy_tunnel;
 #[path = "websocket_client/WebSocketUpgradeClient.rs"]  pub mod websocket_upgrade_client;
 
-bun_core::declare_scope!(WebSocketClient, visible);
+bun_core::define_scoped_log!(log, WebSocketClient, visible);
 bun_core::declare_scope!(alloc, hidden);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(WebSocketClient, $($arg)*) };
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // NewWebSocketClient(comptime ssl: bool) → WebSocket<const SSL: bool>
@@ -2232,9 +2228,7 @@ impl Mask {
 
         let skip_mask = u32::from_ne_bytes(mask) == 0;
         if buf.is_empty() {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             return;
         }
         bun_highway::fill_with_skip_mask_inplace(mask, buf, skip_mask);
@@ -2242,9 +2236,7 @@ impl Mask {
 
     fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
         if input.is_empty() {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             return;
         }
         bun_highway::fill_with_skip_mask(mask, &mut output[..input.len()], input, skip_mask);

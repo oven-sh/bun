@@ -190,10 +190,6 @@ impl BuildMessage {
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(ZigString::init(self.msg.kind.string()).to_js(global))
     }
-
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
 }
 
 // ported from: src/jsc/BuildMessage.zig

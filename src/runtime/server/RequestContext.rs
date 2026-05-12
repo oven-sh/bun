@@ -1684,7 +1684,7 @@ where
                     if auto_close {
                         fd.close();
                     }
-                    let mut crbuf = [0u8; 64];
+                    let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_weakref.get() {
                         if let Some(mut headers_) = response.swap_init_headers() {
@@ -1694,12 +1694,11 @@ where
                             drop(headers_);
                         }
                     }
-                    let cr = {
-                        let mut w = &mut crbuf[..];
-                        let _ = write!(w, "bytes */{}", stat_size);
-                        let written = 64 - w.len();
-                        &crbuf[..written]
-                    };
+                    let cr = RangeRequest::format_content_range(
+                        &mut crbuf,
+                        RangeRequest::Result::Unsatisfiable,
+                        Some(stat_size),
+                    );
                     // SAFETY: FFI handle
                     unsafe {
                         resp.write_header(b"content-range", cr);
@@ -2272,9 +2271,7 @@ where
                 // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                 // and deref the FetchHeaders, freeing the borrowed StringImpl.
                 let content_length_str = content_length.to_slice();
-                let len: usize =
-                    bun_str::strings::parse_int::<usize>(content_length_str.slice(), 10)
-                        .unwrap_or(0);
+                let len: usize = HTTP::parse_content_length(content_length_str.slice());
                 drop(content_length_str);
 
                 this.render_metadata();
@@ -3316,44 +3313,17 @@ where
         }
 
         if needs_content_range && !has_content_range {
-            let mut content_range_buf = [0u8; 1024];
-
-            let header_value = if self.sendfile.total > 0 {
-                // We resolved an incoming Range header against the
-                // stat'd size, so the total is meaningful.
-                let mut w = &mut content_range_buf[..];
-                if write!(
-                    w,
-                    "bytes {}-{}/{}",
-                    self.sendfile.offset,
-                    self.sendfile.offset + self.sendfile.remain.saturating_sub(1),
-                    self.sendfile.total
-                )
-                .is_ok()
-                {
-                    let written = 1024 - w.len();
-                    &content_range_buf[..written]
-                } else {
-                    &b"bytes */*"[..]
-                }
-            } else {
-                // For .slice()-driven ranges we omit the full size:
-                // it can change between requests and may leak PII.
-                let mut w = &mut content_range_buf[..];
-                if write!(
-                    w,
-                    "bytes {}-{}/*",
-                    self.sendfile.offset,
-                    self.sendfile.offset + self.sendfile.remain.saturating_sub(1)
-                )
-                .is_ok()
-                {
-                    let written = 1024 - w.len();
-                    &content_range_buf[..written]
-                } else {
-                    &b"bytes */*"[..]
-                }
-            };
+            let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+            let end = self.sendfile.offset + self.sendfile.remain.saturating_sub(1);
+            // `total > 0` ⇒ we resolved an incoming Range header against the
+            // stat'd size, so the full size is meaningful. Otherwise this is a
+            // `.slice()`-driven range — omit the full size (it can change
+            // between requests and may leak PII).
+            let header_value = RangeRequest::format_content_range(
+                &mut crbuf,
+                RangeRequest::Result::Satisfiable { start: self.sendfile.offset, end },
+                (self.sendfile.total > 0).then_some(self.sendfile.total),
+            );
             resp.write_header(b"content-range", header_value);
             if self.sendfile.total > 0 {
                 resp.write_header(b"accept-ranges", b"bytes");

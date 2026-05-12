@@ -103,133 +103,21 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
     __bun_get_vm_ctx(kind)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// KeepAlive
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Track if an object whose file descriptor is being watched should keep the event loop alive.
-/// This is not reference counted. It only tracks active or inactive.
-#[derive(Default)]
-pub struct KeepAlive {
-    status: KeepAliveStatus,
+/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
+///
+/// Zig passed `*jsc.VirtualMachine` directly via `anytype` dispatch
+/// (`posix_event_loop.zig:45`); the Rust crate split routes through the
+/// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
+/// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
+/// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
+/// the ~21 byte-identical local wrappers each ported file grew independently.
+#[inline]
+pub fn js_vm_ctx() -> EventLoopCtx {
+    get_vm_ctx(AllocatorType::Js)
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
-enum KeepAliveStatus {
-    Active,
-    #[default]
-    Inactive,
-    Done,
-}
-
-impl KeepAlive {
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.status == KeepAliveStatus::Active
-    }
-
-    /// Make calling ref() on this poll into a no-op.
-    pub fn disable(&mut self) {
-        self.unref(get_vm_ctx(AllocatorType::Js));
-        self.status = KeepAliveStatus::Done;
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn deactivate(&mut self, loop_: &mut Loop) {
-        if self.status != KeepAliveStatus::Active {
-            return;
-        }
-        self.status = KeepAliveStatus::Inactive;
-        loop_sub_active(loop_, 1);
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut Loop) {
-        if self.status != KeepAliveStatus::Inactive {
-            return;
-        }
-        self.status = KeepAliveStatus::Active;
-        loop_add_active(loop_, 1);
-    }
-
-    pub fn init() -> KeepAlive {
-        KeepAlive::default()
-    }
-
-    /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
-            return;
-        }
-        self.status = KeepAliveStatus::Inactive;
-        event_loop_ctx.loop_unref();
-    }
-
-    /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
-            return;
-        }
-        self.status = KeepAliveStatus::Inactive;
-        vm.unref_concurrently();
-    }
-
-    /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
-            return;
-        }
-        self.status = KeepAliveStatus::Inactive;
-        // vm.pending_unref_counter +|= 1;
-        event_loop_ctx.increment_pending_unref_counter();
-    }
-
-    /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
-            return;
-        }
-        self.status = KeepAliveStatus::Inactive;
-        // TODO(port): vm.pending_unref_counter must be an Atomic; Zig uses @atomicRmw .Add .monotonic
-        vm.increment_pending_unref_counter();
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Inactive {
-            return;
-        }
-        self.status = KeepAliveStatus::Active;
-        event_loop_ctx.loop_ref();
-    }
-
-    /// Allow a poll to keep the process alive.
-    ///
-    /// Raw-identifier alias of [`KeepAlive::ref_`] matching the Zig method name
-    /// `ref` exactly (per PORTING.md "same fn names" rule). Downstream ports
-    /// call both spellings; this keeps them source-compatible.
-    #[inline]
-    pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
-        self.ref_(event_loop_ctx)
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Inactive {
-            return;
-        }
-        self.status = KeepAliveStatus::Active;
-        vm.ref_concurrently();
-    }
-
-    pub fn ref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.ref_concurrently(loop_);
-    }
-
-    pub fn unref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.unref_concurrently(loop_);
-    }
-}
+// `KeepAlive` (struct + 14-method impl) was duplicated here and in
+// `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll

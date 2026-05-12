@@ -306,15 +306,9 @@ pub enum GCTimerState {
     RunOnNextTick,
 }
 
-// TODO(port): std.fmt.parseInt equivalent — env vars are ASCII so from_utf8 is fine here
 #[inline]
-fn parse_int_i32(s: &[u8]) -> Option<i32> {
-    core::str::from_utf8(s).ok()?.parse::<i32>().ok()
-}
-
+fn parse_int_i32(s: &[u8]) -> Option<i32> { bun_core::fmt::parse_int(s, 10).ok() }
 #[inline]
-fn parse_int_c_int(s: &[u8]) -> Option<c_int> {
-    core::str::from_utf8(s).ok()?.parse::<c_int>().ok()
-}
+fn parse_int_c_int(s: &[u8]) -> Option<c_int> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // ported from: src/jsc/GarbageCollectionController.zig

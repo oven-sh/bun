@@ -158,6 +158,50 @@ pub trait AnyRefCounted: Sized {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// JS-wrapper finalize → intrusive-refcount release
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Release the JS wrapper's `+1` on an intrusive-refcounted `m_ctx` payload.
+///
+/// `.classes.ts` codegen hands `finalize` the payload as `Box<Self>`; the
+/// allocation may outlive that `Box` if other refs remain, so this leaks the
+/// `Box` back to a raw pointer FIRST (a panic in `before` then leaks instead of
+/// double-freeing siblings), runs `before` against a *shared* borrow, then
+/// drops one ref.
+///
+/// `before` deliberately receives `&T`, never `&mut T`: concurrent `&T` aliases
+/// may exist (e.g. work-pool threads, uws callbacks) while the GC sweeps, so
+/// forming `&mut T` here would be UB. All teardown therefore goes through
+/// `Cell`/`JsCell`/atomic fields.
+#[inline]
+pub fn finalize_js_box<T, F>(boxed: Box<T>, before: F)
+where
+    T: AnyRefCounted,
+    T::DestructorCtx: Default,
+    F: FnOnce(&T),
+{
+    let ptr: *mut T = Box::into_raw(boxed);
+    // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1 (the JS
+    // wrapper's +1). No `&mut T` is formed — `before` sees only `&T`.
+    before(unsafe { &*ptr });
+    // SAFETY: `ptr` is still live (the +1 has not yet been released).
+    unsafe { T::rc_deref(ptr) };
+}
+
+/// [`finalize_js_box`] with no pre-release work — just hands ownership back to
+/// the intrusive refcount and drops the JS wrapper's `+1`.
+#[inline]
+pub fn finalize_js_box_noop<T>(boxed: Box<T>)
+where
+    T: AnyRefCounted,
+    T::DestructorCtx: Default,
+{
+    let ptr: *mut T = Box::into_raw(boxed);
+    // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1.
+    unsafe { T::rc_deref(ptr) };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // RefCount (single-threaded, intrusive)
 // ──────────────────────────────────────────────────────────────────────────
 

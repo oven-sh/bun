@@ -317,18 +317,13 @@ impl ExtractTarball {
                     // SAFETY: alloc returned non-null; valid until destroy.
                     let decompressor = unsafe { &mut *decompressor_ptr };
 
-                    // SAFETY: write into the full allocated capacity (Zig `allocatedSlice()` equiv).
-                    let allocated = unsafe {
-                        bun_core::ffi::slice_mut(
-                            zlib_pool.list.as_mut_ptr(),
-                            zlib_pool.list.capacity(),
-                        )
-                    };
-                    let result = decompressor.gzip(tgz_bytes, allocated);
-
+                    zlib_pool.list.clear();
+                    let result = decompressor.decompress_to_vec(
+                        tgz_bytes,
+                        &mut zlib_pool.list,
+                        libdeflate::Encoding::Gzip,
+                    );
                     if result.status == libdeflate::Status::Success {
-                        // SAFETY: libdeflate wrote `result.written` bytes into the backing buffer.
-                        unsafe { zlib_pool.list.set_len(result.written) };
                         needs_to_decompress = false;
                     }
 

@@ -51,15 +51,9 @@ use crate::websocket_client::ErrorCode;
 // `into_http()`.
 use bun_http::ssl_config::SSLConfig;
 
-bun_core::declare_scope!(WebSocketUpgradeClient, visible);
+bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 // Zig: `bun.new`/`bun.destroy` log under `.alloc` (hidden, BUN_DEBUG_alloc=1).
 bun_core::declare_scope!(alloc, hidden);
-
-macro_rules! log {
-    ($($arg:tt)*) => {
-        bun_core::scoped_log!(WebSocketUpgradeClient, $($arg)*)
-    };
-}
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.

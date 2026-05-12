@@ -34,21 +34,6 @@ use crate::{
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
 
-/// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
-/// `bun_io::Write` trait for [`crate::console_object::Formatter::format`].
-/// Mirrors the private adapter in `console_object.rs`.
-struct IoWriterAdapter<'a>(&'a mut bun_core::io::Writer);
-impl bun_io::Write for IoWriterAdapter<'_> {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        self.0.write_all(buf)
-    }
-    #[inline]
-    fn flush(&mut self) -> bun_io::Result<()> {
-        self.0.flush()
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Exported globals
 // ──────────────────────────────────────────────────────────────────────────
@@ -2245,10 +2230,7 @@ impl VirtualMachine {
 
                 // Check if Module.runMain was patched (spec VirtualMachine.zig:2322-2335).
                 if self.has_patched_run_main {
-                #[cold]
-                #[inline(never)]
-                fn cold() {}
-                cold();
+                bun_core::hint::cold();
                 self.pending_internal_promise = None;
                 self.pending_internal_promise_is_protected = false;
                 let global_ref = self.global();
@@ -2897,7 +2879,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
-// PERF(port): hoist into `bun_string` once `lib_draft_b1.rs` un-gates.
 #[inline]
 pub fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::String {
     if s.eql_utf8(other) {
@@ -3089,10 +3070,7 @@ impl VirtualMachine {
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
             // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            match core::str::from_utf8(&fd_s)
-                .ok()
-                .and_then(|s| s.parse::<i32>().ok())
-                .filter(|&n| n >= 0)
+            match bun_core::fmt::parse_int::<i32>(&fd_s, 10).ok().filter(|&n| n >= 0)
             {
                 Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
                 None => bun_core::warn!(
@@ -4729,22 +4707,12 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> bool {
-        // PORT NOTE: `Msg::write_format` takes `&mut impl fmt::Write` with a
-        // const-generic colour flag; `bun_core::io::Writer` is a vtable head
-        // (not `fmt::Write`), so adapt locally.
-        struct FmtAdapter<'a>(&'a mut bun_core::io::Writer);
-        impl core::fmt::Write for FmtAdapter<'_> {
-            #[inline]
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
-            }
-        }
         macro_rules! write_msg {
             ($msg:expr, $w:expr, $color:expr) => {
                 if $color {
-                    let _ = $msg.write_format::<true>(&mut FmtAdapter($w));
+                    let _ = $msg.write_format::<true>(&mut bun_io::AsFmt::new($w));
                 } else {
-                    let _ = $msg.write_format::<false>(&mut FmtAdapter($w));
+                    let _ = $msg.write_format::<false>(&mut bun_io::AsFmt::new($w));
                 }
             };
         }
@@ -5540,16 +5508,7 @@ impl VirtualMachine {
         }
         #[inline]
         fn count_digits(n: i32) -> u64 {
-            // `std.fmt.count("{d}", .{n})` — decimal width incl. sign.
-            let mut len = if n < 0 { 1u64 } else { 0u64 };
-            let mut v = (n as i64).unsigned_abs();
-            loop {
-                len += 1;
-                v /= 10;
-                if v == 0 {
-                    break len;
-                }
-            }
+            bun_core::fmt::count_int(i64::from(n)) as u64
         }
 
         // This is a longer number than necessary because we don't handle this
@@ -5882,13 +5841,10 @@ impl VirtualMachine {
                         global_ref,
                         TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
                     )?;
-                    // `Formatter::format` writes to `dyn bun_io::Write`; adapt
-                    // the vtable-struct `bun_core::io::Writer`.
-                    let mut adapt = IoWriterAdapter(writer);
                     let _ = if allow_ansi_color {
-                        formatter.format::<true>(tag, &mut adapt, value, global_ref)
+                        formatter.format::<true>(tag, writer, value, global_ref)
                     } else {
-                        formatter.format::<false>(tag, &mut adapt, value, global_ref)
+                        formatter.format::<false>(tag, writer, value, global_ref)
                     };
 
                     if allow_side_effects {
@@ -5936,11 +5892,10 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let mut adapt = IoWriterAdapter(writer);
                 let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, &mut adapt, error_instance, global_ref)
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)
                 } else {
-                    formatter.format::<false>(tag, &mut adapt, error_instance, global_ref)
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 writer.write_all(b"\n")?;
             }

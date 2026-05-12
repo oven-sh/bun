@@ -39,11 +39,7 @@ pub struct SASLContinue {
 
 impl SASLContinue {
     pub fn iteration_count(&self) -> Result<u32, bun_core::Error> {
-        let i = self.i.slice();
-        // TODO(port): std.fmt.parseInt(u32, _, 0) auto-detects radix from prefix (0x/0o/0b);
-        // Phase B should provide bun_string::strings::parse_int with the same semantics.
-        let s = core::str::from_utf8(i).map_err(|_| bun_core::err!("InvalidCharacter"))?;
-        s.parse::<u32>().map_err(|_| bun_core::err!("InvalidCharacter"))
+        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| bun_core::err!("InvalidCharacter"))
     }
 }
 

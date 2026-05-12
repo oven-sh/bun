@@ -1563,7 +1563,8 @@ impl PrimitiveType {
 /// inline variants are stored by value. `StoreRef` is `Copy` + `Deref`, so
 /// `Data` is `Copy` and `let Data::EBinary(b) = data; b.op` works (matching
 /// Zig's `data.e_binary.op`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bun_core::EnumTag)]
+#[enum_tag(existing = Tag)]
 pub enum Data {
     EArray(StoreRef<E::Array>),
     EUnary(StoreRef<E::Unary>),
@@ -1928,55 +1929,6 @@ impl Data {
     #[inline]
     pub fn tag_name(&self) -> &'static str {
         self.tag().into()
-    }
-
-    pub fn tag(&self) -> Tag {
-        match self {
-            Data::EArray(_) => Tag::EArray,
-            Data::EUnary(_) => Tag::EUnary,
-            Data::EBinary(_) => Tag::EBinary,
-            Data::EClass(_) => Tag::EClass,
-            Data::ENew(_) => Tag::ENew,
-            Data::EFunction(_) => Tag::EFunction,
-            Data::ECall(_) => Tag::ECall,
-            Data::EDot(_) => Tag::EDot,
-            Data::EIndex(_) => Tag::EIndex,
-            Data::EArrow(_) => Tag::EArrow,
-            Data::EJsxElement(_) => Tag::EJsxElement,
-            Data::EObject(_) => Tag::EObject,
-            Data::ESpread(_) => Tag::ESpread,
-            Data::ETemplate(_) => Tag::ETemplate,
-            Data::ERegExp(_) => Tag::ERegExp,
-            Data::EAwait(_) => Tag::EAwait,
-            Data::EYield(_) => Tag::EYield,
-            Data::EIf(_) => Tag::EIf,
-            Data::EImport(_) => Tag::EImport,
-            Data::EIdentifier(_) => Tag::EIdentifier,
-            Data::EImportIdentifier(_) => Tag::EImportIdentifier,
-            Data::EPrivateIdentifier(_) => Tag::EPrivateIdentifier,
-            Data::ECommonjsExportIdentifier(_) => Tag::ECommonjsExportIdentifier,
-            Data::EBoolean(_) => Tag::EBoolean,
-            Data::EBranchBoolean(_) => Tag::EBranchBoolean,
-            Data::ENumber(_) => Tag::ENumber,
-            Data::EBigInt(_) => Tag::EBigInt,
-            Data::EString(_) => Tag::EString,
-            Data::ERequireString(_) => Tag::ERequireString,
-            Data::ERequireResolveString(_) => Tag::ERequireResolveString,
-            Data::ERequireCallTarget => Tag::ERequireCallTarget,
-            Data::ERequireResolveCallTarget => Tag::ERequireResolveCallTarget,
-            Data::EMissing(_) => Tag::EMissing,
-            Data::EThis(_) => Tag::EThis,
-            Data::ESuper(_) => Tag::ESuper,
-            Data::ENull(_) => Tag::ENull,
-            Data::EUndefined(_) => Tag::EUndefined,
-            Data::ENewTarget(_) => Tag::ENewTarget,
-            Data::EImportMeta(_) => Tag::EImportMeta,
-            Data::EImportMetaMain(_) => Tag::EImportMetaMain,
-            Data::ERequireMain => Tag::ERequireMain,
-            Data::ESpecial(_) => Tag::ESpecial,
-            Data::EInlinedEnum(_) => Tag::EInlinedEnum,
-            Data::ENameOfSymbol(_) => Tag::ENameOfSymbol,
-        }
     }
 
     // Zig: `pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag))`

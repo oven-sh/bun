@@ -39,23 +39,7 @@ use crate::cli::command::{ContextData, Tag as CommandTag};
 
 bun_core::declare_scope!(RUN_LOG, visible);
 
-/// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-/// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared
-/// `UnwrapOrOom` is exported from a lower-tier crate yet, so define it here.
-trait UnwrapOrOom {
-    type Output;
-    fn unwrap_or_oom(self) -> Self::Output;
-}
-impl<T, E> UnwrapOrOom for ::core::result::Result<T, E> {
-    type Output = T;
-    #[inline]
-    fn unwrap_or_oom(self) -> T {
-        match self {
-            Ok(v) => v,
-            Err(_) => bun_core::out_of_memory(),
-        }
-    }
-}
+use bun_core::UnwrapOrOom;
 
 /// Port of `bun.pathLiteral` — picks the POSIX or Windows literal at compile
 /// time. Local because `bun_paths` does not export a macro form yet.
@@ -345,9 +329,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         #[cfg(not(windows))]
         let ipc_fd: Option<bun_sys::Fd> =
             bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
-                ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
-                    i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
-                })
+                bun_core::fmt::parse_int::<u32>(s, 10).ok()
+                    .and_then(|fd| i32::try_from(fd).ok().map(bun_sys::Fd::from_native))
             });
         #[cfg(windows)]
         let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
@@ -856,8 +839,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
         bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
+        bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
@@ -1051,8 +1033,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         bun_jsc::initialize(false);
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
+        bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
@@ -3275,7 +3256,7 @@ impl RunCommand {
             // pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Some(n) =
-                    ::core::str::from_utf8(env).ok().and_then(|s| s.parse::<u16>().ok())
+                    bun_core::fmt::parse_int::<u16>(env, 10).ok()
                 {
                     if n > 0 {
                         break 'brk n;

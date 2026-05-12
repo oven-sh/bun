@@ -224,7 +224,7 @@ impl SocketAddress {
                 inner = &inner[..pct];
                 // Numeric zone → scope_id directly (matches std.net.Ip6Address.parse).
                 // Non-numeric zone would require if_nametoindex; treat as invalid here.
-                scope_id = match core::str::from_utf8(zone).ok().and_then(|s| s.parse::<u32>().ok()) {
+                scope_id = match bun_core::fmt::parse_int::<u32>(zone, 10).ok() {
                     Some(id) => id,
                     None => return Ok(JSValue::UNDEFINED),
                 };
@@ -967,43 +967,8 @@ pub mod inet {
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    /// `ws2def.h`: `typedef USHORT ADDRESS_FAMILY;`
-    pub type sa_family_t = u16;
-    pub type in_port_t = u16;
+    pub use bun_sys::net::{sa_family_t, in_port_t, sockaddr_in, sockaddr_in6};
     pub type socklen_t = super::ares::ares_socklen_t;
-
-    // Zig `std.posix.sockaddr.in`/`.in6` shape (un-prefixed field names).
-    // Layout-identical to ws2def.h `SOCKADDR_IN`/`SOCKADDR_IN6` (no leading
-    // `len` byte on Windows; `ADDRESS_FAMILY = USHORT`). Kept distinct from
-    // `bun_sys::posix::sockaddr_in` (which uses C `sin_*` names) so the
-    // SocketAddress body — written against Zig field names — stays
-    // target-agnostic.
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub addr: u32,
-        pub zero: [u8; 8],
-    }
-    impl sockaddr_in {
-        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
-    }
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in6 {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub flowinfo: u32,
-        pub addr: [u8; 16],
-        pub scope_id: u32,
-    }
-    impl sockaddr_in6 {
-        pub const ZEROED: Self =
-            Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
-    }
-    const _: () = assert!(core::mem::size_of::<sockaddr_in>() == core::mem::size_of::<ws2::sockaddr_in>());
-    const _: () = assert!(core::mem::size_of::<sockaddr_in6>() == core::mem::size_of::<ws2::sockaddr_in6>());
 }
 
 #[cfg(not(windows))]
@@ -1016,85 +981,8 @@ pub mod inet {
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-    pub type sa_family_t = libc::sa_family_t;
-    pub type in_port_t = libc::in_port_t;
+    pub use bun_sys::net::{sa_family_t, in_port_t, sockaddr_in, sockaddr_in6};
     pub type socklen_t = super::ares::ares_socklen_t;
-
-    // Zig `std.posix.sockaddr.in`/`.in6` shape (field names without `sin_`
-    // prefix). Layout matches the platform C struct; on BSD a leading `len: u8`
-    // precedes `family: u8` (sa_family_t = u8 there). Zig defaults
-    // `len = @sizeOf(in)`, mirrored here via the `ZEROED` associated const so
-    // struct-update initializers (`..sockaddr_in::ZEROED`) work uniformly on
-    // all targets and in `const` context.
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in {
-        pub len: u8,
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub addr: u32,
-        pub zero: [u8; 8],
-    }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    impl sockaddr_in {
-        pub const ZEROED: Self = Self {
-            len: core::mem::size_of::<Self>() as u8,
-            family: 0,
-            port: 0,
-            addr: 0,
-            zero: [0; 8],
-        };
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub addr: u32,
-        pub zero: [u8; 8],
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    impl sockaddr_in {
-        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
-    }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in6 {
-        pub len: u8,
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub flowinfo: u32,
-        pub addr: [u8; 16],
-        pub scope_id: u32,
-    }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    impl sockaddr_in6 {
-        pub const ZEROED: Self = Self {
-            len: core::mem::size_of::<Self>() as u8,
-            family: 0,
-            port: 0,
-            flowinfo: 0,
-            addr: [0; 16],
-            scope_id: 0,
-        };
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct sockaddr_in6 {
-        pub family: sa_family_t,
-        pub port: in_port_t,
-        pub flowinfo: u32,
-        pub addr: [u8; 16],
-        pub scope_id: u32,
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    impl sockaddr_in6 {
-        pub const ZEROED: Self = Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
-    }
 }
 
 // ported from: src/runtime/socket/SocketAddress.zig

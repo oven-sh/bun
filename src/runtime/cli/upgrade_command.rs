@@ -70,15 +70,6 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn initialize_store() {
-    bun_core::run_once! {{
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
-    }}
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
 pub struct Version {
     pub zip_url: Box<[u8]>,
     pub tag: Box<[u8]>,
@@ -332,7 +323,7 @@ impl UpgradeCommand {
         let mut log = bun_ast::Log::init();
         // defer if SILENT log.deinit() — Drop handles this
         let source = bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
-        initialize_store();
+        bun_ast::initialize_store();
         // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
         // CLI path so use the process-lifetime CLI arena (Zig used the global
         // Expr/Stmt store which is process-lifetime anyway).

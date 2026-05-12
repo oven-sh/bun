@@ -88,13 +88,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     return Ok(SQLDataCell { tag: CellTag::Uint8, value: CellValue { uint8: val }, ..Default::default() });
                 }
                 let mut buffer = [0u8; 22];
-                let written = {
-                    use std::io::Write;
-                    let mut w = &mut buffer[..];
-                    write!(w, "{}", val).expect("unreachable");
-                    22 - w.len()
-                };
-                let slice = &buffer[..written];
+                let slice = bun_core::fmt::int_as_bytes(&mut buffer, val);
                 return Ok(SQLDataCell {
                     tag: CellTag::String,
                     value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
@@ -110,13 +104,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell { tag: CellTag::Int8, value: CellValue { int8: val }, ..Default::default() });
             }
             let mut buffer = [0u8; 22];
-            let written = {
-                use std::io::Write;
-                let mut w = &mut buffer[..];
-                write!(w, "{}", val).expect("unreachable");
-                22 - w.len()
-            };
-            let slice = &buffer[..written];
+            let slice = bun_core::fmt::int_as_bytes(&mut buffer, val);
             Ok(SQLDataCell {
                 tag: CellTag::String,
                 value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },

@@ -646,11 +646,6 @@ struct RootDep {
     dep_type: DependencyType,
 }
 
-struct Section {
-    key: &'static [u8],
-    dep_type: DependencyType,
-}
-
 #[derive(Clone)]
 struct VersionInfo {
     version: Vec<u8>,
@@ -769,14 +764,15 @@ pub fn migrate_yarn_lockfile<'a>(
             0
         };
 
-        let sections: [Section; 4] = [
-            Section { key: b"dependencies", dep_type: DependencyType::Production },
-            Section { key: b"devDependencies", dep_type: DependencyType::Development },
-            Section { key: b"optionalDependencies", dep_type: DependencyType::Optional },
-            Section { key: b"peerDependencies", dep_type: DependencyType::Peer },
-        ];
-        for section_info in sections.iter() {
-            let Some(prop) = package_json.as_property(section_info.key) else {
+        use bun_install_types::DependencyGroup;
+        // prop literals come from canonical; DependencyType retained as yarn-lexer-local discriminant
+        for (group, dep_type) in [
+            (DependencyGroup::DEPENDENCIES, DependencyType::Production),
+            (DependencyGroup::DEV, DependencyType::Development),
+            (DependencyGroup::OPTIONAL, DependencyType::Optional),
+            (DependencyGroup::PEER, DependencyType::Peer),
+        ] {
+            let Some(prop) = package_json.as_property(group.prop) else {
                 continue;
             };
             let bun_ast::ExprData::EObject(e_object) = &prop.expr.data else {
@@ -805,7 +801,7 @@ pub fn migrate_yarn_lockfile<'a>(
                 root_dependencies.push(RootDep {
                     name,
                     version,
-                    dep_type: section_info.dep_type,
+                    dep_type,
                 });
                 root_dep_count_from_package_json += 1;
             }

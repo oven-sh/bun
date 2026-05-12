@@ -181,12 +181,7 @@ pub struct AstAlloc;
 /// `Vec` whose backing buffer lives in the thread-local AST `mi_heap_t`.
 pub type AstVec<T> = Vec<T, AstAlloc>;
 
-#[inline(always)]
-fn alloc_result(p: *mut u8, size: usize) -> Result<NonNull<[u8]>, AllocError> {
-    NonNull::new(p)
-        .map(|p| NonNull::slice_from_raw_parts(p, size))
-        .ok_or(AllocError)
-}
+use crate::alloc_result;
 
 /// Bump fast path: align `cur` up to `layout.align()`, carve `layout.size()`
 /// bytes if they fit before `end`, else null. Address arithmetic only — `cur`
@@ -276,12 +271,8 @@ unsafe impl Allocator for AstAlloc {
         if theap.is_null() {
             // Global fallback (no AST scope active). `mi_malloc` tolerates
             // `size == 0` (unique non-null pointer), so no special-casing.
-            let p = if mimalloc::must_use_aligned_alloc(layout.align()) {
-                mimalloc::mi_malloc_aligned(layout.size(), layout.align())
-            } else {
-                mimalloc::mi_malloc(layout.size())
-            };
-            return alloc_result(p.cast(), layout.size());
+            let p = mimalloc::mi_malloc_auto_align(layout.size(), layout.align());
+            return alloc_result(p, layout.size());
         }
         // Bump fast path. `cur`/`end` start null after `set_thread_heap`; the
         // capacity check then fails and we fall through to `bump_refill`.
@@ -339,12 +330,7 @@ unsafe impl Allocator for AstAlloc {
             // not a mimalloc block head), so `mi_realloc_aligned` is unsound.
             // Allocate a fresh global block, copy the prefix, and abandon the
             // old slot — same leak semantics as `deallocate`.
-            let p = if mimalloc::must_use_aligned_alloc(new.align()) {
-                mimalloc::mi_malloc_aligned(new.size(), new.align())
-            } else {
-                mimalloc::mi_malloc(new.size())
-            }
-            .cast::<u8>();
+            let p = mimalloc::mi_malloc_auto_align(new.size(), new.align()).cast::<u8>();
             let p = NonNull::new(p).ok_or(AllocError)?;
             // SAFETY: `p` is a fresh `new.size()`-byte block disjoint from
             // `ptr`; `old.size()` bytes at `ptr` are initialized per the

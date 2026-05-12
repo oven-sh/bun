@@ -29,6 +29,61 @@ macro_rules! impl_get_errno_libc {
     )+};
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// __decl_uv_e! — single source of truth for the per-OS `uv_e` table.
+//
+// Each per-OS errno module invokes this once with `(IDENT = value => "DISPLAY")`
+// rows. The macro emits BOTH directions:
+//   • forward  : `pub const IDENT: i32 = value;`   (Zig: `UV_E` namespace struct)
+//   • reverse  : `pub fn name(neg_uv_err) -> Option<&'static str>`
+//                (Zig: hand-written if-chain in node_util_binding.zig:1-98)
+//
+// The reverse map additionally hard-codes the libuv-synthetic codes that are
+// target-INDEPENDENT and have no `uv_e::*` const today (`EOF`, `UNKNOWN`,
+// `EAI_*`). Node's `util.getSystemErrorName()` requires them; without this the
+// JS-visible result for `-4095` would regress to `"Unknown system error -4095"`.
+// ──────────────────────────────────────────────────────────────────────────
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __decl_uv_e {
+    ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
+        $( pub const $ident: i32 = $value; )+
+
+        /// Negated libuv error code (`-UV_E*`) → user-visible name.
+        /// `None` for unmapped values (caller falls back to
+        /// `"Unknown system error N"`). Input is the raw signed value as
+        /// returned to JS — i.e. `-uv_e::FOO`.
+        pub fn name(neg_uv_err: i32) -> Option<&'static str> {
+            // Target-independent libuv-synthetic codes (no `uv_e::*` const).
+            // Values from vendor/libuv/include/uv/errno.h.
+            match neg_uv_err {
+                -4095 => return Some("EOF"),
+                -4094 => return Some("UNKNOWN"),
+                -3000 => return Some("EAI_ADDRFAMILY"),
+                -3001 => return Some("EAI_AGAIN"),
+                -3002 => return Some("EAI_BADFLAGS"),
+                -3003 => return Some("EAI_CANCELED"),
+                -3004 => return Some("EAI_FAIL"),
+                -3005 => return Some("EAI_FAMILY"),
+                -3006 => return Some("EAI_MEMORY"),
+                -3007 => return Some("EAI_NODATA"),
+                -3008 => return Some("EAI_NONAME"),
+                -3009 => return Some("EAI_OVERFLOW"),
+                -3010 => return Some("EAI_SERVICE"),
+                -3011 => return Some("EAI_SOCKTYPE"),
+                -3013 => return Some("EAI_BADHINTS"),
+                -3014 => return Some("EAI_PROTOCOL"),
+                _ => {}
+            }
+            // Per-OS rows. `if`-chain (not `match`) because two `$value`s may
+            // resolve to the same integer on some targets (e.g. EAGAIN ==
+            // EWOULDBLOCK), which `match` rejects as an unreachable pattern.
+            $( if neg_uv_err == -($ident) { return Some($display); } )+
+            None
+        }
+    };
+}
+
 #[cfg(target_os = "macos")] pub mod darwin_errno;
 #[cfg(target_os = "macos")] pub use darwin_errno::*;
 #[cfg(target_os = "freebsd")] pub mod freebsd_errno;
@@ -102,6 +157,27 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
     rc.get_errno()
 }
 
+/// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
+///
+/// Decode a Node-style **negated** errno (`c_int`, as written by
+/// `Error::to_system_error`) back into an `E`. The input crosses FFI
+/// (BunObject.cpp `SystemError__*`) and is NOT trusted to be a declared
+/// discriminant: Zig `@enumFromInt` is unchecked, but in Rust an out-of-range
+/// `#[repr(u16)]` enum value is immediate UB. Validate via the checked
+/// constructor and fall back to `SUCCESS` for unmapped values.
+#[inline]
+pub fn e_from_negated(errno: core::ffi::c_int) -> E {
+    let n = errno.wrapping_neg();
+    #[cfg(windows)]
+    {
+        u16::try_from(n).ok().and_then(E::try_from_raw).unwrap_or(E::SUCCESS)
+    }
+    #[cfg(not(windows))]
+    {
+        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::SUCCESS)
+    }
+}
+
 impl SystemErrno {
     /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast.
     ///
@@ -147,5 +223,130 @@ impl SystemErrno {
 impl bun_core::output::ErrName for SystemErrno {
     fn name(&self) -> &[u8] {
         <&'static str>::from(*self).as_bytes()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// system_errno_name — single source of truth for errno → "@tagName"
+//
+// Mirrors Zig `@tagName(SystemErrno)` (bun.zig:2841-2851 builds `errno_map`
+// by iterating `std.enums.values(sys.SystemErrno)`). The strum::IntoStaticStr
+// derive on each per-OS `SystemErrno` IS the table; no hand-written `&[&str]`
+// duplicate exists anywhere. bun_core (T0) consumes this through the
+// `ErrnoNames` link-interface below — bun_errno already depends on bun_core,
+// so a direct Cargo edge would cycle.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Platform errno integer → its `SystemErrno` tag name.
+/// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
+/// the contract bun_core's `Error::from_errno` / `coreutils_error_map` rely on.
+#[inline]
+pub fn system_errno_name(errno: i32) -> Option<&'static str> {
+    #[cfg(not(windows))]
+    {
+        if errno <= 0 { return None; }
+        SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
+    }
+    #[cfg(windows)]
+    {
+        // Windows libuv errnos arrive negated; abs-normalise like the Zig
+        // `errno_map[@abs(uv_code)]` lookup. `from_repr` (strum::FromRepr)
+        // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
+        let n = errno.unsigned_abs();
+        if n == 0 { return None; }
+        u16::try_from(n).ok()
+            .and_then(SystemErrno::from_repr)
+            .map(<&'static str>::from)
+    }
+}
+
+/// Length of the dense `0..MAX` prefix of `SystemErrno` (i.e. the size Zig's
+/// comptime `errno_map` would have on POSIX, or the dense head on Windows
+/// before the sparse UV_* range). Exposed so bun_core can pre-seed its
+/// interned `ERRNO_MAP` without a second hand-written per-OS length table.
+#[inline]
+pub const fn system_errno_max_dense() -> u32 {
+    SystemErrno::MAX as u32
+}
+
+// Wire the above into bun_core's `ErrnoNames` hook. `()` owner — pure
+// stateless functions; the handle is the const `ErrnoNames::SYS`.
+bun_core::link_impl_ErrnoNames! {
+    Sys for () => |_this| {
+        name(errno) => system_errno_name(errno),
+        max_dense() => system_errno_max_dense(),
+    }
+}
+
+#[cfg(test)]
+mod errno_name_tests {
+    use super::*;
+    use bun_core::{Error, coreutils_error_map};
+
+    #[test]
+    fn errno_mapping() {
+        assert_eq!(Error::from_errno(2).name(), "ENOENT");
+        assert_eq!(Error::from_errno(2), Error::intern("ENOENT"));
+        assert_eq!(Error::from_errno(12), Error::intern("ENOMEM"));
+        assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
+        assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
+        // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
+        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        {
+            assert_eq!(Error::from_errno(11), Error::intern("EAGAIN"));
+            assert_eq!(Error::from_errno(104), Error::intern("ECONNRESET"));
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            assert_eq!(Error::from_errno(11), Error::intern("EDEADLK"));
+            assert_eq!(Error::from_errno(35), Error::intern("EAGAIN"));
+            assert_eq!(Error::from_errno(54), Error::intern("ECONNRESET"));
+        }
+    }
+
+    /// Exhaustive: every dense slot in the per-platform enum round-trips through
+    /// `system_errno_name → from_errno → name()` and matches the strum table,
+    /// covering the full Zig `SystemErrno` range.
+    #[test]
+    fn errno_table_full_range() {
+        // Slot 0 is the SUCCESS hole.
+        assert_eq!(system_errno_name(0), None);
+        let max = system_errno_max_dense();
+        for i in 1..max {
+            let name = system_errno_name(i as i32).expect("dense slot");
+            assert_eq!(Error::from_errno(i as i32).name(), name, "slot {i}");
+        }
+        // One past the dense end → Unexpected.
+        #[cfg(not(windows))]
+        assert_eq!(Error::from_errno(max as i32), Error::UNEXPECTED);
+
+        // Spot-check the last entry on each platform against the Zig source.
+        #[cfg(any(target_os = "linux", target_family = "wasm"))]
+        assert_eq!(system_errno_name(133), Some("EHWPOISON"));
+        #[cfg(windows)]
+        {
+            assert_eq!(system_errno_name(137), Some("EFTYPE"));
+            // Sparse UV_* range round-trips (bun.zig errno_map covers 0..=4096).
+            assert_eq!(Error::from_errno(-4058).name(), "UV_ENOENT");
+            assert_eq!(Error::from_errno(-4092).name(), "UV_EACCES");
+            assert_eq!(Error::from_errno(-4095).name(), "UV_EOF");
+            assert_eq!(Error::from_errno(-3008).name(), "UV_EAI_NONAME");
+            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
+            assert_eq!(Error::from_errno(-5000), Error::UNEXPECTED);
+        }
+        #[cfg(target_os = "macos")]
+        assert_eq!(system_errno_name(106), Some("EQFULL"));
+        #[cfg(target_os = "freebsd")]
+        assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
+    }
+
+    #[test]
+    fn coreutils_map() {
+        assert_eq!(coreutils_error_map::get(2), Some("No such file or directory"));
+        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        assert_eq!(coreutils_error_map::get(11), Some("Resource temporarily unavailable"));
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        assert_eq!(coreutils_error_map::get(11), Some("Resource deadlock avoided"));
+        assert_eq!(coreutils_error_map::get(0), None);
     }
 }

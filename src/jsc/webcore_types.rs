@@ -166,6 +166,24 @@ impl Blob {
         bun_core::heap::into_raw(Box::new(blob))
     }
 
+    /// JS-wrapper finalizer (codegen `BlobClass__finalize` thunk). Releases the
+    /// JS wrapper's `+1` on the intrusive refcount; the allocation may outlive
+    /// this call if other refs remain.
+    ///
+    /// Inherent (not on `BlobExt`) so the generated `Blob::finalize(b)` call
+    /// resolves here ahead of the blanket [`crate::JsFinalize::finalize`] —
+    /// trait-vs-trait would be ambiguous.
+    pub fn finalize(self: Box<Self>) {
+        debug_assert!(
+            self.is_heap_allocated(),
+            "`finalize` may only be called on a heap-allocated Blob"
+        );
+        // `release` returns the raw `m_ctx` pointer without dropping;
+        // `Blob__deref` runs `deinit()` (which `drop(heap::take)`s) when the
+        // count reaches zero.
+        Blob__deref(bun_core::heap::release(self));
+    }
+
     #[inline]
     pub fn is_heap_allocated(&self) -> bool {
         // Spec (Blob.zig:5092-5094): single read of `self.#ref_count.raw_value != 0`.
@@ -515,6 +533,8 @@ pub mod store {
     }
 
     /// `Store.Data` (Store.zig:37) — `union(enum) { bytes, file, s3 }`.
+    #[derive(bun_core::EnumTag)]
+    #[enum_tag(existing = DataTag)]
     pub enum Data {
         Bytes(Bytes),
         File(File),
@@ -530,35 +550,9 @@ pub mod store {
     }
 
     impl Data {
-        #[inline]
-        pub fn tag(&self) -> DataTag {
-            match self {
-                Self::Bytes(_) => DataTag::Bytes,
-                Self::File(_) => DataTag::File,
-                Self::S3(_) => DataTag::S3,
-            }
-        }
-        /// Panics if not a `File` (Zig: `data.file` union access).
-        pub fn as_file(&self) -> &File {
-            match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
-        }
-        pub fn as_file_mut(&mut self) -> &mut File {
-            match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
-        }
-        /// Panics if not `S3` (Zig: `data.s3` union access).
-        pub fn as_s3(&self) -> &S3 {
-            match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
-        }
-        pub fn as_s3_mut(&mut self) -> &mut S3 {
-            match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
-        }
-        /// Panics if not `Bytes` (Zig: `data.bytes` union access).
-        pub fn as_bytes(&self) -> &Bytes {
-            match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
-        }
-        pub fn as_bytes_mut(&mut self) -> &mut Bytes {
-            match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
-        }
+        bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
+        bun_core::enum_unwrap!(pub Data, S3    => fn as_s3    / as_s3_mut    -> S3);
+        bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
     }
 
     #[repr(u8)]

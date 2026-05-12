@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::mem::size_of;
 
 use bun_alloc::mimalloc;
+use bun_collections::VecExt as _;
 use bun_core as bun;
 
 // TODO(port): move externs to zlib_sys crate
@@ -546,14 +547,10 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    let initial = self.list_ptr.len();
-                    self.list_ptr.reserve(4096);
-                    // expandToCapacity:
-                    // SAFETY: capacity bytes are allocated; zlib will initialize them before len is observed.
-                    unsafe { self.list_ptr.set_len(self.list_ptr.capacity()) };
-                    // SAFETY: initial < len after expand; ptr is valid for avail_out bytes.
-                    self.zlib.next_out = unsafe { self.list_ptr.as_mut_ptr().add(initial) };
-                    self.zlib.avail_out = self.list_ptr.len().saturating_sub(initial) as uInt;
+                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    self.zlib.next_out = next_out;
+                    self.zlib.avail_out = avail_out as uInt;
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -1032,14 +1029,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    let initial = self.list_ptr.len();
-                    self.list_ptr.reserve(4096);
-                    // expandToCapacity:
-                    // SAFETY: capacity bytes are allocated; zlib will initialize them before len is observed.
-                    unsafe { self.list_ptr.set_len(self.list_ptr.capacity()) };
-                    // SAFETY: initial < len after expand; ptr is valid for avail_out bytes.
-                    self.zlib.next_out = unsafe { self.list_ptr.as_mut_ptr().add(initial) };
-                    self.zlib.avail_out = self.list_ptr.len().saturating_sub(initial) as uInt;
+                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    self.zlib.next_out = next_out;
+                    self.zlib.avail_out = avail_out as uInt;
                 }
 
                 if self.zlib.avail_out == 0 {

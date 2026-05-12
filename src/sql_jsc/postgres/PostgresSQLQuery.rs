@@ -201,13 +201,7 @@ impl PostgresSQLQuery {
 
     pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.this_value.with_mut(|r| r.finalize());
-        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
     }
 
     pub fn on_write_fail(
@@ -272,12 +266,6 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
-    fn consume_pending_value(this_value: JSValue, global_object: &JSGlobalObject) -> Option<JSValue> {
-        let pending_value = js::pending_value_get_cached(this_value)?;
-        js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
-        Some(pending_value)
-    }
-
     pub fn on_result(&self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
@@ -305,7 +293,7 @@ impl PostgresSQLQuery {
 
         event_loop.run_callback(function, global_object, this_value, &[
             target_value,
-            Self::consume_pending_value(this_value, global_object).unwrap_or(JSValue::UNDEFINED),
+            js::pending_value_take_cached(this_value, global_object).unwrap_or(JSValue::UNDEFINED),
             js_tag,
             tag.to_js_number(),
             if connection.is_empty() {

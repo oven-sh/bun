@@ -18,3 +18,13 @@ pub use ETag::wtf;
 // `create_hash_table`/`ALL` all compile. Only `by_loader` remains gated
 // (same-tier `bun_ast::Loader`, intra-tier edge avoided).
 pub mod MimeType;
+
+/// `std.fmt.parseInt(usize, value, 10) catch 0` — RFC 9110 Content-Length is
+/// `1*DIGIT`, so any parse failure (empty / non-digit / overflow) maps to 0.
+/// Zig has no dedicated helper (http.zig:2800, server.zig:2442, etc. all inline
+/// the `catch 0`); this wrapper gives the Rust port ONE call shape across
+/// bun_http / bun_runtime::server / s3. Backed by the std.fmt.parseInt port.
+#[inline]
+pub fn parse_content_length(value: &[u8]) -> usize {
+    bun_string::strings::parse_int::<usize>(value, 10).unwrap_or(0)
+}

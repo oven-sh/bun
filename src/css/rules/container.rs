@@ -56,7 +56,7 @@ impl ContainerName {
 pub use ContainerName as ContainerNameFns;
 pub type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum ContainerSizeFeatureId {
     /// The [width](https://w3c.github.io/csswg-drafts/css-contain-3/#width) size container feature.
     Width,
@@ -99,54 +99,10 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     }
 }
 
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
-// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
-impl css::EnumProperty for ContainerSizeFeatureId {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"width") { return Some(Self::Width); }
-        if eq(ident, b"height") { return Some(Self::Height); }
-        if eq(ident, b"inline-size") { return Some(Self::InlineSize); }
-        if eq(ident, b"block-size") { return Some(Self::BlockSize); }
-        if eq(ident, b"aspect-ratio") { return Some(Self::AspectRatio); }
-        if eq(ident, b"orientation") { return Some(Self::Orientation); }
-        None
-    }
-}
-
-// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName` to get
-// the kebab-case variant name. Phase B should provide `#[derive(EnumProperty)]`.
-impl From<ContainerSizeFeatureId> for &'static str {
-    fn from(v: ContainerSizeFeatureId) -> &'static str {
-        match v {
-            ContainerSizeFeatureId::Width => "width",
-            ContainerSizeFeatureId::Height => "height",
-            ContainerSizeFeatureId::InlineSize => "inline-size",
-            ContainerSizeFeatureId::BlockSize => "block-size",
-            ContainerSizeFeatureId::AspectRatio => "aspect-ratio",
-            ContainerSizeFeatureId::Orientation => "orientation",
-        }
-    }
-}
-
 impl ContainerSizeFeatureId {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn to_css_with_prefix(&self, prefix: &[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(prefix)?;
         self.to_css(dest)
-    }
-}
-
-impl ContainerSizeFeatureId {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse::<Self>(input)
     }
 }
 
@@ -171,21 +127,26 @@ pub enum StyleQuery {
 
 impl ToCss for StyleQuery {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        match self {
-            StyleQuery::Feature(f) => f.to_css(dest, false),
-            StyleQuery::Not(c) => {
-                dest.write_str("not ")?;
-                let needs = c.needs_parens(None, &dest.targets);
-                media_query::to_css_with_parens_if_needed(&**c, dest, needs)
-            }
-            StyleQuery::Operation { operator, conditions } => {
-                media_query::operation_to_css::<StyleQuery>(*operator, conditions, dest)
-            }
-        }
+        self.condition_to_css(dest)
     }
 }
 
 impl QueryCondition for StyleQuery {
+    type Feature = Property;
+
+    fn as_feature(&self) -> Option<&Property> {
+        if let Self::Feature(f) = self { Some(f) } else { None }
+    }
+    fn as_not(&self) -> Option<&Self> {
+        if let Self::Not(c) = self { Some(c) } else { None }
+    }
+    fn as_operation(&self) -> Option<(Operator, &[Self])> {
+        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+    }
+    fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        f.to_css(dest, false)
+    }
+
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
@@ -252,26 +213,32 @@ pub enum ContainerCondition {
 
 impl ToCss for ContainerCondition {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        match self {
-            ContainerCondition::Feature(f) => f.to_css(dest),
-            ContainerCondition::Not(c) => {
-                dest.write_str("not ")?;
-                let needs = c.needs_parens(None, &dest.targets);
-                media_query::to_css_with_parens_if_needed(&**c, dest, needs)
-            }
-            ContainerCondition::Operation { operator, conditions } => {
-                media_query::operation_to_css::<ContainerCondition>(*operator, conditions, dest)
-            }
-            ContainerCondition::Style(query) => {
-                dest.write_str("style(")?;
-                query.to_css(dest)?;
-                dest.write_char(b')')
-            }
-        }
+        self.condition_to_css(dest)
     }
 }
 
 impl QueryCondition for ContainerCondition {
+    type Feature = ContainerSizeFeature;
+
+    fn as_feature(&self) -> Option<&ContainerSizeFeature> {
+        if let Self::Feature(f) = self { Some(f) } else { None }
+    }
+    fn as_not(&self) -> Option<&Self> {
+        if let Self::Not(c) = self { Some(c) } else { None }
+    }
+    fn as_operation(&self) -> Option<(Operator, &[Self])> {
+        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+    }
+    fn feature_to_css(f: &ContainerSizeFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        f.to_css(dest)
+    }
+    fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let Self::Style(query) = self else { unreachable!() };
+        dest.write_str("style(")?;
+        query.to_css(dest)?;
+        dest.write_char(b')')
+    }
+
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
         let feature = QueryFeature::<ContainerSizeFeatureId>::parse(input)?;
         Ok(ContainerCondition::Feature(feature))

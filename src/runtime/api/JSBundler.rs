@@ -1895,10 +1895,6 @@ impl BuildArtifact {
         this.sourcemap.get().unwrap_or(JSValue::NULL)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,

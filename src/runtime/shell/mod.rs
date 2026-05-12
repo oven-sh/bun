@@ -146,97 +146,12 @@ pub mod subproc;
 pub const SUBSHELL_TODO_ERROR: &str =
     "Subshells are not implemented, please open GitHub issue!";
 
-// ─── shell escaping (un-gated from shell_body.rs) ────────────────────────────
-// Port of `shell.zig` escape8Bit / needsEscapeUtf8AsciiLatin1 / SPECIAL_CHARS.
-// Exposed here so `run_command.rs` / `filter_run.rs` passthrough-arg escaping
-// can call `crate::shell::*` while the full lexer/parser in `shell_body.rs`
-// remains ``-gated.
-
-/// 0x08 — Bell; cannot be typed as a literal. Guards lexer-internal `__bun_` /
-/// `__bunstr_` markers from colliding with user input.
-pub const SPECIAL_JS_CHAR: u8 = 8;
-
-/// Characters that need to be escaped (shell.zig:4165).
-pub const SPECIAL_CHARS: [u8; 34] = [
-    b'~', b'[', b']', b'#', b';', b'\n', b'*', b'{', b',', b'}', b'`', b'$', b'=', b'(', b')',
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'|', b'>', b'<', b'&', b'\'',
-    b'"', b' ', b'\\', SPECIAL_JS_CHAR,
-];
-
-// PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
-// `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so
-// a 256-entry membership table is materialised as `[bool; 256]` instead — same
-// O(1) byte-indexed lookup, const-evaluable.
-const SPECIAL_CHARS_TABLE: [bool; 256] = {
-    let mut table = [false; 256];
-    let mut i = 0;
-    while i < SPECIAL_CHARS.len() {
-        table[SPECIAL_CHARS[i] as usize] = true;
-        i += 1;
-    }
-    table
+// ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
+// Re-export so `crate::shell::*` callers resolve without duplicating the table.
+pub use bun_shell_parser::{
+    assert_special_char, escape_8bit, needs_escape_utf16, needs_escape_utf8_ascii_latin1,
+    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
 };
-
-#[inline]
-pub fn assert_special_char(c: u8) {
-    debug_assert!(SPECIAL_CHARS_TABLE[c as usize]);
-}
-
-/// Characters that need to be backslashed inside double quotes.
-pub const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
-
-/// works for utf-8, latin-1, and ascii — port of `shell.zig` escape8Bit.
-///
-/// Runtime `add_quotes` (Zig is `comptime`): callers in `run_command.rs` /
-/// `filter_run.rs` pass a literal `true`; the branch is trivially predicted.
-pub fn escape_8bit(
-    str: &[u8],
-    outbuf: &mut Vec<u8>,
-    add_quotes: bool,
-) -> Result<(), bun_alloc::AllocError> {
-    outbuf.reserve(str.len());
-
-    if add_quotes {
-        outbuf.push(b'"');
-    }
-
-    'outer: for &c in str {
-        for &spc in &BACKSLASHABLE_CHARS {
-            if spc == c {
-                outbuf.extend_from_slice(&[b'\\', c]);
-                continue 'outer;
-            }
-        }
-        outbuf.push(c);
-    }
-
-    if add_quotes {
-        outbuf.push(b'"');
-    }
-    Ok(())
-}
-
-/// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
-/// indicates the *possibility* that the string must be escaped, so it can have
-/// false positives, but it is faster than running the shell lexer through the
-/// input string for a more correct implementation.
-pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
-    for &c in str {
-        if SPECIAL_CHARS_TABLE[c as usize] {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn needs_escape_utf16(str: &[u16]) -> bool {
-    for &codeunit in str {
-        if codeunit < 0xff && SPECIAL_CHARS_TABLE[codeunit as usize] {
-            return true;
-        }
-    }
-    false
-}
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST

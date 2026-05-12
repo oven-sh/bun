@@ -303,27 +303,9 @@ enum PrepareResult<'bump> {
 }
 
 impl<'bump> PrepareResult<'bump> {
-    #[inline]
-    fn into_value(self) -> Expr {
-        match self {
-            PrepareResult::Value(e) => e,
-            _ => unreachable!(),
-        }
-    }
-    #[inline]
-    fn into_section(self) -> &'bump mut Rope {
-        match self {
-            PrepareResult::Section(r) => r,
-            _ => unreachable!(),
-        }
-    }
-    #[inline]
-    fn into_key(self) -> &'bump [u8] {
-        match self {
-            PrepareResult::Key(s) => s,
-            _ => unreachable!(),
-        }
-    }
+    bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr);
+    bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope);
+    bun_core::enum_unwrap!(PrepareResult, Key     => into fn into_key     -> &'bump [u8]);
 }
 
 impl<'a> Parser<'a> {

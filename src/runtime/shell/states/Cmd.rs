@@ -675,17 +675,16 @@ impl Cmd {
 
         let Some(redirect) = &node.redirect_file else {
             if flags.duplicate_out() {
-                use crate::api::bun_process::StdioKind as Dup2Kind;
                 if flags.stdout() {
                     stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
-                        out: Dup2Kind::Stderr,
-                        to: Dup2Kind::Stdout,
+                        out: StdioKind::Stderr,
+                        to: StdioKind::Stdout,
                     });
                 }
                 if flags.stderr() {
                     stdio[STDOUT_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
-                        out: Dup2Kind::Stdout,
-                        to: Dup2Kind::Stderr,
+                        out: StdioKind::Stdout,
+                        to: StdioKind::Stderr,
                     });
                 }
             }

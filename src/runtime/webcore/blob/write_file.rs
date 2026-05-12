@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Error;
@@ -11,7 +10,7 @@ use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::ZigStringJsc as _;
 use bun_str::ZigString;
 use bun_sys::{self as sys, Fd};
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 use crate::webcore::blob::{
     self, mkdir_if_not_exists, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry,
@@ -65,6 +64,8 @@ pub struct WriteFile {
     pub close_after_io: bool,
     pub mkdirp_if_not_exists: bool,
 }
+
+bun_threading::intrusive_work_task!(WriteFile, task);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Zig: `pub const getFd = FileOpener(@This()).getFd;`
@@ -148,9 +149,7 @@ impl FileCloser for WriteFile {
 
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
-        let this: &mut WriteFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(WriteFile, task, task))
-        };
+        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
         this.close_after_io = false;
         WriteFile::update(this);
     }
@@ -453,9 +452,7 @@ impl WriteFile {
 
     unsafe fn do_write_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to WriteFile.task
-        let this: &mut WriteFile = unsafe {
-            &mut *bun_core::from_field_ptr!(WriteFile, task, task)
-        };
+        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]
         {

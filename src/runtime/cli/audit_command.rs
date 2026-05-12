@@ -452,13 +452,11 @@ fn send_audit_request(
     let compressor = unsafe { &mut *compressor_ptr };
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
-    let mut compressed_body = vec![0u8; max_compressed_size];
-
-    let compression_result = compressor.gzip(body, &mut compressed_body);
+    let mut compressed_body = Vec::with_capacity(max_compressed_size);
+    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
     // SAFETY: `compressor_ptr` was returned by `Compressor::alloc` and is not
     // used after this point (Zig: `defer compressor.deinit()`).
     unsafe { libdeflate::Compressor::destroy(compressor_ptr) };
-    compressed_body.truncate(compression_result.written);
     let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();

@@ -48,11 +48,10 @@ impl SignalCode {
     pub const DEFAULT: Self = Self::SIGTERM;
 
     pub fn name(self) -> Option<&'static str> {
-        if self.0 <= Self::SIGSYS.0 {
-            return Some(tag_name(self));
+        match self.0 {
+            1..=31 => Some(bun_core::SIGNAL_NAMES[self.0 as usize]),
+            _ => None,
         }
-
-        None
     }
 
     pub fn valid(self) -> bool {
@@ -154,47 +153,6 @@ pub static MAP: phf::Map<&'static [u8], SignalCode> = phf::phf_map! {
     b"SIGPWR" => SignalCode::SIGPWR,
     b"SIGSYS" => SignalCode::SIGSYS,
 };
-
-// Zig `@tagName` equivalent for the named range. Caller must ensure
-// `value.0 <= SIGSYS.0` (asserted in `name()`).
-fn tag_name(value: SignalCode) -> &'static str {
-    match value {
-        SignalCode::SIGHUP => "SIGHUP",
-        SignalCode::SIGINT => "SIGINT",
-        SignalCode::SIGQUIT => "SIGQUIT",
-        SignalCode::SIGILL => "SIGILL",
-        SignalCode::SIGTRAP => "SIGTRAP",
-        SignalCode::SIGABRT => "SIGABRT",
-        SignalCode::SIGBUS => "SIGBUS",
-        SignalCode::SIGFPE => "SIGFPE",
-        SignalCode::SIGKILL => "SIGKILL",
-        SignalCode::SIGUSR1 => "SIGUSR1",
-        SignalCode::SIGSEGV => "SIGSEGV",
-        SignalCode::SIGUSR2 => "SIGUSR2",
-        SignalCode::SIGPIPE => "SIGPIPE",
-        SignalCode::SIGALRM => "SIGALRM",
-        SignalCode::SIGTERM => "SIGTERM",
-        SignalCode::SIG16 => "SIG16",
-        SignalCode::SIGCHLD => "SIGCHLD",
-        SignalCode::SIGCONT => "SIGCONT",
-        SignalCode::SIGSTOP => "SIGSTOP",
-        SignalCode::SIGTSTP => "SIGTSTP",
-        SignalCode::SIGTTIN => "SIGTTIN",
-        SignalCode::SIGTTOU => "SIGTTOU",
-        SignalCode::SIGURG => "SIGURG",
-        SignalCode::SIGXCPU => "SIGXCPU",
-        SignalCode::SIGXFSZ => "SIGXFSZ",
-        SignalCode::SIGVTALRM => "SIGVTALRM",
-        SignalCode::SIGPROF => "SIGPROF",
-        SignalCode::SIGWINCH => "SIGWINCH",
-        SignalCode::SIGIO => "SIGIO",
-        SignalCode::SIGPWR => "SIGPWR",
-        SignalCode::SIGSYS => "SIGSYS",
-        // value 0 falls through here too (Zig @tagName on 0 is UB; name() in Zig
-        // would still hit this branch since 0 <= SIGSYS — preserving behavior).
-        _ => unreachable!(),
-    }
-}
 
 // This wrapper struct is lame, what if bun's color formatter was more versatile
 pub struct Fmt {

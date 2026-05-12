@@ -215,23 +215,6 @@ pub fn write_test_status_line(status: bun_test::Execution::Result, writer: &mut 
 // `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
 // reborrows. Call sites use the `Output` accessors directly.
 
-/// Local shim: `bun_io::Write` over the vtable-erased `bun_core::io::Writer`
-/// (stderr/stdout). Upstream `bun_core::io::Writer` does not implement
-/// `bun_io::Write`; this bridges the two without an upstream edit so
-/// `splat_byte_all` / `coverage::Text::write_format_with_values` can take the
-/// console writer directly.
-struct CoreIoWriteAdapter<'a>(&'a mut bun_core::io::Writer);
-impl bun_io::Write for CoreIoWriteAdapter<'_> {
-    #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        self.0.write_all(bytes)
-    }
-    #[inline]
-    fn flush(&mut self) -> bun_io::Result<()> {
-        self.0.flush()
-    }
-}
-
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
@@ -1421,7 +1404,9 @@ impl CommandLineReporter {
             0
         };
 
-        let mut console = CoreIoWriteAdapter(Output::error_writer());
+        // `&mut bun_core::io::Writer: bun_io::Write` (impl in `bun_core::io`);
+        // `splat_byte_all` / `write_all` resolve via the trait import at top.
+        let mut console = Output::error_writer();
         let base_fraction = opts.fractions;
         let mut failing = false;
 
@@ -1884,8 +1869,7 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
+        bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {

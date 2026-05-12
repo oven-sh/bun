@@ -248,14 +248,9 @@ impl Fs {
     // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
 }
 
-// ── un-gated B-2 ──────────────────────────────────────────────────────────
-// `bun_resolver::fs::RealFS::read_file_with_handle{,_and_allocator}` is still
-// in the gated `fs_full` draft. The bodies below open + read via `bun_sys`
-// directly (which is exactly what the resolver method would do) so the
-// transpiler/ParseTask paths un-block without waiting on that crate.
-//
-// `RealFS::need_to_close_files()` is the only resolver call we actually need
-// and is live on the inline `bun_resolver::fs::RealFS`.
+// File reads route through the canonical `bun_resolver::fs::read_file_contents`
+// (one body for the stat→grow→pread-loop→BOM-strip path); these methods only
+// handle open/seek/close around it.
 impl Fs {
     /// Read `path` into the caller's `shared` buffer (HMR / dev-server path).
     pub fn read_file_shared(
@@ -285,7 +280,7 @@ impl Fs {
         });
 
         let contents =
-            match Self::read_handle_into(&file_handle, path.as_bytes(), true, shared, self.stream) {
+            match fs_mod::read_file_contents(&file_handle, path.as_bytes(), true, shared, self.stream).map(Contents::from) {
                 Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
@@ -385,7 +380,7 @@ impl Fs {
         let shared = self.shared_buffer();
 
         let contents =
-            match Self::read_handle_into(&file_handle, path, use_shared_buffer, shared, stream) {
+            match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream).map(Contents::from) {
                 Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
@@ -404,164 +399,6 @@ impl Fs {
             fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close { fd } else { Fd::INVALID },
             external_free_function: ExternalFreeFunction::NONE,
         })
-    }
-
-    /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1160) —
-    /// the resolver's port of that method is still in the gated `fs_full` module,
-    /// so we go to `bun_sys` directly. Returns provenance-tagged [`Contents`].
-    ///
-    /// PERF NOTE: the `use_shared_buffer=false` arm mirrors fs.zig:1250-1300 —
-    /// read into a 16 KiB stack buffer FIRST and only `fstat()` if the file
-    /// fills it. The previous `file.read_to_end()` stub went through
-    /// `read_to_end_with_array_list(SizeHint::UnknownSize)` which always
-    /// fstat()s + heap-reserves `size+16` + pread-loops, costing one extra
-    /// `fstat` per source file and using `pread64` instead of `read` (strace:
-    /// +992 fstat / +2114 pread64 on the eslint bundle).
-    // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
-    // `bun_resolver::fs_full` un-gates (same body lives at resolver/fs.rs:2252).
-    fn read_handle_into(
-        file: &bun_sys::File,
-        _path: &[u8],
-        use_shared_buffer: bool,
-        shared: &mut MutableString,
-        stream: bool,
-    ) -> Result<Contents, bun_core::Error> {
-        // PORT NOTE: `strings::BOM` lives in the gated `unicode_draft` module
-        // and is not yet re-exported; inline the UTF-8 BOM constant here so the
-        // common case (UTF-8 BOM strip) is observable. UTF-16-LE BOM →UTF-8
-        // transcode falls through to the gated path once it un-gates.
-        // TODO(port): replace with `strings::BOM::detect` + `remove_and_convert_*`
-        // once `bun_string::strings::BOM` is public.
-        const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
-
-        if use_shared_buffer {
-            shared.reset();
-            let mut size = file.get_end_pos().map_err(bun_core::Error::from)?;
-            if size == 0 {
-                return Ok(Contents::Empty);
-            }
-            shared.list.reserve(size + 1);
-
-            // fs.zig:1200-1239 — pread loop; when `stream`, re-stat after each
-            // read and grow if the file changed under us (HMR save race).
-            let mut bytes_read: usize = 0;
-            loop {
-                debug_assert_eq!(shared.list.len(), bytes_read);
-                // SAFETY: `u8` has no invalid bit patterns, so viewing the
-                // spare-capacity `[MaybeUninit<u8>]` as `[u8]` is sound;
-                // `read_all` only writes (never reads) into this region and we
-                // `set_len` to exactly the byte count it reports as written.
-                let read_count = unsafe {
-                    let spare = shared.list.spare_capacity_mut();
-                    let dst = &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]);
-                    let n = file.read_all(dst).map_err(bun_core::Error::from)?;
-                    shared.list.set_len(bytes_read + n);
-                    n
-                };
-
-                if stream {
-                    // check again that stat() didn't change the file size
-                    let new_size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                    bytes_read += read_count;
-                    // don't infinite loop if we're still not reading more
-                    if read_count == 0 {
-                        break;
-                    }
-                    if bytes_read < new_size {
-                        shared.list.reserve(new_size - size);
-                        size = new_size;
-                        continue;
-                    }
-                }
-                break;
-            }
-
-            let mut n = shared.list.len();
-
-            // BOM strip (fs.zig:1244 `removeAndConvertToUTF8WithoutDealloc`).
-            if shared.list.starts_with(&UTF8_BOM) {
-                shared.list.copy_within(UTF8_BOM.len().., 0);
-                n -= UTF8_BOM.len();
-                // SAFETY: n <= prior len; bytes [0..n] were just initialized via copy_within.
-                unsafe { shared.list.set_len(n) };
-            }
-
-            // Sentinel NUL past len when capacity allows (matches fs.zig:1241).
-            if shared.list.capacity() > n {
-                // SAFETY: capacity > len, so writing one byte past len is in-bounds.
-                unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
-            }
-
-            // Caller owns `shared` and resets it via `reset_shared_buffer` before
-            // reuse; tag as borrowed so `deinit` is a no-op.
-            Ok(Contents::SharedBuffer { ptr: shared.list.as_ptr(), len: n })
-        } else {
-            // fs.zig:1250-1300 — non-shared-buffer arm. cache.zig passes
-            // `size_hint = null`, so always probe with the stack buffer first.
-            //
-            // Optimization: don't call stat() unless the file is big enough
-            // that we need to dynamically allocate memory to read it.
-            let mut initial_buf = [0u8; 16384];
-            let read_count =
-                file.read_all(&mut initial_buf).map_err(bun_core::Error::from)?;
-
-            if read_count + 1 < initial_buf.len() {
-                // Whole file fit in the stack buffer (the common case for
-                // source modules). Allocate exactly `read_count + 1` so the
-                // sentinel NUL (fs.zig `allocator.dupeZ`) sits in spare
-                // capacity past `len`.
-                if read_count == 0 {
-                    return Ok(Contents::Empty);
-                }
-                let mut bytes = Vec::with_capacity(read_count + 1);
-                bytes.extend_from_slice(&initial_buf[..read_count]);
-                // SAFETY: capacity == read_count + 1 > len; write is in-bounds.
-                unsafe { *bytes.as_mut_ptr().add(read_count) = 0 };
-
-                // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1264
-                // `removeAndConvertToUTF8AndFree`).
-                if let Some(bom) = fs_mod::BOM::detect(&bytes) {
-                    bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
-                }
-                return Ok(Contents::Owned(bytes));
-            }
-
-            // File is ≥ ~16 KiB — NOW it's worth an fstat to size the heap
-            // buffer (fs.zig:1276 `getEndPos`).
-            let size = file.get_end_pos().map_err(bun_core::Error::from)?;
-            if size == 0 {
-                // Degenerate (shouldn't happen after a non-short read), but
-                // matches fs.zig:1283 guard.
-                return Ok(Contents::Empty);
-            }
-
-            // PORT NOTE: Zig forwarded `this_parse.arena` here so the buffer
-            // was reset_retain'd per module; `Contents::Owned` is global-heap
-            // backed, so we allocate with the default allocator. Restoring the
-            // arena path requires a `Contents::Arena` variant in
-            // resolver/lib.rs (cross-crate); tracked at transpiler.rs:1417.
-            let mut bytes = Vec::with_capacity(size + 1);
-            bytes.extend_from_slice(&initial_buf[..read_count]);
-            // SAFETY: u8 is always-init; `set_len(size)` exposes uninit-but-
-            // valid bytes [read_count..size) that `read_all` immediately
-            // overwrites before any read. capacity == size + 1 ≥ size.
-            unsafe { bytes.set_len(size) };
-            // Sentinel NUL past len (matches fs.zig:1289 `buf[size] = 0`).
-            // SAFETY: capacity == size + 1; write at index `size` is in-bounds.
-            unsafe { *bytes.as_mut_ptr().add(size) = 0 };
-
-            let rest = file
-                .read_all(&mut bytes[read_count..])
-                .map_err(bun_core::Error::from)?;
-            bytes.truncate(read_count + rest);
-
-            // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1299
-            // `removeAndConvertToUTF8AndFree`).
-            if let Some(bom) = fs_mod::BOM::detect(&bytes) {
-                bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
-            }
-            Ok(Contents::Owned(bytes))
-        }
     }
 }
 

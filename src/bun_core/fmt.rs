@@ -777,6 +777,137 @@ pub fn buf_print_z<'a>(
     Ok(crate::ZStr::from_buf(c.buf, n))
 }
 
+/// [`buf_print`] that panics on overflow — mirrors Zig's
+/// `std.fmt.bufPrint(buf, fmt, args) catch unreachable`. Use when the
+/// caller-supplied stack buffer is sized so overflow is a programmer error.
+#[inline]
+#[track_caller]
+pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
+    buf_print(buf, args).expect("buf_print: buffer too small")
+}
+
+/// [`buf_print_z`] that panics on overflow — mirrors Zig's
+/// `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
+#[inline]
+#[track_caller]
+pub fn buf_print_z_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a crate::ZStr {
+    buf_print_z(buf, args).expect("buf_print_z: buffer too small")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VecWriter — `core::fmt::Write` over `&mut Vec<u8>`
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `core::fmt::Write` adapter for `Vec<u8>`.
+///
+/// Rust's `Vec<u8>` only implements `std::io::Write` (banned in lower crates
+/// per PORTING.md), not `core::fmt::Write`. This is the port of Zig's
+/// `std.ArrayList(u8).writer()` — infallible (Vec growth aborts on OOM).
+///
+/// Both the tuple constructor and `::new()` are public so call sites can pick
+/// whichever reads better: `write!(VecWriter(&mut buf), ...)` or
+/// `VecWriter::new(&mut buf)`.
+pub struct VecWriter<'a>(pub &'a mut Vec<u8>);
+
+impl<'a> VecWriter<'a> {
+    #[inline]
+    pub fn new(v: &'a mut Vec<u8>) -> Self { Self(v) }
+}
+impl core::fmt::Write for VecWriter<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// std.fmt.parseInt / parseFloat — canonical &[u8] number parsers.
+//
+// Zig has exactly one impl (`std.fmt.parseInt(T, []const u8, radix)`) called
+// directly at every site. The Rust port spawned ~13 local
+// `core::str::from_utf8(s).ok()?.parse::<T>().ok()` helpers solely because
+// `str::parse` needs `&str`. This is the single replacement; bun_string
+// re-exports `parse_int` so existing `strings::parse_int` callers keep working.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Error from [`parse_int`] (`std.fmt.parseInt` port).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseIntError {
+    InvalidCharacter,
+    Overflow,
+}
+
+/// `std.fmt.parseInt(T, buf, radix)` — parse an integer of type `T` from `buf`
+/// in base `radix` (2..=36). Accepts an optional leading `+`/`-`. Port keeps
+/// Zig's error set: `Overflow` on range error, `InvalidCharacter` otherwise.
+///
+/// Works directly on `&[u8]` so callers never need an intermediate
+/// `core::str::from_utf8` round-trip.
+pub fn parse_int<T>(buf: &[u8], radix: u8) -> Result<T, ParseIntError>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    debug_assert!((2..=36).contains(&radix));
+    if buf.is_empty() {
+        return Err(ParseIntError::InvalidCharacter);
+    }
+    let (neg, digits) = match buf[0] {
+        b'+' => (false, &buf[1..]),
+        b'-' => (true, &buf[1..]),
+        _ => (false, buf),
+    };
+    if digits.is_empty() {
+        return Err(ParseIntError::InvalidCharacter);
+    }
+    let radix_u = radix as u128;
+    let mut acc: u128 = 0;
+    for &c in digits {
+        let d = match c {
+            b'0'..=b'9' => (c - b'0') as u128,
+            b'a'..=b'z' => (c - b'a' + 10) as u128,
+            b'A'..=b'Z' => (c - b'A' + 10) as u128,
+            _ => return Err(ParseIntError::InvalidCharacter),
+        };
+        if d >= radix_u {
+            return Err(ParseIntError::InvalidCharacter);
+        }
+        acc = acc
+            .checked_mul(radix_u)
+            .and_then(|v| v.checked_add(d))
+            .ok_or(ParseIntError::Overflow)?;
+    }
+    if neg {
+        let signed: i128 = if acc == (i128::MAX as u128) + 1 {
+            i128::MIN
+        } else if acc > i128::MAX as u128 {
+            return Err(ParseIntError::Overflow);
+        } else {
+            -(acc as i128)
+        };
+        T::try_from(signed).map_err(|_| ParseIntError::Overflow)
+    } else {
+        T::try_from(acc).map_err(|_| ParseIntError::Overflow)
+    }
+}
+
+/// Parse the **entire** byte slice `s` as a `T` via `core::str::FromStr`.
+/// Returns `None` if `s` is not valid UTF-8 or is not a complete `T` literal
+/// (no trailing garbage permitted — `b"1.5x"` → `None`).
+///
+/// Mirrors Zig `std.fmt.parseFloat` / `std.fmt.parseInt` full-match semantics.
+/// Do NOT confuse with `bun_string::wtf::parse_double`, which is PREFIX-match
+/// (WTF__parseDouble) and rejects inf/nan — use that one only where JS-engine
+/// number semantics are required.
+#[inline]
+pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
+    core::str::from_utf8(s).ok()?.parse::<T>().ok()
+}
+
+/// [`parse_num::<f64>`] — typed convenience.
+#[inline]
+pub fn parse_f64(s: &[u8]) -> Option<f64> { parse_num(s) }
+
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────
@@ -2233,6 +2364,89 @@ pub const LOWER_HEX_TABLE: [u8; 16] =
 pub const UPPER_HEX_TABLE: [u8; 16] =
     [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F'];
 
+/// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
+pub const HEX_INVALID: u8 = 0xff;
+
+/// 256-entry ASCII-hex-digit → nibble (0..=15) lookup. Non-hex bytes map to
+/// [`HEX_INVALID`]. Decode-side counterpart of [`LOWER_HEX_TABLE`] /
+/// [`UPPER_HEX_TABLE`].
+pub const HEX_DECODE_TABLE: [u8; 256] = {
+    let mut t = [HEX_INVALID; 256];
+    let mut i = 0u8;
+    while i < 10 {
+        t[(b'0' + i) as usize] = i;
+        i += 1;
+    }
+    let mut i = 0u8;
+    while i < 6 {
+        t[(b'a' + i) as usize] = 10 + i;
+        t[(b'A' + i) as usize] = 10 + i;
+        i += 1;
+    }
+    t
+};
+
+/// Decode a single ASCII hex digit (`0-9`, `a-f`, `A-F`) to its nibble value `0..=15`.
+///
+/// Returns `None` for any other byte. Callers needing a wider int cast with `as u16/u32`
+/// or `.map(u32::from)`; callers needing `Result` use `.ok_or(..)`; callers with a
+/// pre-validated byte use `.unwrap()`.
+///
+/// Zig precedent: `std.fmt.charToDigit(c, 16)` / `bun.strings.toASCIIHexValue`.
+#[inline]
+pub const fn hex_digit_value(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
+/// High bits are masked, so any `u8` is accepted.
+#[inline]
+pub const fn hex_char_lower(n: u8) -> u8 { LOWER_HEX_TABLE[(n & 0x0F) as usize] }
+
+/// Map the low 4 bits of `n` to an uppercase ASCII hex digit (`0-9`, `A-F`).
+/// High bits are masked, so any `u8` is accepted.
+#[inline]
+pub const fn hex_char_upper(n: u8) -> u8 { UPPER_HEX_TABLE[(n & 0x0F) as usize] }
+
+/// Encode a single byte as two lowercase ASCII hex digits `[hi, lo]`.
+/// Port of the open-coded `CHARSET[(b>>4)] / CHARSET[(b&0xF)]` pair found
+/// throughout the Zig sources. For contiguous full-slice output prefer
+/// [`bytes_to_hex_lower`].
+#[inline]
+pub const fn hex_byte_lower(b: u8) -> [u8; 2] {
+    [LOWER_HEX_TABLE[(b >> 4) as usize], LOWER_HEX_TABLE[(b & 0x0F) as usize]]
+}
+
+/// Encode a single byte as two UPPERCASE ASCII hex digits `[hi, lo]`.
+/// Used by percent-encoders (RFC 3986 mandates uppercase).
+#[inline]
+pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
+    [UPPER_HEX_TABLE[(b >> 4) as usize], UPPER_HEX_TABLE[(b & 0x0F) as usize]]
+}
+
+/// Two hex nibbles for a `u8` (`\\xXX`). `LOWER == false` → uppercase.
+#[inline]
+pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
+    if LOWER { hex_byte_lower(b) } else { hex_byte_upper(b) }
+}
+
+/// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
+#[inline]
+pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
+    let t = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
+    [
+        t[((v >> 12) & 0xF) as usize],
+        t[((v >> 8) & 0xF) as usize],
+        t[((v >> 4) & 0xF) as usize],
+        t[(v & 0xF) as usize],
+    ]
+}
+
 // TODO(port): Zig parameterizes on `comptime Int: type` and computes
 // `BufType = [@bitSizeOf(Int) / 4]u8`. Rust const generics can't derive an array
 // length from a type's bit-width. Represent as a generic over u64 with explicit
@@ -2242,7 +2456,7 @@ pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
 }
 
 impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
-    fn get_out_buf(value: u64) -> [u8; NIBBLES] {
+    pub fn get_out_buf(value: u64) -> [u8; NIBBLES] {
         let table = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
         let mut buf = [0u8; NIBBLES];
         // PERF(port): Zig used `inline for`; plain loop here.
@@ -2274,6 +2488,29 @@ pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, 
 
 pub fn hex_int_upper<const NIBBLES: usize>(value: u64) -> HexIntFormatter<false, NIBBLES> {
     HexIntFormatter { value }
+}
+
+/// `{:0N x}` / `{:0N X}` — zero-padded fixed-width hex of a u64 into a stack
+/// buffer. Thin alias over [`HexIntFormatter::get_out_buf`] for callers that
+/// want bytes, not a `Display` adapter. Port of Zig `bun.fmt.hexIntLower` /
+/// `hexIntUpper` when used with `bufPrint`.
+#[inline]
+pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
+    HexIntFormatter::<LOWER, N>::get_out_buf(v)
+}
+
+/// `{:x}` — variable-width lower-hex of a u64 (no leading zeros; `0` → `"0"`),
+/// written into the tail of `buf` and returned as a slice borrow.
+#[inline]
+pub fn u64_hex_var_lower(buf: &mut [u8; 16], mut n: u64) -> &[u8] {
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = LOWER_HEX_TABLE[(n & 0xF) as usize];
+        n >>= 4;
+        if n == 0 { break; }
+    }
+    &buf[i..]
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2513,6 +2750,35 @@ pub fn print_int<T: core::fmt::Display>(buf: &mut [u8], value: T) -> usize {
     let mut w = SliceCursor { buf, at: 0 };
     let _ = core::fmt::Write::write_fmt(&mut w, format_args!("{value}"));
     w.at
+}
+
+/// [`print_int`] returning the written sub-slice of `buf` — the moral
+/// equivalent of Zig's `std.fmt.bufPrint(&buf, "{d}", .{v}) catch unreachable`.
+/// Use this when the caller wants the bytes; use [`print_int`] directly when
+/// writing at an offset and only the byte-count is needed.
+#[inline]
+pub fn int_as_bytes<T: core::fmt::Display>(buf: &mut [u8], value: T) -> &[u8] {
+    let n = print_int(buf, value);
+    &buf[..n]
+}
+
+/// Reverse-fill decimal `u64` → ASCII into a caller-owned scratch buffer and
+/// return the formatted slice (1..=20 bytes, no leading zeros, `0` → `b"0"`).
+///
+/// This is the `core::fmt`-free itoa used on hot paths where dragging in
+/// `Formatter` / `dyn Display` vtables is measurable. 20 bytes covers
+/// `u64::MAX` (20 digits); `u32` callers widen via `u64::from`.
+#[inline(always)]
+pub fn itoa_u64(buf: &mut [u8; 20], mut n: u64) -> &[u8] {
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        // n % 10 < 10 ⇒ cast never truncates.
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 { break; }
+    }
+    &buf[i..]
 }
 
 /// Decimal digit count of a signed integer, including the leading `-` for

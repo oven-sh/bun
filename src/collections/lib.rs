@@ -45,30 +45,9 @@ pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
 pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
 
-// ──────────────────────────────────────────────────────────────────────────
-// const-eval byte/str equality — `==` on slices is not yet `const`, so several
-// const-context callers (reflected field-name lookup in `multi_array_list`,
-// host-fn error-set parsing in `bun_jsc`) need the manual len-check + while
-// loop. Centralised here so the identical helper isn't open-coded per crate.
-// ──────────────────────────────────────────────────────────────────────────
-#[inline]
-pub const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-#[inline]
-pub const fn const_str_eq(a: &str, b: &str) -> bool {
-    const_bytes_eq(a.as_bytes(), b.as_bytes())
-}
+// Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import
+// from here); canonical impl lives in `bun_core::strings`.
+pub use bun_core::strings::{const_bytes_eq, const_str_eq};
 
 /// `bun.bit_set` namespace alias (Zig: `bun.bit_set.List`).
 pub mod dynamic_bit_set {

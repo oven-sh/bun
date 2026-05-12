@@ -580,12 +580,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
             let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
-            if line[..key_end].len() == key.len()
-                && line[..key_end]
-                    .iter()
-                    .zip(key.as_bytes())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
+            if crate::strings::eql_case_insensitive_ascii_check_length(&line[..key_end], key.as_bytes()) {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
             p = p.add(1);
@@ -610,12 +605,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 core::slice::from_raw_parts(entry.cast::<u8>(), len)
             };
             let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
-            if line[..key_end].len() == key.len()
-                && line[..key_end]
-                    .iter()
-                    .zip(key.as_bytes())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
+            if crate::strings::eql_case_insensitive_ascii_check_length(&line[..key_end], key.as_bytes()) {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
         }
@@ -662,6 +652,22 @@ impl WStr {
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
+    }
+    /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
+    /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
+    /// funnel for the `wcslen`-then-`from_raw` shape at libarchive `_w`
+    /// accessors and Windows path-API ingestion points.
+    ///
+    /// # Safety
+    /// If non-null, `p` must point to a NUL-terminated u16 sequence readable
+    /// for `'a`. Null is explicitly allowed (→ `WStr::EMPTY`).
+    #[inline]
+    pub unsafe fn from_ptr<'a>(p: *const u16) -> &'a WStr {
+        if p.is_null() {
+            return Self::EMPTY;
+        }
+        // SAFETY: non-null and NUL-terminated per caller contract.
+        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
     }
     #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
@@ -1579,6 +1585,203 @@ pub mod io {
         pub len: usize,
         pub pos: usize,
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // trait Write — canonical byte-level write sink (port of Zig
+    // `std.Io.Writer`). Lives in `bun_core` (not `bun_io`) so leaf crates
+    // below `bun_io` in the dep graph — `bun_string`, `bun_collections`,
+    // `bun_url` — can implement it without an upward dep. `bun_io` re-exports
+    // this verbatim as `bun_io::Write`.
+    // ════════════════════════════════════════════════════════════════════════
+    use core::fmt;
+
+    /// Byte-level write sink — port of Zig `std.Io.Writer`.
+    ///
+    /// Only [`write_all`](Write::write_all) is required; every other method has
+    /// a default in terms of it. Object-safe: `&mut dyn Write` works. Generic
+    /// helpers that would break object safety carry `where Self: Sized`.
+    pub trait Write {
+        /// Write the entire buffer. Zig: `writeAll`.
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error>;
+
+        /// Flush any internal buffer to the underlying sink. Zig: `flush`.
+        /// Unbuffered sinks leave the default no-op.
+        #[inline]
+        fn flush(&mut self) -> Result<(), crate::Error> {
+            Ok(())
+        }
+
+        /// Total bytes written to this sink so far.
+        ///
+        /// Only implemented for in-memory / counting sinks; the default panics,
+        /// matching the Zig `@panic("css: got bad writer type")` fallthrough.
+        #[inline]
+        fn written_len(&self) -> usize {
+            panic!("io::Write::written_len: writer does not track bytes written");
+        }
+
+        // ── provided helpers ────────────────────────────────────────────────
+
+        /// Zig: `writeByte`.
+        #[inline]
+        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+            self.write_all(core::slice::from_ref(&byte))
+        }
+
+        /// Convenience for UTF-8 string slices.
+        #[inline]
+        fn write_str(&mut self, s: &str) -> Result<(), crate::Error> {
+            self.write_all(s.as_bytes())
+        }
+
+        /// Write `n` copies of `byte`. Zig: `splatByteAll` / `writeByteNTimes`.
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+            let chunk = [byte; 256];
+            let mut remain = n;
+            while remain > 0 {
+                let take = remain.min(chunk.len());
+                self.write_all(&chunk[..take])?;
+                remain -= take;
+            }
+            Ok(())
+        }
+
+        /// Formatted write. Zig: `print(fmt, args)`. Enables `write!(w, ...)`.
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+            struct Bridge<'a, W: ?Sized> {
+                sink: &'a mut W,
+                err: Option<crate::Error>,
+            }
+            impl<W: Write + ?Sized> fmt::Write for Bridge<'_, W> {
+                #[inline]
+                fn write_str(&mut self, s: &str) -> fmt::Result {
+                    match self.sink.write_all(s.as_bytes()) {
+                        Ok(()) => Ok(()),
+                        Err(e) => {
+                            self.err = Some(e);
+                            Err(fmt::Error)
+                        }
+                    }
+                }
+            }
+            let mut bridge = Bridge { sink: self, err: None };
+            match fmt::write(&mut bridge, args) {
+                Ok(()) => Ok(()),
+                Err(_) => Err(bridge.err.unwrap_or_else(|| crate::err!("FmtError"))),
+            }
+        }
+
+        /// Alias for [`write_fmt`](Write::write_fmt) under the Zig spelling.
+        #[inline]
+        fn print(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+            self.write_fmt(args)
+        }
+
+        /// Write an integer in little-endian byte order.
+        /// Zig: `writeInt(T, val, .little)`.
+        #[inline]
+        fn write_int_le<I: IntLe>(&mut self, val: I) -> Result<(), crate::Error>
+        where
+            Self: Sized,
+        {
+            self.write_all(val.to_le_bytes().as_ref())
+        }
+    }
+
+    // ── blanket / std impls ─────────────────────────────────────────────────
+
+    /// Forward through `&mut W` so `&mut dyn Write` / `&mut impl Write` nest.
+    impl<W: Write + ?Sized> Write for &mut W {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            (**self).write_all(buf)
+        }
+        #[inline]
+        fn flush(&mut self) -> Result<(), crate::Error> {
+            (**self).flush()
+        }
+        #[inline]
+        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+            (**self).write_byte(byte)
+        }
+        #[inline]
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+            (**self).splat_byte_all(byte, n)
+        }
+        #[inline]
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+            (**self).write_fmt(args)
+        }
+        #[inline]
+        fn written_len(&self) -> usize {
+            (**self).written_len()
+        }
+    }
+
+    impl<W: Write + ?Sized> Write for Box<W> {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            (**self).write_all(buf)
+        }
+        #[inline]
+        fn flush(&mut self) -> Result<(), crate::Error> {
+            (**self).flush()
+        }
+        #[inline]
+        fn written_len(&self) -> usize {
+            (**self).written_len()
+        }
+    }
+
+    /// In-memory growable sink. Zig: `std.Io.Writer.Allocating`.
+    /// Generic over the allocator so `bun_alloc::ArenaVec<'_, u8>`
+    /// (= `Vec<u8, &MimallocArena>`) gets the same impl as `Vec<u8>`.
+    impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            self.extend_from_slice(buf);
+            Ok(())
+        }
+        #[inline]
+        fn written_len(&self) -> usize {
+            self.len()
+        }
+    }
+
+    /// Bridge the type-erased vtable header into the generic `Write` trait so
+    /// printers taking `W: io::Write` accept process stdout/stderr sinks.
+    impl Write for Writer {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+        }
+        #[inline]
+        fn flush(&mut self) -> Result<(), crate::Error> {
+            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+        }
+    }
+
+    // ── IntLe — little-endian integer encoding helper ───────────────────────
+
+    /// Integers that can be written little-endian via [`Write::write_int_le`].
+    pub trait IntLe: Copy {
+        type Bytes: AsRef<[u8]> + AsMut<[u8]> + Default;
+        fn to_le_bytes(self) -> Self::Bytes;
+        fn from_le_bytes(bytes: Self::Bytes) -> Self;
+    }
+
+    macro_rules! impl_int_le {
+        ($($t:ty),* $(,)?) => {$(
+            impl IntLe for $t {
+                type Bytes = [u8; core::mem::size_of::<$t>()];
+                #[inline]
+                fn to_le_bytes(self) -> Self::Bytes { <$t>::to_le_bytes(self) }
+                #[inline]
+                fn from_le_bytes(bytes: Self::Bytes) -> Self { <$t>::from_le_bytes(bytes) }
+            }
+        )*};
+    }
+    impl_int_le!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 }
 
 // ─── Version (from bun_semver, TYPE_ONLY for env.rs::VERSION const) ───────
@@ -2669,6 +2872,18 @@ pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) ->
     bytemuck::cast_slice(a)
 }
 
+/// Port of Zig `std.mem.sliceAsBytes`: reinterpret `&[T]` as `&[u8]`.
+///
+/// This is [`cast_slice`] with the output type fixed to `u8`, so callers never
+/// need a `::<_, u8>` turbofish. Safe: [`bytemuck::NoUninit`] guarantees every
+/// byte of `T` is initialized; `align_of::<u8>() == 1` and
+/// `size_of::<T>() % 1 == 0` mean the bytemuck size/align checks are trivially
+/// satisfied and this never panics.
+#[inline]
+pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
+    bytemuck::cast_slice(s)
+}
+
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
 /// can't take a generic by-value-as-bytes safely without `bytemuck`, so this
 /// accepts anything that is itself viewable as bytes (covers the actual call
@@ -2702,6 +2917,11 @@ impl<T: AsBytes> AsBytes for &T {
 // Port of `bun.GenericIndex(backing_int, uid)` (bun.zig:3513). Zig used a
 // distinct enum-per-uid for nominal typing; Rust gets that via a phantom
 // marker. `MAX` is reserved as the "none" sentinel for `Optional`.
+//
+// NOTE on const-ness: hand-rolled monomorphic sites used `const fn init/get`.
+// The generic impl cannot be `const fn` on stable (trait-bound `I::NULL_VALUE`
+// comparison is not const-evaluable). Audited: zero call sites use `init`/`get`
+// in const context, so dropping `const` is a no-op.
 #[repr(transparent)]
 pub struct GenericIndex<I, M = ()>(I, core::marker::PhantomData<M>);
 
@@ -2720,6 +2940,11 @@ impl<I: core::fmt::Display, M> core::fmt::Display for GenericIndex<I, M> {
 impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndex<I, M> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
 }
+/// `Default` = index 0 (matches the hand-rolled `#[derive(Default)]` newtypes
+/// this replaced). NOT the `Optional::none` sentinel.
+impl<I: Default, M> Default for GenericIndex<I, M> {
+    #[inline] fn default() -> Self { Self(I::default(), core::marker::PhantomData) }
+}
 
 impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     /// Prefer over a raw cast — asserts `int != MAX` (would alias `.none`).
@@ -2731,10 +2956,20 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         debug_assert!(self.0 != I::NULL_VALUE, "GenericIndex::get: corrupted (== none sentinel)");
         self.0
     }
+    /// `get()` widened to `usize` for slice indexing — covers the common
+    /// `idx.get() as usize` site shape.
+    #[inline] pub fn get_usize(self) -> usize { I::to_usize(self.get()) }
+    /// `init()` from a `usize` source (Vec length etc.). Debug-panics on
+    /// truncation, mirroring Zig `@intCast`.
+    #[inline] pub fn from_usize(n: usize) -> Self { Self::init(I::from_usize(n)) }
     #[inline] pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
     #[inline] pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool { a.0 < b.0 }
+}
+impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
+    #[inline] pub fn is_none(self) -> bool { self.0 == I::NULL_VALUE }
+    #[inline] pub fn is_some(self) -> bool { !self.is_none() }
 }
 
 /// `GenericIndex::Optional` — `MAX` is `none`.
@@ -2769,11 +3004,20 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
 /// Backing-integer bound for `GenericIndex` (replaces Zig's `comptime backing_int: type`).
 pub trait GenericIndexInt: Copy + Eq + PartialOrd {
     const NULL_VALUE: Self;
+    fn to_usize(self) -> usize;
+    fn from_usize(n: usize) -> Self;
 }
 macro_rules! generic_index_int { ($($t:ty),*) => { $(
-    impl GenericIndexInt for $t { const NULL_VALUE: Self = <$t>::MAX; }
+    impl GenericIndexInt for $t {
+        const NULL_VALUE: Self = <$t>::MAX;
+        #[inline] fn to_usize(self) -> usize { self as usize }
+        #[inline] fn from_usize(n: usize) -> Self {
+            debug_assert!(n as u128 <= <$t>::MAX as u128, "GenericIndex::from_usize: truncation");
+            n as Self
+        }
+    }
 )* } }
-generic_index_int!(u8, u16, u32, u64, usize);
+generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 
 /// Generic-integer bound replacing Zig's `comptime T: type` + `@typeInfo(T).Int`
 /// in `validateIntegerRange` / `validateBigIntRange` / `getInteger`
@@ -3130,11 +3374,7 @@ fn argv_storage() -> &'static [ZBox] {
                     .map(|&p| {
                         // SAFETY: each entry is a NUL-terminated UTF-16 string
                         // owned by the `CommandLineToArgvW` allocation.
-                        let mut len = 0usize;
-                        while unsafe { *p.add(len) } != 0 {
-                            len += 1;
-                        }
-                        let arg = unsafe { core::slice::from_raw_parts(p, len) };
+                        let arg = unsafe { crate::ffi::wstr_units(p) };
                         ZBox::from_vec(crate::strings::to_utf8_alloc(arg))
                     })
                     .collect();
@@ -3475,18 +3715,8 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         let mut wi = 0usize;
         let mut bi = 0usize;
         while wi < src.len() {
-            let u = src[wi];
-            wi += 1;
-            let cp: u32 = if (0xD800..0xDC00).contains(&u)
-                && wi < src.len()
-                && (0xDC00..0xE000).contains(&src[wi])
-            {
-                let lo = src[wi];
-                wi += 1;
-                0x10000 + (((u as u32 - 0xD800) << 10) | (lo as u32 - 0xDC00))
-            } else {
-                u as u32
-            };
+            let (cp, adv) = crate::strings::decode_wtf16_raw(&src[wi..]);
+            wi += adv as usize;
             let mut tmp = [0u8; 4];
             let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
             if bi + nb >= out.len() {
@@ -4029,6 +4259,10 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 
 // ── Timespec ──────────────────────────────────────────────────────────────
 // Port of `bun.timespec` (bun.zig:3257). `extern struct { sec: i64, nsec: i64 }`.
+// CANONICAL — the `bun` facade re-exports this as `bun::timespec`; do NOT
+// re-port this struct elsewhere. The two `bun_sys::{linux,posix}::timespec`
+// shims port DIFFERENT Zig types (`std.os.linux.timespec` / `std.posix.timespec`)
+// for syscall ABI and intentionally do NOT alias this.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Timespec { pub sec: i64, pub nsec: i64 }
@@ -4071,7 +4305,8 @@ impl Timespec {
     pub fn ns(&self) -> u64 {
         if self.sec <= 0 { return self.nsec.max(0) as u64; }
         let s_ns = (self.sec as u64).checked_mul(Self::NS_PER_S as u64).unwrap_or(u64::MAX);
-        s_ns.checked_add(self.nsec.max(0) as u64).unwrap_or(u64::MAX)
+        // Zig-exact (bun.zig:3313 returns maxInt(i64))
+        s_ns.checked_add(self.nsec.max(0) as u64).unwrap_or(i64::MAX as u64)
     }
 
     /// Signed nanoseconds (wrapping). Port of `bun.timespec.nsSigned`.
@@ -4124,6 +4359,26 @@ impl Timespec {
 
     #[inline] pub fn min(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_lt() { a } else { b } }
     #[inline] pub fn max(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_gt() { a } else { b } }
+
+    /// `bun.timespec.orderIgnoreEpoch` (bun.zig:3405) — EPOCH = "no timeout", treated as +∞.
+    pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
+        if a == b { return core::cmp::Ordering::Equal; }
+        if a == Self::EPOCH { return core::cmp::Ordering::Greater; }
+        if b == Self::EPOCH { return core::cmp::Ordering::Less; }
+        a.order(&b)
+    }
+    /// `bun.timespec.minIgnoreEpoch` (bun.zig:3411).
+    #[inline]
+    pub fn min_ignore_epoch(self, b: Timespec) -> Timespec {
+        if Self::order_ignore_epoch(self, b).is_lt() { self } else { b }
+    }
+
+    /// Construct from a signed nanosecond count. Euclidean division keeps
+    /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
+    #[inline]
+    pub const fn from_ns(ns: i64) -> Timespec {
+        Timespec { sec: ns.div_euclid(Self::NS_PER_S), nsec: ns.rem_euclid(Self::NS_PER_S) }
+    }
 
     /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
     /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
@@ -4187,15 +4442,6 @@ pub mod mock_time {
     #[inline] pub fn get() -> Option<i64> {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
-    }
-}
-
-impl Timespec {
-    /// Construct from a signed nanosecond count. Euclidean division keeps
-    /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
-    #[inline]
-    pub const fn from_ns(ns: i64) -> Timespec {
-        Timespec { sec: ns.div_euclid(Self::NS_PER_S), nsec: ns.rem_euclid(Self::NS_PER_S) }
     }
 }
 

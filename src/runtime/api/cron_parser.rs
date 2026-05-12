@@ -207,7 +207,6 @@ fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
     None
 }
 
-// TODO(port): phf custom hasher for case-insensitive lookup; using lowercase keys + manual fold below
 static WEEKDAY_MAP: phf::Map<&'static [u8], u8> = phf_map! {
     b"sun" => 0,       b"mon" => 1,        b"tue" => 2,
     b"wed" => 3,       b"thu" => 4,        b"fri" => 5,
@@ -226,18 +225,6 @@ static MONTH_MAP: phf::Map<&'static [u8], u8> = phf_map! {
     b"august" => 8,     b"september" => 9,  b"october" => 10,
     b"november" => 11,  b"december" => 12,
 };
-
-fn get_ascii_case_insensitive(map: &phf::Map<&'static [u8], u8>, key: &[u8]) -> Option<u8> {
-    // TODO(port): ComptimeStringMap.getASCIIICaseInsensitive — phf has no native CI lookup
-    if key.len() > 16 {
-        return None;
-    }
-    let mut buf = [0u8; 16];
-    for (i, &b) in key.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    map.get(&buf[..key.len()]).copied()
-}
 
 // ============================================================================
 // Field parsing
@@ -338,12 +325,12 @@ fn parse_value(str: &[u8], min: u8, max: u8, kind: NameKind) -> Result<u8, CronE
     // Try named value first via ComptimeStringMap case-insensitive lookup
     match kind {
         NameKind::Weekday => {
-            if let Some(v) = get_ascii_case_insensitive(&WEEKDAY_MAP, str) {
+            if let Some(v) = strings::in_map_case_insensitive(str, &WEEKDAY_MAP) {
                 return Ok(v);
             }
         }
         NameKind::Month => {
-            if let Some(v) = get_ascii_case_insensitive(&MONTH_MAP, str) {
+            if let Some(v) = strings::in_map_case_insensitive(str, &MONTH_MAP) {
                 return Ok(v);
             }
         }

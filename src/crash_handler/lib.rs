@@ -931,11 +931,7 @@ pub fn crash_handler(
                             if bun_sys::windows::HRESULT_CODE(result) == bun_sys::windows::S_OK && unsafe { *name } != 0 {
                                 // SAFETY: `name` is a valid NUL-terminated wide string
                                 // (PWSTR out-param from GetThreadDescription).
-                                let span = unsafe {
-                                    let mut len = 0usize;
-                                    while *name.add(len) != 0 { len += 1; }
-                                    core::slice::from_raw_parts(name, len)
-                                };
+                                let span = unsafe { bun_core::ffi::wstr_units(name) };
                                 if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { abort(); }
                                 // NOTE: `GetThreadDescription` heap-allocates `name` and the
                                 // caller is meant to `LocalFree` it. The Zig spec leaks it
@@ -2035,11 +2031,10 @@ impl StackLine {
                 address: addr.wrapping_sub(base_address) as i32,
 
                 object: if name != image_path.as_slice() {
-                    let basename_start = name.iter().rposition(|&c| c == b'\\' as u16 || c == b'/' as u16)
-                        // skip the last slash
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
-                    let basename = &name[basename_start..];
+                    // GetModuleFileNameW output never has a trailing separator
+                    // or bare drive prefix, so the std.fs.path.basenameWindows
+                    // stripping is a no-op on this domain.
+                    let basename = bun_paths::basename_windows(name);
                     strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename)
                         .ok()
                         .map(|s| Box::<[u8]>::from(s))

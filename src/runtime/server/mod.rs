@@ -614,7 +614,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .has_request_body()
             {
                 let len: usize = if let Some(cl) = req.header(b"content-length") {
-                    bun_str::strings::parse_int::<usize>(cl, 10).unwrap_or(0)
+                    bun_http_types::parse_content_length(cl)
                 } else {
                     0
                 };
@@ -1759,7 +1759,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             plugins: None,
             user_routes: Vec::new(),
             on_clienterror: jsc::StrongOptional::empty(),
-            inspector_server_id: jsc::DebuggerId::new(0),
+            inspector_server_id: jsc::DebuggerId::init(0),
         }));
 
         // PORT NOTE: Zig captured `&config.bake.?` then did `.config = config.*`,
@@ -3281,7 +3281,7 @@ pub mod http_server_agent {
     /// `HTTPServerAgent.zig:notifyServerStarted`.
     pub fn notify_server_started(this: &mut HTTPServerAgent, mut instance: AnyServer) {
         let Some(agent) = this.agent else { return };
-        this.next_server_id = DebuggerId::new(this.next_server_id.get() + 1);
+        this.next_server_id = DebuggerId::init(this.next_server_id.get() + 1);
         instance.set_inspector_server_id(this.next_server_id);
         let url = bun_core::handle_oom(instance.get_url_as_string());
 

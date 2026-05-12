@@ -3351,6 +3351,32 @@ impl Drop for StoreResetGuard {
     }
 }
 
+/// Idempotently create both thread-local AST node stores (`Expr.Data.Store`
+/// + `Stmt.Data.Store`). Safe to call repeatedly — `Store::create()` is a
+/// no-op once the slab (or an `ASTMemoryAllocator` override) is installed,
+/// so no `Once` guard is needed (and a process-global `Once` would be wrong
+/// anyway: the backing `INSTANCE` is `#[thread_local]`).
+///
+/// Zig: open-coded `Expr.Data.Store.create(); Stmt.Data.Store.create();`
+/// at every CLI entry point (transpiler.zig, run_command.zig, …).
+#[inline]
+pub fn initialize_store() {
+    expr::data::Store::create();
+    stmt::data::Store::create();
+}
+
+/// Create both AST node stores on first call, **reset** them on every
+/// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
+/// slab, so callers that re-enter — e.g. the install pipeline parsing many
+/// `package.json`s — get a fresh arena each time without re-allocating.
+///
+/// Zig: install.zig `initializeStore()` (`if (initialized_store) reset else create`).
+#[inline]
+pub fn initialize_store_or_reset() {
+    expr::data::Store::begin();
+    stmt::data::Store::begin();
+}
+
 /// RAII guard that pins the thread-local `disable_reset` flag on both AST
 /// `Store`s for its scope.
 #[must_use = "disable_reset is cleared on drop; bind to a named local"]

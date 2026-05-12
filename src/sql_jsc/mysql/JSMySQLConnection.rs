@@ -86,49 +86,9 @@ pub struct JSMySQLConnection {
     max_lifetime_timer: JsCell<EventLoopTimer>,
 }
 
-impl JSMySQLConnection {
-    /// Intrusive backref: recover the embedding connection from a
-    /// pointer to its intrusive `timer` node. Exposed so the cross-crate
-    /// `bun_runtime` timer dispatch (`__bun_fire_timer`) does not need
-    /// field-level visibility into this struct.
-    ///
-    /// # Safety
-    /// `t` must point at the `timer` field of a live `JSMySQLConnection`
-    /// (i.e. the timer's tag is `MySQLConnectionTimeout`).
-    #[inline]
-    pub unsafe fn from_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
-        // SAFETY: caller contract.
-        unsafe { bun_core::from_field_ptr!(Self, timer, t) }
-    }
+crate::impl_timer_backref!(JSMySQLConnection, timer, max_lifetime_timer);
 
-    /// Intrusive backref: see [`Self::from_timer_ptr`].
-    ///
-    /// # Safety
-    /// `t` must point at the `max_lifetime_timer` field of a live
-    /// `JSMySQLConnection` (tag `MySQLConnectionMaxLifetime`).
-    #[inline]
-    pub unsafe fn from_max_lifetime_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
-        // SAFETY: caller contract.
-        unsafe {
-            bun_core::from_field_ptr!(Self, max_lifetime_timer, t)
-        }
-    }
-}
-
-impl crate::jsc::JsClass for JSMySQLConnection {
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
-    }
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value)
-    }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value)
-    }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        js::get_constructor(global)
-    }
-}
+bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
 
 /// RAII owner for one intrusive refcount on a `JSMySQLConnection`. Dropping
 /// calls [`JSMySQLConnection::deref`], which may free `*self.0` — so callers
@@ -192,12 +152,9 @@ impl JSMySQLConnection {
         self.vm_mut().event_loop_mut()
     }
 
-    /// `bun_io::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
-    /// is a singleton; route through the global hook (same target as
-    /// `self.vm`).
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        self.vm().vm_ctx()
+        bun_io::js_vm_ctx()
     }
 }
 
@@ -495,13 +452,7 @@ impl JSMySQLConnection {
 
     pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.js_value.with_mut(|r| r.finalize());
-        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        bun_ptr::finalize_js_box(self, |this| this.js_value.with_mut(|r| r.finalize()));
     }
 
     fn update_reference_type(&self) {
@@ -824,9 +775,7 @@ impl JSMySQLConnection {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
-            let on_connect = js::onconnect_get_cached(value)?;
-            js::onconnect_set_cached(value, global_object, JSValue::ZERO);
-            return Some(on_connect);
+            return js::onconnect_take_cached(value, global_object);
         }
         None
     }
@@ -836,9 +785,7 @@ impl JSMySQLConnection {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
-            let on_close = js::onclose_get_cached(value)?;
-            js::onclose_set_cached(value, global_object, JSValue::ZERO);
-            return Some(on_close);
+            return js::onclose_take_cached(value, global_object);
         }
         None
     }

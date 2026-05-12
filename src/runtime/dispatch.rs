@@ -77,7 +77,7 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 use crate::api::cron::CronJob;
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::bun_subprocess::Subprocess;
-use crate::api::bun_subprocess::static_pipe_writer::Poll as StaticPipeWriterPoll;
+use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
 
@@ -738,10 +738,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            // `bun_install` builds its writer with the lower-tier
-            // `bun_spawn::static_pipe_writer::StaticPipeWriter`, not the
-            // runtime-tier one — cast must match the producer's type.
-            let h = owner_as!(bun_spawn::static_pipe_writer::Poll<bun_install::SecurityScanSubprocess<'_>>);
+            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>);
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_BUFFERED_WRITER => {
@@ -1121,26 +1118,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
-    use core::mem::offset_of;
-    use crate::timer::{AbortSignalTimeout, ImmediateObject, TimeoutObject};
-    // SAFETY: tag invariant — when `tag` matches, `t` is the `event_loop_timer`
-    // field of the named container (set at construction; never re-tagged).
-    match tag {
-        EventLoopTimerTag::TimeoutObject => unsafe {
-            let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, t);
-            Some((*parent).internals.flags.get().epoch())
-        },
-        EventLoopTimerTag::ImmediateObject => unsafe {
-            let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, t);
-            Some((*parent).internals.flags.get().epoch())
-        },
-        EventLoopTimerTag::AbortSignalTimeout => unsafe {
-            let parent = bun_core::from_field_ptr!(AbortSignalTimeout, event_loop_timer, t);
-            Some((*parent).flags.epoch())
-        },
-        _ => None,
-    }
+pub unsafe fn __bun_js_timer_epoch(_tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
+    // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
+    // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
+    // (same address the caller loaded it from — folds under LTO).
+    unsafe { crate::timer::js_timer_flags_ptr(t).map(|p| (*p.as_ptr()).epoch()) }
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in

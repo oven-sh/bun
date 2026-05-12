@@ -207,30 +207,13 @@ const PACKAGE_ID_IS_BUNDLED: u32 = u32::MAX - 1;
 
 const UNSET_PACKAGE_ID: PackageID = Install::INVALID_PACKAGE_ID - 1;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum DepKey {
-    Dependencies,
-    DevDependencies,
-    PeerDependencies,
-    OptionalDependencies,
-}
-
-impl DepKey {
-    const fn tag_name(self) -> &'static [u8] {
-        match self {
-            DepKey::Dependencies => b"dependencies",
-            DepKey::DevDependencies => b"devDependencies",
-            DepKey::PeerDependencies => b"peerDependencies",
-            DepKey::OptionalDependencies => b"optionalDependencies",
-        }
-    }
-}
-
-const DEPENDENCY_KEYS: [DepKey; 4] = [
-    DepKey::Dependencies,
-    DepKey::DevDependencies,
-    DepKey::PeerDependencies,
-    DepKey::OptionalDependencies,
+use bun_install_types::DependencyGroup;
+// Order preserved: deps→dev→peer→optional.
+const DEPENDENCY_KEYS: [DependencyGroup; 4] = [
+    DependencyGroup::DEPENDENCIES,
+    DependencyGroup::DEV,
+    DependencyGroup::PEER,
+    DependencyGroup::OPTIONAL,
 ];
 
 pub fn migrate_npm_lockfile<'a>(
@@ -393,7 +376,7 @@ pub fn migrate_npm_lockfile<'a>(
         package_idx += 1;
 
         for dep_key in DEPENDENCY_KEYS {
-            if let Some(deps) = pkg.get(dep_key.tag_name()) {
+            if let Some(deps) = pkg.get(dep_key.prop) {
                 let ExprData::EObject(deps_obj) = &deps.data else {
                     return Err(err!("InvalidNPMLockfile"));
                 };
@@ -940,10 +923,10 @@ pub fn migrate_npm_lockfile<'a>(
         }
 
         for dep_key in DEPENDENCY_KEYS {
-            if let Some(deps) = pkg.get(dep_key.tag_name()) {
+            if let Some(deps) = pkg.get(dep_key.prop) {
                 // fetch the peerDependenciesMeta if it exists
                 // this is only done for peerDependencies, obviously
-                let peer_dep_meta: Option<Expr> = if dep_key == DepKey::PeerDependencies {
+                let peer_dep_meta: Option<Expr> = if dep_key.behavior == Behavior::PEER {
                     if let Some(expr) = pkg.get(b"peerDependenciesMeta") {
                         if !matches!(expr.data, ExprData::EObject(_)) {
                             return Err(err!("InvalidNPMLockfile"));
@@ -1025,12 +1008,7 @@ pub fn migrate_npm_lockfile<'a>(
 
                             let id = found.new_package_id;
 
-                            let behavior = match dep_key {
-                                DepKey::Dependencies => Behavior::PROD,
-                                DepKey::OptionalDependencies => Behavior::OPTIONAL,
-                                DepKey::DevDependencies => Behavior::DEV,
-                                DepKey::PeerDependencies => Behavior::PEER,
-                            };
+                            let behavior = dep_key.behavior;
 
                             // PORT NOTE: capture tag and git/github owner before moving
                             // `version` into the buffer (Zig copies the struct by value; Rust
@@ -1233,7 +1211,7 @@ pub fn migrate_npm_lockfile<'a>(
                             name_checking_buf[buf_len as usize - name_bytes.len()..buf_len as usize].copy_from_slice(name_bytes);
                         } else {
                             // optional peer dependencies can be ... optional
-                            if dep_key == DepKey::PeerDependencies {
+                            if dep_key.behavior == Behavior::PEER {
                                 if let Some(o) = &peer_dep_meta {
                                     if let Some(meta) = o.get(name_bytes) {
                                         let ExprData::EObject(meta_obj) = &meta.data else {

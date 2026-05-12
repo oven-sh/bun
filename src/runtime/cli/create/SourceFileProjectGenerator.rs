@@ -161,46 +161,6 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     }
 }
 
-// Count number of occurrences to calculate buffer size
-fn count_replace_all_occurrences(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
-    let mut remaining = input;
-    let mut count: usize = 0;
-    while !remaining.is_empty() {
-        if let Some(index) = bun_str::strings::index_of(remaining, needle) {
-            remaining = &remaining[index + needle.len()..];
-            count += 1;
-        } else {
-            break;
-        }
-    }
-
-    input.len() + (count * (replacement.len().saturating_sub(needle.len())))
-}
-
-// Replace all occurrences of needle with replacement
-fn replace_all_occurrences_of_string(
-    input: &[u8],
-    needle: &[u8],
-    replacement: &[u8],
-) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    let mut result: Vec<u8> =
-        Vec::with_capacity(count_replace_all_occurrences(input, needle, replacement));
-    let mut remaining = input;
-    while !remaining.is_empty() {
-        if let Some(index) = bun_str::strings::index_of(remaining, needle) {
-            let new_remaining = &remaining[index + needle.len()..];
-            result.extend_from_slice(&remaining[0..index]);
-            result.extend_from_slice(replacement);
-            remaining = new_remaining;
-        } else {
-            result.extend_from_slice(remaining);
-            break;
-        }
-    }
-
-    Ok(result)
-}
-
 // Replace template placeholders with actual values
 fn string_with_replacements(
     original_input: &[u8],
@@ -214,27 +174,19 @@ fn string_with_replacements(
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
-        input = replace_all_occurrences_of_string(
+        input = strings::replace_owned(
             &input,
             b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT",
             react_component_export,
-        )?;
+        );
     }
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME") {
-        input = replace_all_occurrences_of_string(
-            &input,
-            b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME",
-            basename,
-        )?;
+        input = strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME", basename);
     }
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME") {
-        input = replace_all_occurrences_of_string(
-            &input,
-            b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME",
-            relative_name,
-        )?;
+        input = strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
     }
 
     Ok(input)
@@ -704,9 +656,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
             let filename = source.path.name.non_unique_name_string_base();
             if filename.is_empty() {
-                #[cold]
-                fn cold() {}
-                cold();
+                bun_core::hint::cold();
                 continue;
             }
 
@@ -989,6 +939,8 @@ pub mod react_shadcn_spa {
 }
 
 // Template type to handle different project types
+#[derive(bun_core::EnumTag)]
+#[enum_tag(existing = Tag)]
 pub enum Template {
     ReactTailwindSpa,
     ReactSpa,
@@ -1026,14 +978,6 @@ impl Tag {
 }
 
 impl Template {
-    pub fn tag(&self) -> Tag {
-        match self {
-            Template::ReactTailwindSpa => Tag::ReactTailwindSpa,
-            Template::ReactSpa => Tag::ReactSpa,
-            Template::ReactShadcnSpa { .. } => Tag::ReactShadcnSpa,
-        }
-    }
-
     pub fn logger(&self) -> Logger {
         Logger { template: self.tag(), has_written_initial_message: false }
     }

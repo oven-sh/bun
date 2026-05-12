@@ -1,18 +1,10 @@
-use core::ffi::{c_uint, c_void};
-use core::mem::offset_of;
-use core::ptr::NonNull;
+use core::ffi::c_uint;
 
-use bun_io::KeepAlive;
-use bun_io::posix_event_loop::{get_vm_ctx, AllocatorType};
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, WorkPool, WorkPoolTask,
+    AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
     ZigStringSlice,
 };
-// `bun_jsc::{VirtualMachine, AnyTask, ConcurrentTask}` are *modules*; import the structs.
-use bun_jsc::AnyTask::AnyTask;
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::node::StringOrBuffer;
 
@@ -262,139 +254,76 @@ impl bun_jsc::Unprotect for PBKDF2 {
     }
 }
 
-pub struct Job {
+pub struct Pbkdf2Ctx {
     /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
     /// drop — `Job` is only constructed on the async path
     /// (`from_js(.., is_async=true)` already protected the buffers).
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
-    pub task: WorkPoolTask,
-    pub promise: JSPromiseStrong,
-    // Zig: `vm: *jsc.VirtualMachine` — raw mut pointer; `enqueue_task_concurrent`
-    // requires `&mut self`, so a `&'static` borrow would be too restrictive.
-    pub vm: *mut VirtualMachine,
     pub err: Option<u32>,
-    pub any_task: AnyTask,
-    pub poll: KeepAlive,
+    pub promise: JSPromiseStrong,
 }
 
-impl Job {
-    pub fn run_task(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to the `task` field of a heap-allocated `Job` created in `create()`.
-        let job: &mut Job = unsafe {
-            &mut *bun_core::from_field_ptr!(Job, task, task)
-        };
-        let job_ptr: *mut Job = job;
-        // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;
-        // raw-ptr access in the defer avoids holding a `&mut Job` across the body below.
-        scopeguard::defer! {
-            // SAFETY: `job_ptr` points to the heap-allocated Job (alive until run_from_js drops it);
-            // `vm` is the per-thread VirtualMachine, valid for the program lifetime.
-            unsafe {
-                (*(*job_ptr).vm)
-                    .enqueue_task_concurrent(ConcurrentTask::create((*job_ptr).any_task.task()));
-            }
-        }
-
-        let len = usize::try_from(job.pbkdf2.length).expect("int cast");
+impl AnyTaskJobCtx for Pbkdf2Ctx {
+    fn run(&mut self, _global: *mut JSGlobalObject) {
+        let len = usize::try_from(self.pbkdf2.length).expect("int cast");
         // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`
         // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            job.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
+            self.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
             return;
         }
         buf.resize(len, 0);
-        job.output = buf;
+        self.output = buf;
 
-        if !job.pbkdf2.run(&mut job.output) {
-            job.err = Some(boringssl::ERR_get_error());
+        if !self.pbkdf2.run(&mut self.output) {
+            self.err = Some(boringssl::ERR_get_error());
             boringssl::ERR_clear_error();
 
-            job.output = Vec::new();
+            self.output = Vec::new();
         }
     }
 
-    pub fn run_from_js(this: *mut Job) -> JsResult<()> {
-        // PORT NOTE: Zig was `bun.JSTerminated!void`; widened to JsResult per crate convention.
-        // SAFETY: `this` was produced by `heap::alloc` in `create()` and is uniquely owned here;
-        // dropping the Box at any return point runs `impl Drop for Job` (Zig: `defer this.deinit()`).
-        let mut this = unsafe { bun_core::heap::take(this) };
-
-        let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
-        let global_this = vm.global();
-        let mut promise = this.promise.swap();
-        if let Some(err) = this.err {
+    fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let mut promise = self.promise.swap();
+        if let Some(err) = self.err {
             promise
                 .reject_with_async_stack(global_this, Ok(create_crypto_error(global_this, err)))?;
             return Ok(());
         }
 
-        let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
+        let output_slice = core::mem::take(&mut self.output);
+        debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
         // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
         promise.resolve(global_this, buffer_value)?;
         Ok(())
     }
+}
 
-    pub fn create(
-        vm: *mut VirtualMachine,
-        global_this: &JSGlobalObject,
-        // Zig: `data: *const PBKDF2` then `pbkdf2 = data.*` (struct copy). `PBKDF2` is not
-        // `Copy` in Rust (owns `StringOrBuffer`s), so take by value — the sole caller
-        // (`node_crypto_binding::pbkdf2`) owns it and hands it over.
-        data: PBKDF2,
-    ) -> *mut Job {
-        let job = bun_core::heap::into_raw(Box::new(Job {
+pub type Job = AnyTaskJob<Pbkdf2Ctx>;
+
+/// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
+/// to the work pool. Returns the live job so the caller can read
+/// `(*job).ctx.promise.value()` before the JS-thread completion fires.
+/// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
+pub fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
+    let job = AnyTaskJob::create(
+        global_this,
+        Pbkdf2Ctx {
             // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Job::run_task,
-            },
-            promise: JSPromiseStrong::default(),
-            vm,
             err: None,
-            // Zig used `undefined` then assigned below; AnyTask::default() is a safe placeholder.
-            any_task: AnyTask::default(),
-            poll: KeepAlive::default(),
-        }));
-
-        // SAFETY: `job` was just allocated and is uniquely owned here.
-        let job_ref = unsafe { &mut *job };
-        job_ref.promise = JSPromiseStrong::init(global_this);
-        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `AnyTask::New<T>`
-        // cannot carry a comptime callback (see event_loop/AnyTask.rs), so build the
-        // erased AnyTask directly with a non-capturing shim that adapts the JsResult
-        // error type (event_loop's `JsResult` erases jsc::Error to `*mut ()`).
-        job_ref.any_task = AnyTask {
-            ctx: NonNull::new(job.cast::<c_void>()),
-            callback: |ctx: *mut c_void| {
-                Job::run_from_js(ctx.cast::<Job>()).map_err(Into::into)
-            },
-        };
-        // PORT NOTE: KeepAlive::ref_ now takes an aio EventLoopCtx; the JS-loop ctx is fetched
-        // via the global hook (registered by crate::init) — same pattern as s3/simple_request.rs.
-        job_ref.poll.ref_(get_vm_ctx(AllocatorType::Js));
-        WorkPool::schedule(&raw mut job_ref.task);
-
-        job
-    }
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        self.poll.unref(get_vm_ctx(AllocatorType::Js));
-        // `pbkdf2: ThreadSafe<PBKDF2>` unprotects + drops via field drop.
-        // `promise` (JSPromiseStrong) and `output` (Vec) drop via their own `Drop` impls.
-    }
+            promise: JSPromiseStrong::init(global_this),
+        },
+    )
+    .expect("Pbkdf2Ctx::init is infallible");
+    // SAFETY: `job` is a freshly-created live pointer.
+    unsafe { AnyTaskJob::schedule(job) };
+    job
 }
 
 /// For usage in Rust

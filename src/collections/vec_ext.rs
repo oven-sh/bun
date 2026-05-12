@@ -123,6 +123,34 @@ pub trait VecExt<T>: Sized {
     /// must fully initialize the slice before any read/drop. Prefer
     /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
     unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
+    /// # Safety
+    /// As [`writable_slice`] but skips `reserve`; caller must guarantee
+    /// `len + additional <= capacity` (debug-asserted). Zig:
+    /// `ArrayList.addManyAsSliceAssumeCapacity`.
+    unsafe fn writable_slice_assume_capacity(&mut self, additional: usize) -> &mut [T];
+    /// # Safety
+    /// As [`writable_slice`] but uses `reserve_exact` so the allocation grows
+    /// to *exactly* `len + additional`. Use when the buffer is the final
+    /// single-shot blob (sourcemap finalize, etc.).
+    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
+    /// Reserves `additional` and returns the first `additional` slots of
+    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice`]:
+    /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
+    /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
+    /// is exactly `additional` long, not `capacity - len`.
+    fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
+    /// `reserve(additional)` then [`expand_to_capacity`], returning the
+    /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
+    /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
+    /// Unlike [`writable_slice`] this exposes the *full* over-allocated
+    /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
+    /// callee can use the allocator's slack. Pass `additional = 0` when the
+    /// caller has already reserved.
+    ///
+    /// # Safety
+    /// Same as [`expand_to_capacity`]: every byte in `[prev_len, cap)` must be
+    /// written by the FFI callee (or `len` truncated back) before any read.
+    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
 
     // ── ownership transfer ────────────────────────────────────────────────
     fn move_to_list(&mut self) -> Vec<T>;
@@ -385,6 +413,39 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         unsafe { self.set_len(prev + additional) };
         &mut self[prev..]
     }
+    #[inline]
+    unsafe fn writable_slice_assume_capacity(&mut self, additional: usize) -> &mut [T] {
+        debug_assert!(self.len() + additional <= self.capacity());
+        let prev = self.len();
+        // SAFETY: caller contract — capacity asserted; slice fully written before any read.
+        unsafe { self.set_len(prev + additional) };
+        &mut self[prev..]
+    }
+    #[inline]
+    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T] {
+        self.reserve_exact(additional);
+        let prev = self.len();
+        // SAFETY: caller contract — slice fully written before any read.
+        unsafe { self.set_len(prev + additional) };
+        &mut self[prev..]
+    }
+    #[inline]
+    fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {
+        self.reserve(additional);
+        &mut self.spare_capacity_mut()[..additional]
+    }
+    #[inline]
+    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize) {
+        let prev = self.len();
+        if additional != 0 {
+            self.reserve(additional);
+        }
+        let cap = self.capacity();
+        // SAFETY: caller contract — `[prev, cap)` is FFI-written or truncated before any read.
+        unsafe { self.set_len(cap) };
+        // SAFETY: `prev <= cap`; ptr is within (or one-past) the allocation.
+        (unsafe { self.as_mut_ptr().add(prev) }, cap - prev)
+    }
 
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
@@ -491,6 +552,30 @@ pub trait ByteVecExt {
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
     fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int);
+
+    /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
+    /// spare capacity past `len()`, then return the *full* spare-capacity
+    /// slice (`len == capacity - len()`, which may exceed `suggested`).
+    ///
+    /// Callers that must hand libuv exactly `suggested` bytes slice the
+    /// result themselves: `&mut v.uv_alloc_spare(n)[..n]`.
+    fn uv_alloc_spare(&mut self, suggested: usize) -> &mut [core::mem::MaybeUninit<u8>];
+    /// As [`uv_alloc_spare`] but typed `&mut [u8]` so the result can be used
+    /// directly as a `uv_buf_t` / `read(2)` target without a per-site cast.
+    ///
+    /// # Safety
+    /// The returned bytes are **uninitialised**. Caller must only treat the
+    /// prefix actually written by the FFI/syscall as initialised (typically by
+    /// committing with [`uv_commit`]); the bytes must not be read before then.
+    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8];
+    /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
+    /// returned by [`uv_alloc_spare`] / [`uv_alloc_spare_u8`]: bumps `len` by
+    /// `nread`. Debug-asserts `len + nread <= capacity`.
+    ///
+    /// # Safety
+    /// The `nread` bytes at `[len, len + nread)` must have been initialised by
+    /// the preceding write into the spare slice.
+    unsafe fn uv_commit(&mut self, nread: usize);
 }
 
 impl ByteVecExt for Vec<u8> {
@@ -530,6 +615,30 @@ impl ByteVecExt for Vec<u8> {
             self.as_mut_ptr().add(prev).cast::<Int>().write_unaligned(int);
             self.set_len(prev + size);
         }
+    }
+    #[inline]
+    fn uv_alloc_spare(&mut self, suggested: usize) -> &mut [core::mem::MaybeUninit<u8>] {
+        // `Vec::reserve` already amortises by doubling, so a plain
+        // `reserve(suggested)` suffices — no manual `cap - len < suggested`
+        // dance is needed (it short-circuits internally).
+        self.reserve(suggested);
+        self.spare_capacity_mut()
+    }
+    #[inline]
+    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
+        self.reserve(suggested);
+        let len = self.len();
+        let cap = self.capacity();
+        // SAFETY: `[len, cap)` is allocated; caller contract forbids reading
+        // these bytes until written.
+        unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr().add(len), cap - len) }
+    }
+    #[inline]
+    unsafe fn uv_commit(&mut self, nread: usize) {
+        let new_len = self.len() + nread;
+        debug_assert!(new_len <= self.capacity());
+        // SAFETY: caller contract — `nread` bytes at the tail were initialised.
+        unsafe { self.set_len(new_len) };
     }
 }
 

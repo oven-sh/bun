@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 
 use bun_io::Loop as AsyncLoop;
 use bun_boringssl_sys as boringssl;
-use bun_collections::VecExt;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_core::timespec;
 use bun_io::{StreamingWriter, WriteStatus};
 #[cfg(windows)]
@@ -229,16 +229,9 @@ impl WindowsNamedPipe {
     }
 
     fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
-        // PORT NOTE: reshaped for borrowck — check len, grow, then take the final borrow once.
-        if self.incoming.unused_capacity_slice().len() < suggested_size {
-            self.incoming.ensure_unused_capacity(suggested_size);
-        }
-        let available = self.incoming.unused_capacity_slice();
-        // SAFETY: `available` is the unused-capacity tail of `incoming`; slicing to
-        // `suggested_size` is in-bounds because we just ensured at least that much.
-        // `MaybeUninit<u8>` has the same layout as `u8`; the libuv read callback
-        // writes into this region before it's observed.
-        unsafe { core::slice::from_raw_parts_mut(available.as_mut_ptr().cast::<u8>(), suggested_size) }
+        // SAFETY: libuv writes into this region before on_read commits.
+        let spare = unsafe { self.incoming.uv_alloc_spare_u8(suggested_size) };
+        &mut spare[..suggested_size]
     }
 
     // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
@@ -248,10 +241,8 @@ impl WindowsNamedPipe {
     // `on_read_alloc`, and we no longer hold the original pointer here.
     fn on_read(&mut self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
-        // SAFETY: `nread` bytes were just written by libuv into the
-        // unused-capacity tail handed out by `on_read_alloc`.
-        unsafe { self.incoming.set_len(self.incoming.len() + nread) };
-        debug_assert!(self.incoming.len() <= self.incoming.capacity());
+        // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
+        unsafe { self.incoming.uv_commit(nread) };
 
         self.reset_timeout();
 

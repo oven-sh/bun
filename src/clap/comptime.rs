@@ -41,21 +41,7 @@ use crate::{Names, Param, ParseOptions, Values};
 //     that still pass a raw `&'static [Param<Id>]`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `const fn` byte-slice equality (slice `==` is not `const` on stable).
-#[inline]
-const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
+use bun_core::strings::const_bytes_eq as bytes_eq;
 
 #[inline]
 const fn is_named<Id>(p: &Param<Id>) -> bool {

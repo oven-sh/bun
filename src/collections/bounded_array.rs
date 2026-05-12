@@ -424,8 +424,17 @@ impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
 
 // `pub const Writer = ... std.io.GenericWriter(*Self, error{Overflow}, appendWrite);`
 // Only defined for `T == u8` (Zig `@compileError`s otherwise).
-// TODO(port): Zig exposes a `std.io.GenericWriter`. Phase A maps to `core::fmt::Write`;
-// if a byte-level `bun_io::Write` is needed, add it in Phase B.
+impl<const BUFFER_CAPACITY: usize> bun_core::io::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+        self.append_slice(buf).map_err(|_| bun_core::err!("NoSpaceLeft"))
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.len
+    }
+}
+
 impl<const BUFFER_CAPACITY: usize> core::fmt::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.append_slice(s.as_bytes()).map_err(|_| core::fmt::Error)

@@ -49,14 +49,6 @@ impl AnyPromiseExt for bun_jsc::AnyPromise {
     }
 }
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
-/// through the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 bun_output::declare_scope!(Listener, visible);
 
 pub struct Handlers {
@@ -222,7 +214,7 @@ impl Handlers {
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener.get(), ListenerType::None) {
-                    listen_socket.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+                    listen_socket.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                     listen_socket.strong_self.with_mut(|s| s.deinit());
                     // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }

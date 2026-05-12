@@ -1,11 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use)]
-//! `bun_sys` — B-1 minimal compiling surface.
-//! Full Phase-A draft (5500 lines, all syscall wrappers) preserved in
-//! `lib_draft_b1.rs` on disk for B-2 move-in reference. Draft module dropped
-//! from build (duplicate of live per-syscall impls below).
+//! `bun_sys` — syscall wrappers (port of `src/sys/sys.zig`).
 
-// #[path = "lib_draft_b1.rs"] mod draft;
 // RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
 // `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
 #![warn(unreachable_pub)]
@@ -19,17 +15,6 @@ pub extern crate bun_string as bun_str;
 pub extern crate bun_libuv_sys;
 pub mod fd;
 pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContext, MovableIfWindowsFd, FdT, UvFile, RawFd};
-// `File.rs` (Phase-A draft) stays gated: the inline `impl File` below is the
-// canonical, downstream-consumed surface (`read_to_end() -> Maybe<Vec<u8>>`,
-// `from_fd`, `create`, `read_from(Fd, &ZStr)`) and File.rs's shapes diverge
-// (`read_to_end() -> ReadToEndResult`, `read_from(impl Into<File>, &ZStr)`).
-// Swapping breaks T2+ callers. File.rs additionally blocked on
-// `bun_paths::OsPathZ` (T0, missing) and the `top_level_dir()` resolver hook.
-// B-2 follow-up: cherry-pick File.rs-only methods (`make_openat`, `kind`,
-// `is_tty`, `read_file_from`, `close_and_move_to`) into the inline impl as
-// higher tiers demand them. Draft module dropped from build; inline `impl File`
-// below + `pub mod file { pub use super::File; }` are canonical.
-// #[path = "File.rs"] pub mod file;
 #[path = "Error.rs"] mod error;
 pub use error::Error;
 #[cfg(windows)]
@@ -82,25 +67,9 @@ impl Default for SystemError {
 impl SystemError {
     /// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
-    ///
-    /// `self.errno` is a `#[repr(C)]` `c_int` that crosses FFI
-    /// (BunObject.cpp `SystemError__*`) and may be populated from JS-land,
-    /// so it is NOT trusted to be a declared `E` discriminant. Zig
-    /// `@enumFromInt` is unchecked, but in Rust transmuting an out-of-range
-    /// value into a `#[repr(u16)]` enum is immediate UB — validate via the
-    /// checked constructor and fall back to `SUCCESS` for unmapped values
-    /// (matches `bun_sys::Error::get_errno`).
     #[inline]
     pub fn get_errno(&self) -> E {
-        let n = self.errno.wrapping_neg();
-        #[cfg(windows)]
-        {
-            u16::try_from(n).ok().and_then(E::try_from_raw).unwrap_or(E::SUCCESS)
-        }
-        #[cfg(not(windows))]
-        {
-            SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::SUCCESS)
-        }
+        e_from_negated(self.errno)
     }
     /// Zig: `SystemError.deref`.
     pub fn deref(&self) {
@@ -792,7 +761,7 @@ pub fn is_regular_file(mode: Mode) -> bool {
 /// `std.posix.socket_t` — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;
-pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
+pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno, e_from_negated};
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
 
@@ -1046,8 +1015,8 @@ pub type Stat = libc::stat;
 pub type Stat = bun_libuv_sys::uv_stat_t;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Syscall surface — real posix libc FFI. Windows path stays gated in
-// `lib_draft_b1.rs` (NT/kernel32/libuv triad); these `#[cfg(unix)]` impls
+// Syscall surface — real posix libc FFI. Windows path lives in
+// `windows_impl` (NT/kernel32/libuv triad) below; these `#[cfg(unix)]` impls
 // match `src/sys/sys.zig` posix arms 1:1.
 // ──────────────────────────────────────────────────────────────────────────
 use bun_core::ZStr;
@@ -3420,6 +3389,29 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::*;
 
+/// Shared inner loop for `read_to_end_into` / `read_to_end_with_array_list`:
+/// repeatedly reserve `grow_by` when full, hand the spare capacity to
+/// `read_chunk(dst, running_offset)`, and grow `len` by the result until
+/// `read_chunk` returns 0. Returns total bytes appended.
+#[inline]
+fn read_fill_vec(
+    buf: &mut Vec<u8>,
+    grow_by: usize,
+    mut read_chunk: impl FnMut(&mut [u8], i64) -> Maybe<usize>,
+) -> Maybe<usize> {
+    let start = buf.len();
+    let mut total: i64 = 0;
+    loop {
+        if buf.capacity() == buf.len() { buf.reserve(grow_by); }
+        // SAFETY: `read_chunk` writes initialized bytes; we commit exactly what was written.
+        let n = read_chunk(unsafe { bun_core::vec::spare_bytes_mut(buf) }, total)?;
+        if n == 0 { return Ok(buf.len() - start); }
+        // SAFETY: `n` bytes were just initialized by `read_chunk`.
+        unsafe { bun_core::vec::commit_spare(buf, n) };
+        total += n as i64;
+    }
+}
+
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
@@ -3498,19 +3490,7 @@ impl File {
     /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
     /// callers that want cursor-relative streaming into an existing `Vec`.
     pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
-        let start = buf.len();
-        loop {
-            if buf.capacity() == buf.len() { buf.reserve(8192); }
-            let spare = buf.spare_capacity_mut();
-            // SAFETY: `MaybeUninit<u8>` ↔ `u8` are layout-identical; read() only
-            // writes (never reads) into this region and we set_len to exactly
-            // the byte count it reports.
-            let n = read(self.handle, unsafe {
-                &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
-            })?;
-            if n == 0 { return Ok(buf.len() - start); }
-            unsafe { buf.set_len(buf.len() + n); }
-        }
+        read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
@@ -3538,40 +3518,20 @@ impl File {
         get_file_size(self.handle).map(|n| n as usize)
     }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
-    /// `SizeHint` so callers can pre-reserve. Returns the borrowed slice.
-    pub fn read_to_end_with_array_list<'a>(&self, buf: &'a mut Vec<u8>, hint: SizeHint) -> Maybe<&'a [u8]> {
-        // File.zig:298 — `probably_small` reserves 64; `unknown_size` fstats and
-        // reserves `size+16`.
+    /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
+    /// File.zig:298 — `probably_small` reserves 64; `unknown_size` fstats and
+    /// reserves `size+16`.
+    pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
-            SizeHint::ProbablySmall => buf.reserve(64),
+            SizeHint::ProbablySmall => list.reserve(64),
             SizeHint::UnknownSize => {
-                let size = self.get_end_pos()?;
-                if buf.capacity() < size + 16 {
-                    buf.reserve(size + 16 - buf.len());
-                }
+                list.reserve_exact((self.get_end_pos()? + 16).saturating_sub(list.len()));
             }
         }
-        let start = buf.len();
-        let mut total: i64 = 0;
-        loop {
-            if buf.capacity() == buf.len() { buf.reserve(16); }
-            let spare = buf.spare_capacity_mut();
-            // SAFETY: `MaybeUninit<u8>` ↔ `u8` are layout-identical; pread()/read()
-            // only write (never read) into this region and we set_len to exactly
-            // the byte count reported.
-            let dst = unsafe {
-                &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
-            };
-            #[cfg(unix)]
-            let n = pread(self.handle, dst, total)?;
-            #[cfg(not(unix))]
-            let n = read(self.handle, dst)?;
-            if n == 0 { break; }
-            // SAFETY: `n` bytes were just initialized by the syscall.
-            unsafe { buf.set_len(buf.len() + n); }
-            total += n as i64;
-        }
-        Ok(&buf[start..])
+        read_fill_vec(list, 16, |dst, off| {
+            #[cfg(unix)] { pread(self.handle, dst, off) }
+            #[cfg(not(unix))] { read(self.handle, dst) }
+        })
     }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
@@ -3737,7 +3697,7 @@ impl File {
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
 // not written through). On Windows the Zig original aliases `uv_buf_t`;
-// that arm lands with the libuv triad in `lib_draft_b1.rs`.
+// that arm lives in `windows_impl` below.
 // Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
 // can be passed straight to `pwritev(2)`.
 // ──────────────────────────────────────────────────────────────────────────
@@ -5369,7 +5329,7 @@ pub fn normalize_path_windows_opts<'a>(
                 buf[NT_NUL.len()] = 0;
                 return Ok(WStr::from_buf(&buf[..], NT_NUL.len()));
             }
-            let is_sep = |c: u16| c == b'/' as u16 || c == b'\\' as u16;
+            use bun_paths::is_sep_any_t as is_sep;
             if is_sep(path[1]) && is_sep(path[3]) {
                 // (b) `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
                 // is not collapsed to `\pipe\foo` by the normalizer.
@@ -5409,7 +5369,7 @@ pub fn normalize_path_windows_opts<'a>(
                 /*PRESERVE_TRAILING_SLASH*/ false,
                 /*ZERO_TERMINATE*/ true,
                 /*ADD_NT_PREFIX*/ true,
-            >(path, buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
             let len = norm.len();
             // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
             return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
@@ -5426,7 +5386,7 @@ pub fn normalize_path_windows_opts<'a>(
             /*PRESERVE_TRAILING_SLASH*/ false,
             /*ZERO_TERMINATE*/ true,
             /*ADD_NT_PREFIX*/ false,
-        >(path, buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
         let len = norm.len();
         // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
@@ -5482,7 +5442,7 @@ pub fn normalize_path_windows_opts<'a>(
         /*PRESERVE_TRAILING_SLASH*/ false,
         /*ZERO_TERMINATE*/ true,
         /*ADD_NT_PREFIX*/ true,
-    >(&joined.0[..joined_len], buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+    >(&joined.0[..joined_len], buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
     let len = norm.len();
     // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
     Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) })
@@ -6739,6 +6699,92 @@ pub mod net {
     }
     use sock::*;
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Zig `std.posix.sockaddr.in` / `.in6` — un-prefixed field names
+    // (`family`/`port`/`addr`/`flowinfo`/`scope_id`) so call sites written
+    // against the Zig shape stay target-agnostic.
+    //
+    // Layout-identical to the C-named ground truth re-exported at
+    // `crate::posix::sockaddr_in[6]` (= `libc` on Unix, `ws2_32` via
+    // `bun_libuv_sys` on Windows) — asserted below. Kept as a *distinct*
+    // nominal type because the C structs use `sin_*`/`sin6_*` names AND nest
+    // `in_addr`/`in6_addr`; Rust won't structurally unify.
+    //
+    // BSD targets carry a leading `len: u8` and `sa_family_t == u8`; the
+    // `ZEROED` const pre-fills `len = size_of::<Self>()` to mirror Zig's
+    // field default so struct-update initializers (`..sockaddr_in::ZEROED`)
+    // work uniformly on all targets and in `const` context.
+    // ──────────────────────────────────────────────────────────────────────
+    #[cfg(unix)]    pub type sa_family_t = libc::sa_family_t;
+    #[cfg(unix)]    pub type in_port_t   = libc::in_port_t;
+    #[cfg(windows)] pub type sa_family_t = u16; // ws2def.h: `typedef USHORT ADDRESS_FAMILY;`
+    #[cfg(windows)] pub type in_port_t   = u16;
+
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[repr(C)] #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub len: u8,
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub addr: u32,
+        pub zero: [u8; 8],
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    impl sockaddr_in {
+        pub const ZEROED: Self = Self {
+            len: core::mem::size_of::<Self>() as u8,
+            family: 0, port: 0, addr: 0, zero: [0; 8],
+        };
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[repr(C)] #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub addr: u32,
+        pub zero: [u8; 8],
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    impl sockaddr_in {
+        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[repr(C)] #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub len: u8,
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub flowinfo: u32,
+        pub addr: [u8; 16],
+        pub scope_id: u32,
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    impl sockaddr_in6 {
+        pub const ZEROED: Self = Self {
+            len: core::mem::size_of::<Self>() as u8,
+            family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0,
+        };
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[repr(C)] #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub flowinfo: u32,
+        pub addr: [u8; 16],
+        pub scope_id: u32,
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    impl sockaddr_in6 {
+        pub const ZEROED: Self =
+            Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
+    }
+    const _: () = assert!(core::mem::size_of::<sockaddr_in>()  == core::mem::size_of::<crate::posix::sockaddr_in>());
+    const _: () = assert!(core::mem::align_of::<sockaddr_in>() == core::mem::align_of::<crate::posix::sockaddr_in>());
+    const _: () = assert!(core::mem::size_of::<sockaddr_in6>()  == core::mem::size_of::<crate::posix::sockaddr_in6>());
+    const _: () = assert!(core::mem::align_of::<sockaddr_in6>() == core::mem::align_of::<crate::posix::sockaddr_in6>());
+
     /// `std.net.Address` — tagged union over sockaddr_in/in6/un.
     #[derive(Clone, Copy)]
     pub struct Address {
@@ -6771,14 +6817,14 @@ pub mod net {
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]
-        pub fn as_in4(&self) -> Option<&sockaddr_in> {
+        pub fn as_in4(&self) -> Option<&sock::sockaddr_in> {
             if self.family() == AF_INET {
                 // SAFETY: `ss_family == AF_INET` ⇒ `any` was written as a
                 // `sockaddr_in`; `sockaddr_storage` is guaranteed by POSIX/
                 // ws2def.h to have size and alignment >= `sockaddr_in`, and
                 // the family field overlays at offset 0. Reborrowing the
                 // storage at the narrower type is the canonical sockaddr view.
-                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in>() })
             } else {
                 None
             }
@@ -6786,12 +6832,12 @@ pub mod net {
         /// Tag-checked borrow of the IPv6 payload. `None` unless
         /// `family() == AF_INET6`.
         #[inline]
-        pub fn as_in6(&self) -> Option<&sockaddr_in6> {
+        pub fn as_in6(&self) -> Option<&sock::sockaddr_in6> {
             if self.family() == AF_INET6 {
                 // SAFETY: `ss_family == AF_INET6` ⇒ `any` was written as a
                 // `sockaddr_in6`; `sockaddr_storage` has size/alignment >=
                 // `sockaddr_in6` on every supported target. See `as_in4`.
-                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in6>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in6>() })
             } else {
                 None
             }

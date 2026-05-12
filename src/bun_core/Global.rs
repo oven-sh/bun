@@ -211,6 +211,24 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
     }
 }
 
+// ─── SIGNAL_NAMES — single source of truth for `@tagName(SignalCode)` ─────
+// Zig has ONE `enum(u8) { …, _ }` (src/sys/SignalCode.zig) and uses the
+// compiler-intrinsic `@tagName` — there is no hand-written switch in Zig.
+// The Rust port split the type across two crates (open newtype in bun_sys,
+// closed enum here); this const table is the shared `@tagName` surrogate.
+// Index = POSIX signal number; `[0]` is a sentinel ("") that callers must
+// guard out themselves — bun_sys::SignalCode::name() range-checks `1..=31`,
+// bun_core::SignalCode is `#[repr(u8)]` exhaustive over `1..=31` so it
+// indexes directly.
+pub const SIGNAL_NAMES: [&str; 32] = [
+    "",        "SIGHUP",  "SIGINT",  "SIGQUIT", "SIGILL",   "SIGTRAP",
+    "SIGABRT", "SIGBUS",  "SIGFPE",  "SIGKILL", "SIGUSR1",  "SIGSEGV",
+    "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIG16",    "SIGCHLD",
+    "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU",  "SIGURG",
+    "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO",
+    "SIGPWR",  "SIGSYS",
+];
+
 // ─── SignalCode (from bun_sys, TYPE_ONLY) ─────────────────────────────────
 // Zig: src/sys/SignalCode.zig — enum(u8) with POSIX numbering. Only the
 // discriminant is needed at this tier (raise_ignoring_panic_handler casts to c_int).
@@ -252,40 +270,9 @@ impl SignalCode {
     /// canonical `"SIGxxx"` name. The bun_core enum is exhaustive (1..=31),
     /// so every variant has a name; the `Option` in bun_sys exists only for
     /// the open-ended `enum(u8) { _, }` newtype port.
+    #[inline]
     pub fn name(self) -> &'static str {
-        match self {
-            Self::SIGHUP => "SIGHUP",
-            Self::SIGINT => "SIGINT",
-            Self::SIGQUIT => "SIGQUIT",
-            Self::SIGILL => "SIGILL",
-            Self::SIGTRAP => "SIGTRAP",
-            Self::SIGABRT => "SIGABRT",
-            Self::SIGBUS => "SIGBUS",
-            Self::SIGFPE => "SIGFPE",
-            Self::SIGKILL => "SIGKILL",
-            Self::SIGUSR1 => "SIGUSR1",
-            Self::SIGSEGV => "SIGSEGV",
-            Self::SIGUSR2 => "SIGUSR2",
-            Self::SIGPIPE => "SIGPIPE",
-            Self::SIGALRM => "SIGALRM",
-            Self::SIGTERM => "SIGTERM",
-            Self::SIG16 => "SIG16",
-            Self::SIGCHLD => "SIGCHLD",
-            Self::SIGCONT => "SIGCONT",
-            Self::SIGSTOP => "SIGSTOP",
-            Self::SIGTSTP => "SIGTSTP",
-            Self::SIGTTIN => "SIGTTIN",
-            Self::SIGTTOU => "SIGTTOU",
-            Self::SIGURG => "SIGURG",
-            Self::SIGXCPU => "SIGXCPU",
-            Self::SIGXFSZ => "SIGXFSZ",
-            Self::SIGVTALRM => "SIGVTALRM",
-            Self::SIGPROF => "SIGPROF",
-            Self::SIGWINCH => "SIGWINCH",
-            Self::SIGIO => "SIGIO",
-            Self::SIGPWR => "SIGPWR",
-            Self::SIGSYS => "SIGSYS",
-        }
+        SIGNAL_NAMES[self as u8 as usize]
     }
 }
 

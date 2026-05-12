@@ -148,7 +148,7 @@ impl<'a> CaseInsensitiveAsciiPrehashed<'a> {
     }
     #[inline]
     pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+        bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
     }
 }
 
@@ -185,7 +185,7 @@ impl ArrayHashContext<[u8]> for CaseInsensitiveAsciiStringContext {
     }
     #[inline]
     fn eql(&self, a: &[u8], b: &[u8], _b_index: usize) -> bool {
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+        bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
     }
 }
 
@@ -1839,7 +1839,7 @@ pub mod string_hash_map {
         }
         #[inline]
         pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+            bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
         }
     }
 

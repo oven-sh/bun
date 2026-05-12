@@ -209,17 +209,7 @@ pub const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
 // opaquely on the JS wrapper (never dereferenced C++-side — same shape as
 // `BakeGlobalObject__attachPerThreadData`). No caller-side precondition for
 // the call itself ⇒ declare `safe fn`.
-#[cfg(all(windows, target_arch = "x86_64"))]
-unsafe extern "sysv64" {
-    #[link_name = "ParsedShellScript__createWithValues"]
-    safe fn ParsedShellScript__createWithValues(
-        global: &JSGlobalObject,
-        ptr: *mut core::ffi::c_void,
-        marked_argument_buffer: &MarkedArgumentBuffer,
-    ) -> JSValue;
-}
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-unsafe extern "C" {
+bun_jsc::jsc_abi_extern! {
     #[link_name = "ParsedShellScript__createWithValues"]
     safe fn ParsedShellScript__createWithValues(
         global: &JSGlobalObject,

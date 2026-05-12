@@ -485,45 +485,23 @@ impl<'a> ByteCursor<'a> {
     /// practice (1–3 digits) so the 20-byte scratch + reverse-fill beats any
     /// table lookup for code size.
     #[inline(always)]
-    fn put_u64_dec(&mut self, mut n: u64) {
+    fn put_u64_dec(&mut self, n: u64) {
         let mut tmp = [0u8; 20];
-        let mut i = tmp.len();
-        loop {
-            i -= 1;
-            tmp[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            if n == 0 { break; }
-        }
-        self.put(&tmp[i..]);
+        self.put(bun_fmt::itoa_u64(&mut tmp, n));
     }
 
-    /// `{:016x}` / `{:016X}` — fixed 16-nibble u64. Mirrors
-    /// `bun_core::fmt::HexIntFormatter::get_out_buf` byte-for-byte.
+    /// `{:016x}` / `{:016X}` — fixed 16-nibble u64.
     #[inline(always)]
     fn put_u64_hex16<const LOWER: bool>(&mut self, v: u64) {
-        let table = if LOWER { &bun_fmt::LOWER_HEX_TABLE } else { &bun_fmt::UPPER_HEX_TABLE };
-        let mut tmp = [0u8; 16];
-        let mut i = 0;
-        while i < 16 {
-            tmp[i] = table[((v >> ((15 - i) * 4)) as u8 & 0xF) as usize];
-            i += 1;
-        }
-        self.put(&tmp);
+        self.put(&bun_fmt::u64_hex_fixed::<LOWER, 16>(v));
     }
 
     /// `{:x}` — variable-width lower-hex (no leading zeros), as used by
     /// `PatchHashFmt`.
     #[inline(always)]
-    fn put_u64_hex_var(&mut self, mut n: u64) {
+    fn put_u64_hex_var(&mut self, n: u64) {
         let mut tmp = [0u8; 16];
-        let mut i = tmp.len();
-        loop {
-            i -= 1;
-            tmp[i] = bun_fmt::LOWER_HEX_TABLE[(n & 0xF) as usize];
-            n >>= 4;
-            if n == 0 { break; }
-        }
-        self.put(&tmp[i..]);
+        self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
     /// Inlined body of `CacheVersionFormatter` — `@@@{d}` when set.

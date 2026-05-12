@@ -887,10 +887,6 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-thread_local! {
-    static INITIALIZED_STORE: Cell<bool> = const { Cell::new(false) };
-}
-
 pub const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
@@ -913,26 +909,10 @@ pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
     buf[0..BUN_HASH_TAG.len()].copy_from_slice(BUN_HASH_TAG);
     // std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash})
-    //
-    // PERF(port): direct nibble write instead of `core::fmt` `{:x}` — avoids
-    // the `&dyn LowerHex` vtable + `.expect("unreachable")` panic-format
-    // landing pad on the per-package install hot path. `buf` is sized exactly
-    // `BUN_HASH_TAG.len() + 16 + 1` (see `MAX_BUNTAG_HASH_BUF_LEN`), so the
-    // 16-byte scratch always fits.
-    let digits_len = {
-        let mut tmp = [0u8; 16];
-        let mut i = tmp.len();
-        let mut n = patch_hash;
-        loop {
-            i -= 1;
-            tmp[i] = bun_core::fmt::LOWER_HEX_TABLE[(n & 0xF) as usize];
-            n >>= 4;
-            if n == 0 { break; }
-        }
-        let digits = &tmp[i..];
-        buf[BUN_HASH_TAG.len()..BUN_HASH_TAG.len() + digits.len()].copy_from_slice(digits);
-        digits.len()
-    };
+    let mut tmp = [0u8; 16];
+    let digits = bun_core::fmt::u64_hex_var_lower(&mut tmp, patch_hash);
+    buf[BUN_HASH_TAG.len()..BUN_HASH_TAG.len() + digits.len()].copy_from_slice(digits);
+    let digits_len = digits.len();
     buf[BUN_HASH_TAG.len() + digits_len] = 0;
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
@@ -983,16 +963,7 @@ pub fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
 pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
 pub fn initialize_store() {
-    use bun_js_parser as js_ast;
-    if INITIALIZED_STORE.with(|c| c.get()) {
-        bun_ast::expr::data::Store::reset();
-        bun_ast::stmt::data::Store::reset();
-        return;
-    }
-
-    INITIALIZED_STORE.with(|c| c.set(true));
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
+    bun_ast::initialize_store_or_reset();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread

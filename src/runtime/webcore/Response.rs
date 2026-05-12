@@ -157,33 +157,12 @@ pub fn from_js_direct(value: JSValue) -> Option<*mut Response> {
     js::from_js_direct(value).map(<*mut ()>::cast::<Response>)
 }
 
-// `JsClass` impl delegates to `bun_jsc::generated::JSResponse`
-// — the `js_class_module!` expansion already declares the
+// `JsClass` impl delegates to `bun_jsc::generated::JSResponse` — the
+// `js_class_module!` expansion already declares the
 // `Response__{fromJS,fromJSDirect,create,getConstructor}` externs with the
-// correct `JSC_CALLCONV` (sysv64 on win-x64, C otherwise). Re-declaring them
-// locally would risk an ABI mismatch on Windows and trips
-// `clashing_extern_declarations`. Payload is type-erased to `*mut ()` at the
-// `bun_jsc` tier (Response lives in a higher crate); cast at the boundary.
-impl bun_jsc::JsClass for Response {
-    #[inline]
-    fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
-        bun_jsc::generated::JSResponse::from_js(value).map(<*mut ()>::cast::<Self>)
-    }
-    #[inline]
-    fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
-        bun_jsc::generated::JSResponse::from_js_direct(value).map(<*mut ()>::cast::<Self>)
-    }
-    fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-        // Ownership of the boxed payload transfers to the C++ wrapper
-        // (freed via `ResponseClass__finalize`).
-        let ptr = bun_core::heap::into_raw(Box::new(self));
-        bun_jsc::generated::JSResponse::to_js(ptr.cast::<()>(), global)
-    }
-    #[inline]
-    fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-        bun_jsc::generated::JSResponse::get_constructor(global)
-    }
-}
+// correct `JSC_CALLCONV`. Payload is type-erased to `*mut ()` at the `bun_jsc`
+// tier (Response lives in a higher crate); the macro casts at the boundary.
+bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse);
 
 /// R-2 (`sharedThis`): every JS-facing host-fn takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
@@ -245,13 +224,29 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
 }
 pub type WeakRef = bun_ptr::WeakPtr<Response>;
 
-// Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
-// short-circuit on a JS-side stream that was already read (Zig:
-// `T.js.bodyGetCached(this_value)`).
-
+// Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`
+// so the [`BodyMixin`] twin defaults can run generically (Zig:
+// `T.js.bodyGetCached` / `T.js.gc.stream.*` / `this.#js_ref.tryGet()`).
 impl crate::webcore::body::BodyOwnerJs for Response {
-    fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
-        js::body_get_cached(this_value)
+    #[inline]
+    fn js_ref(&self) -> Option<JSValue> {
+        self.js_ref.get().try_get()
+    }
+    #[inline]
+    fn body_get_cached(this: JSValue) -> Option<JSValue> {
+        js::body_get_cached(this)
+    }
+    #[inline]
+    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        js::body_set_cached(this, global, value)
+    }
+    #[inline]
+    fn stream_get_cached(this: JSValue) -> Option<JSValue> {
+        js::stream_get_cached(this)
+    }
+    #[inline]
+    fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        js::stream_set_cached(this, global, value)
     }
 }
 
@@ -267,11 +262,6 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 // method if the trait is in scope at the call site. Rather than leak
 // `BodyMixin` into the codegen include site, we mirror Zig's re-export with
 // thin inherent wrappers below. Same approach applies to Request.
-//
-// Override `get_body_readable_stream` so the BodyMixin default methods
-// (get_text/get_json/etc.) actually see the cached stream. The trait default
-// returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
-// paths in Body.zig are silently dead.
 
 impl BodyMixin for Response {
     #[inline]
@@ -293,13 +283,6 @@ impl BodyMixin for Response {
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Response::get_form_data_encoding(self)
-    }
-    #[inline]
-    fn get_body_readable_stream(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        Response::get_body_readable_stream(self, global_object)
     }
 }
 
@@ -499,21 +482,9 @@ impl Response {
         );
     }
 
-    fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
-        if let Some(js_value) = self.js_ref.get().try_get() {
-            if let BodyValue::Locked(locked) = self.body.get().value_mut() {
-                if let Some(stream) = locked.readable.get(global_object) {
-                    // we dont hold a strong reference to the stream we will guard it in js.gc.stream
-                    // so we avoid cycled references
-                    // anyone using Response should not use Locked.readable directly because it dont always owns it
-                    // the owner will be always the Response object it self
-                    stream.value.ensure_still_alive();
-                    js::stream_set_cached(js_value, global_object, stream.value);
-                    // old readable dropped; reset to empty
-                    locked.readable = Default::default();
-                }
-            }
-        }
+    #[inline]
+    pub(crate) fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
+        <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -535,34 +506,12 @@ impl Response {
 
     #[inline]
     pub fn get_body_readable_stream(&self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
-        if let Some(js_ref) = self.js_ref.get().try_get() {
-            if let Some(stream) = js::stream_get_cached(js_ref) {
-                // JS is always source of truth for the stream
-                return match ReadableStream::from_js(stream, global_object) {
-                    Ok(rs) => rs,
-                    Err(err) => {
-                        let _ = global_object.take_exception(err);
-                        None
-                    }
-                };
-            }
-        }
-        if let BodyValue::Locked(locked) = self.body.get().value.get() {
-            return locked.readable.get(global_object);
-        }
-        None
+        <Self as BodyMixin>::get_body_readable_stream(self, global_object)
     }
 
     #[inline]
     pub fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
-        if let Some(js_ref) = self.js_ref.get().try_get() {
-            // Zig `js.gc.stream.clear` ⇒ `set(.., .zero)`.
-            js::stream_set_cached(js_ref, global_object, JSValue::ZERO);
-        }
-        if let BodyValue::Locked(locked) = self.body.get().value_mut() {
-            // old readable dropped; reset to empty
-            locked.readable = Default::default();
-        }
+        <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
     #[inline]
@@ -867,27 +816,7 @@ impl Response {
         let cloned = this.clone(global_this)?;
 
         let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
-
-        if !js_wrapper.is_empty() {
-            // After toJS/makeMaybePooled, checkBodyStreamRef has already moved
-            // the streams from Locked.readable to js.gc.stream. So we need to
-            // use js.gc.stream to get the streams and update the body cache.
-            if let Some(cloned_stream) = js::stream_get_cached(js_wrapper) {
-                js::body_set_cached(js_wrapper, global_this, cloned_stream);
-            }
-        }
-
-        // Update the original response's body cache with the new teed stream.
-        // At this point, this.body.value.Locked.readable still holds the teed stream
-        // because checkBodyStreamRef hasn't been called on the original response yet.
-        if let BodyValue::Locked(locked) = this.body.get().value.get() {
-            if let Some(readable) = locked.readable.get(global_this) {
-                js::body_set_cached(this_value, global_this, readable.value);
-            }
-        }
-
-        this.check_body_stream_ref(global_this);
-
+        this.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
@@ -897,22 +826,7 @@ impl Response {
     }
 
     pub fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
-        // SAFETY: R-2 `JsCell` escape hatch — `Body::clone`/
-        // `clone_with_readable_stream` take `&mut self` (they may tee a
-        // ReadableStream); single-JS-thread invariant.
-        let body_mut = unsafe { self.body.get_mut() };
-        let body = 'brk: {
-            if let Some(js_ref) = self.js_ref.get().try_get() {
-                if let Some(stream) = js::stream_get_cached(js_ref) {
-                    let mut readable = ReadableStream::from_js(stream, global_this)?;
-                    if let Some(readable) = readable.as_mut() {
-                        break 'brk body_mut.clone_with_readable_stream(global_this, Some(readable))?;
-                    }
-                }
-            }
-
-            body_mut.clone(global_this)?
-        };
+        let body = Body::new(self.clone_body_value_via_cached_stream(global_this)?);
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload (Response.zig:433).
         let body = scopeguard::guard(body, |b| b.reset());

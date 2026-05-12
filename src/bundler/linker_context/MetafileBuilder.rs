@@ -627,33 +627,21 @@ impl<'a> JsonParser<'a> {
                             self.pos += 4;
                             let mut cp: u32 = 0;
                             for &h in hex {
-                                cp = cp * 16
-                                    + match h {
-                                        b'0'..=b'9' => (h - b'0') as u32,
-                                        b'a'..=b'f' => (h - b'a' + 10) as u32,
-                                        b'A'..=b'F' => (h - b'A' + 10) as u32,
-                                        _ => return Err(()),
-                                    };
+                                cp = cp * 16 + u32::from(bun_core::fmt::hex_digit_value(h).ok_or(())?);
                             }
-                            // Handle surrogate pair
-                            if (0xD800..=0xDBFF).contains(&cp) {
+                            // Handle surrogate pair (cp/lo are \uHHHH-parsed so <=0xFFFF, cast is lossless)
+                            if bun_core::strings::u16_is_lead(cp as u16) {
                                 if self.input[self.pos..].starts_with(b"\\u")
                                     && self.pos + 6 <= self.input.len()
                                 {
                                     let hex2 = &self.input[self.pos + 2..self.pos + 6];
                                     let mut lo: u32 = 0;
                                     for &h in hex2 {
-                                        lo = lo * 16
-                                            + match h {
-                                                b'0'..=b'9' => (h - b'0') as u32,
-                                                b'a'..=b'f' => (h - b'a' + 10) as u32,
-                                                b'A'..=b'F' => (h - b'A' + 10) as u32,
-                                                _ => return Err(()),
-                                            };
+                                        lo = lo * 16 + u32::from(bun_core::fmt::hex_digit_value(h).ok_or(())?);
                                     }
-                                    if (0xDC00..=0xDFFF).contains(&lo) {
+                                    if let Some(full) = bun_core::strings::decode_surrogate_pair(cp as u16, lo as u16) {
                                         self.pos += 6;
-                                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                        cp = full;
                                     }
                                 }
                             }

@@ -1628,15 +1628,7 @@ fn console_on_before_print() {
     }
 }
 
-/// `&mut dyn bun_io::Write` → `core::fmt::Write` bridge for `write_format`
-/// hooks (which all take `W: core::fmt::Write`).
-struct IoAsFmt<'a>(&'a mut dyn bun_io::Write);
-impl core::fmt::Write for IoAsFmt<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        bun_io::Write::write_all(self.0, s.as_bytes()).map_err(|_| core::fmt::Error)
-    }
-}
+use bun_io::AsFmt;
 
 /// `ConsoleObject.Formatter.printAs(.Private, …)` runtime-type chain — see
 /// [`RuntimeHooks::console_print_runtime_object`]. Returns `true` when `value`
@@ -1677,32 +1669,32 @@ fn console_print_runtime_object_inner<const C: bool>(
     // live `T` cell; conservative stack scan keeps `value` alive for the
     // duration of each branch.
     if let Some(response) = value.as_::<Response>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(request) = value.as_::<Request>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(build) = value.as_::<BuildArtifact>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = s3client.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(archive) = value.as_class_ref::<Archive>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = archive.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
@@ -1715,7 +1707,7 @@ fn console_print_runtime_object_inner<const C: bool>(
             let result = to_json_function
                 .call(formatter.global_this, value, &[])
                 .unwrap_or_else(|err| formatter.global_this.take_exception(err));
-            let mut w = IoAsFmt(writer_);
+            let mut w = AsFmt::new(writer_);
             // UFCS — `Formatter` has an inherent `print_as` (const-generic
             // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
             // runtime-tag overload that accepts our `core::fmt::Write` adapter.
@@ -1738,7 +1730,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         formatter.add_for_new_line(
             "Timeout(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
         );
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line(
                 "repeats ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
@@ -1764,7 +1756,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         formatter.add_for_new_line(
             "Immediate(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
         );
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = write!(
             w,
             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -1774,12 +1766,12 @@ fn console_print_runtime_object_inner<const C: bool>(
         return Ok(true);
     }
     if let Some(build_log) = value.as_class_ref::<bun_jsc::BuildMessage>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = build_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
     if let Some(resolve_log) = value.as_class_ref::<bun_jsc::ResolveMessage>() {
-        let mut w = IoAsFmt(writer_);
+        let mut w = AsFmt::new(writer_);
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
@@ -1809,9 +1801,6 @@ fn console_print_runtime_object_inner<const C: bool>(
 
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
-///
-/// PORT NOTE: lives here (not `bun_string`) because the canonical impl is in
-/// the gated `lib_draft_b1.rs`; remove once that un-gates.
 #[inline]
 fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::String {
     if s.eql_utf8(other) {

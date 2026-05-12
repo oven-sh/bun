@@ -35,11 +35,7 @@ use bun_options_types::offline_mode::OfflineMode;
 
 use bun_bundler::options::OutputKind;
 
-bun_core::declare_scope!(production, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(production, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, production, visible);
 
 /// Local shim: `bun_core::Error` has no `From<bun_jsc::JsError>` (tier-0 cannot
 /// depend on tier-6). Map every JS-side failure to the `"JSError"` sentinel the
@@ -103,8 +99,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
     jsc::initialize(false);
-    bun_ast::Expr::data_store_create();
-    bun_ast::Stmt::data_store_create();
+    bun_ast::initialize_store();
 
     // PERF(port): was MimallocArena bulk-free — VM allocator now global mimalloc.
     let mut arena = Arena::new();

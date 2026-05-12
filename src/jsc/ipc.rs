@@ -171,11 +171,7 @@ impl InternalMsgHolder {
     // Rust, so no explicit Drop body is needed.
 }
 
-bun_core::declare_scope!(IPC, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(IPC, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, IPC, visible);
 
 /// Union type that switches between simple Vec<u8> (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
@@ -529,9 +525,7 @@ mod json {
                 json_ipc_data_string_free_cb,
             );
             if s.tag() == bun_string::Tag::Dead {
-                #[cold]
-                fn cold() {}
-                cold();
+                bun_core::hint::cold();
                 return Err(IPCDecodeError::OutOfMemory);
             }
             s
@@ -2156,39 +2150,17 @@ pub mod IPCHandlers {
         use super::*;
 
         pub fn on_read_alloc(send_queue: &mut SendQueue, suggested_size: usize) -> &mut [u8] {
-            // PORT NOTE: Vec::<u8>::unused_capacity_slice() yields
-            // `&mut [MaybeUninit<u8>]`; libuv only needs the (ptr,len) — it
-            // never reads the uninit bytes, only writes them. Cast through raw
-            // parts to hand back `&mut [u8]` (matches Zig allocatedSlice()).
+            log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(json_buf) => {
-                    if json_buf.unused_capacity_slice().len() < suggested_size {
-                        json_buf.ensure_unused_capacity(suggested_size);
-                    }
-                    let available = json_buf.unused_capacity_slice();
-                    log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-                    // SAFETY: returning a sub-slice of the unused-capacity
-                    // region; libuv writes into it before notify_written reads.
-                    unsafe {
-                        bun_core::ffi::slice_mut(
-                            available.as_mut_ptr().cast::<u8>(),
-                            suggested_size,
-                        )
-                    }
+                    // SAFETY: libuv writes into this region before notify_written reads.
+                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
+                    &mut spare[..suggested_size]
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
-                    if adv_buf.unused_capacity_slice().len() < suggested_size {
-                        adv_buf.ensure_unused_capacity(suggested_size);
-                    }
-                    let available = adv_buf.unused_capacity_slice();
-                    log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-                    // SAFETY: same as above.
-                    unsafe {
-                        bun_core::ffi::slice_mut(
-                            available.as_mut_ptr().cast::<u8>(),
-                            suggested_size,
-                        )
-                    }
+                    // SAFETY: libuv writes into this region before on_read commits.
+                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
+                    &mut spare[..suggested_size]
                 }
             }
         }
@@ -2271,15 +2243,10 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    // libuv wrote `nread` bytes into the spare-capacity slice
-                    // returned by `on_read_alloc`; bump `len` to cover them.
-                    // SAFETY: `on_read_alloc` reserved `>= nread` bytes of
-                    // capacity past `len` and libuv initialised them.
-                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(nread)) };
+                    // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
+                    unsafe { adv_buf.uv_commit(nread) };
                     let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
-
-                    debug_assert!(adv_buf.len() <= adv_buf.capacity());
 
                     loop {
                         let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {

@@ -3,7 +3,6 @@
 // The top-level functions assume the arguments are already validated
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::mem::offset_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -26,7 +25,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
 use bun_sys::{self as sys, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno, E};
-use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
+use bun_threading::work_pool::{IntrusiveWorkTask as _, WorkPool, Task as WorkPoolTask};
 use crate::webcore;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -150,8 +149,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdJsc as _, FileSystemFlags, FileSystemFlagsKind,
-    PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FdJsc as _, FileSystemFlags,
+    FileSystemFlagsKind, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al. (mirrors Zig's
@@ -195,15 +195,6 @@ use super::types::FdJsc as _;
 #[allow(unused_imports)]
 use bun_jsc::SysErrorJsc as _;
 use bun_sys_jsc::ErrorJsc as _;
-
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_`/`unref`. Zig passed
-/// `*jsc.VirtualMachine` directly; the Rust `bun_io::KeepAlive` API now takes
-/// the type-erased `EventLoopCtx`. All async-FS tasks always run against the
-/// JS event loop (never the Mini loop), so the global Js ctx is correct.
-#[inline]
-fn js_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
 
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
@@ -551,6 +542,8 @@ pub mod async_ {
         pub task: WorkPoolTask,
     }
 
+    bun_threading::intrusive_work_task!(AsyncMkdirp, task);
+
     impl AsyncMkdirp {
         pub fn new(init: AsyncMkdirp) -> Box<Self> {
             Box::new(init)
@@ -558,9 +551,7 @@ pub mod async_ {
 
         pub fn work_pool_callback(task: *mut WorkPoolTask) {
             // SAFETY: task points to AsyncMkdirp.task
-            let this: &mut AsyncMkdirp = unsafe {
-                &mut *(bun_core::from_field_ptr!(AsyncMkdirp, task, task))
-            };
+            let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
 
             let mut node_fs = NodeFS::default();
             // SAFETY: caller keeps `path` alive until completion
@@ -664,7 +655,7 @@ where
         let task: &mut Self = bun_core::heap::release(task);
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-        task.r#ref.ref_(js_event_loop_ctx());
+        task.r#ref.ref_(bun_io::js_vm_ctx());
         let _ = vm;
         task.tracker.did_schedule(global_object);
 
@@ -869,7 +860,7 @@ where
         let this_ref = unsafe { &mut *this };
         // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
         // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
-        this_ref.r#ref.unref(js_event_loop_ctx());
+        this_ref.r#ref.unref(bun_io::js_vm_ctx());
         // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
@@ -1080,6 +1071,8 @@ pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
     pub tracker: AsyncTaskTracker,
 }
 
+bun_threading::intrusive_work_task!([R, A: Unprotect, const F: NodeFSFunctionEnum] AsyncFSTask<R, A, F>, task);
+
 impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F>
 where
     Op<{ F }>: NodeFSDispatch<R, A>,
@@ -1122,7 +1115,7 @@ where
         });
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-        task.r#ref.ref_(js_event_loop_ctx());
+        task.r#ref.ref_(bun_io::js_vm_ctx());
         let _ = vm;
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
@@ -1131,10 +1124,8 @@ where
     }
 
     fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: task points to Self.task; container_of via offset_of
-        let this: &mut Self = unsafe {
-            &mut *(bun_core::from_field_ptr!(Self, task, task))
-        };
+        // SAFETY: task points to Self.task
+        let this = unsafe { &mut *Self::from_task_ptr(task) };
 
         let mut node_fs = NodeFS::default();
         this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
@@ -1203,7 +1194,7 @@ where
         // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
-        this_ref.r#ref.unref(js_event_loop_ctx());
+        this_ref.r#ref.unref(bun_io::js_vm_ctx());
         // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
@@ -1258,6 +1249,8 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     // BACKREF: only valid when IS_SHELL
     pub shelltask: *mut ShellCpTask,
 }
+
+bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
 
 /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
 /// When clonefile cannot be used, this task is started once per file.
@@ -1441,9 +1434,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // SAFETY: task points to Self.task. Kept as a raw pointer — `cp_async`
         // may spawn subtasks that hold `&Self` to the same allocation while
         // this call is still on the stack, so we must not form `&mut Self` here.
-        let this: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, task)
-        };
+        let this = unsafe { Self::from_task_ptr(task) };
         let mut node_fs = NodeFS::default();
         Self::cp_async(&mut node_fs, this);
     }
@@ -1924,6 +1915,8 @@ pub struct AsyncReaddirRecursiveTask {
     pub pending_err_mutex: bun_threading::Mutex,
 }
 
+bun_threading::intrusive_work_task!(AsyncReaddirRecursiveTask, task);
+
 pub enum ResultListEntryValue {
     WithFileTypes(Vec<Dirent>),
     Buffers(Vec<Buffer>),
@@ -2109,7 +2102,7 @@ impl AsyncReaddirRecursiveTask {
             pending_err: None,
             pending_err_mutex: bun_threading::Mutex::default(),
         });
-        task.r#ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+        task.r#ref.ref_(bun_io::js_vm_ctx());
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
         WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2171,10 +2164,8 @@ impl AsyncReaddirRecursiveTask {
     }
 
     fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: task points to Self.task; container_of via offset_of
-        let this: &mut Self = unsafe {
-            &mut *(bun_core::from_field_ptr!(Self, task, task))
-        };
+        // SAFETY: task points to Self.task
+        let this = unsafe { &mut *Self::from_task_ptr(task) };
         let mut buf = PathBuffer::uninit();
         let root_path = this.root_path;
         this.perform_work(root_path.slice_assume_z(), &mut buf, true);
@@ -2335,7 +2326,7 @@ impl AsyncReaddirRecursiveTask {
         let _ = this_ref.pending_err.take();
         // Zig passed `bunVM()`; Rust `KeepAlive::unref` takes the type-erased
         // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-        this_ref.r#ref.unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+        this_ref.r#ref.unref(bun_io::js_vm_ctx());
         // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
         this_ref.free_root_path();
         this_ref.clear_result_list();
@@ -2405,18 +2396,32 @@ pub use _async_tasks::{
 // This would reduce stack size, at the cost of instruction cache misses
 pub mod args {
     use super::*;
-    // Extension trait for `Fd::from_js_validated`.
-    use crate::node::types::FdJsc as _;
+
+    /// Derive the `Unprotect` impl + inherent `to_thread_safe` for an `args::*`
+    /// struct whose only JS-backed state is one-or-more path-like fields. Each
+    /// listed `$field` must expose `.unprotect()` and `.to_thread_safe()` (i.e.
+    /// `PathLike` or `PathOrFileDescriptor`); the expansion is byte-identical to
+    /// the hand-written boilerplate it replaces, so `impl_fs_argument!`'s
+    /// `<$ty>::to_thread_safe(self)` forwarder and `ThreadSafe<T>`'s drop-guard
+    /// keep working unchanged. Structs with non-path JS state (`Read`, `Write`,
+    /// `Writev`, `Readv`, `Exists`, `ReadFile`, `WriteFile`) keep bespoke impls.
+    macro_rules! fs_args_path_forwarders {
+        ($ty:ident; $($field:ident),+ $(,)?) => {
+            impl Unprotect for $ty {
+                #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
+            }
+            impl $ty {
+                pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
+            }
+        };
+    }
 
     pub struct Rename {
         pub old_path: PathLike,
         pub new_path: PathLike,
     }
-    impl Unprotect for Rename {
-        #[inline] fn unprotect(&mut self) { self.old_path.unprotect(); self.new_path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Rename; old_path, new_path);
     impl Rename {
-        pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(b"oldPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
@@ -2438,11 +2443,8 @@ pub mod args {
     impl Default for Truncate {
         fn default() -> Self { Self { path: PathOrFileDescriptor::default(), len: 0, flags: 0 } }
     }
-    impl Unprotect for Truncate {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
@@ -2472,8 +2474,7 @@ pub mod args {
             self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Writev> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]")))?,
@@ -2509,8 +2510,7 @@ pub mod args {
             self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readv> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]")))?,
@@ -2539,8 +2539,7 @@ pub mod args {
     impl FTruncate {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FTruncate> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let len: BlobSizeType = BlobSizeType::try_from(
                 validators::validate_integer(
                     ctx,
@@ -2561,15 +2560,12 @@ pub mod args {
         pub uid: UidT,
         pub gid: GidT,
     }
-    impl Unprotect for Chown {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Chown; path);
     impl Chown {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
             // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers every
             // error return below (including `try validateInteger`).
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("uid is required"))); };
                 arguments.eat();
@@ -2592,8 +2588,7 @@ pub mod args {
     impl Fchown {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fchown> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("uid is required"))); };
                 arguments.eat();
@@ -2634,15 +2629,12 @@ pub mod args {
         pub atime: TimeLike,
         pub mtime: TimeLike,
     }
-    impl Unprotect for Lutimes {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Lutimes; path);
     impl Lutimes {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
             // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
             // `try timeLikeFromJS` throws below.
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime is required")))?)?
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date")))?;
             arguments.eat();
@@ -2658,17 +2650,12 @@ pub mod args {
         pub mode: Mode,
     }
     impl Default for Chmod { fn default() -> Self { Self { path: PathLike::default(), mode: 0x777 } } }
-    impl Chmod {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
-    }
-    impl Unprotect for Chmod {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
             // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
             // `try modeFromJS` throw below.
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = match node::mode_from_js(ctx, mode_arg)? {
                 Some(m) => m,
@@ -2687,8 +2674,7 @@ pub mod args {
     impl FChmod {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FChmod> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| validators::throw_err_invalid_arg_type(ctx, format_args!("mode"), "number", mode_arg))?;
             arguments.eat();
@@ -2702,15 +2688,12 @@ pub mod args {
         pub path: PathLike,
         pub big_int: bool,
     }
-    impl Unprotect for StatFS {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(StatFS; path);
     impl StatFS {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
             // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
             // `try get_boolean_strict` throw below.
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
                     if next_val.is_object() {
@@ -2731,14 +2714,11 @@ pub mod args {
         pub throw_if_no_entry: bool,
     }
     impl Default for Stat { fn default() -> Self { Self { path: PathLike::default(), big_int: false, throw_if_no_entry: true } } }
-    impl Unprotect for Stat {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Stat; path);
     impl Stat {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
             // Zig: `errdefer path.deinit()` (node_fs.zig:1756) → `Drop for PathLike`.
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut throw_if_no_entry = true;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
@@ -2762,8 +2742,7 @@ pub mod args {
     impl Fstat {
         pub fn to_thread_safe(&mut self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fstat> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
                     if next_val.is_object() {
@@ -2784,15 +2763,12 @@ pub mod args {
         pub old_path: PathLike,
         pub new_path: PathLike,
     }
-    impl Unprotect for Link {
-        #[inline] fn unprotect(&mut self) { self.old_path.unprotect(); self.new_path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Link; old_path, new_path);
     impl Link {
-        pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Link> {
-            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("oldPath must be a string or TypedArray")))?;
+            let old_path = PathLike::from_js_required(ctx, arguments, "oldPath")?;
             // `errdefer old_path.deinit()` → `Drop for PathLike` on early return.
-            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("newPath must be a string or TypedArray")))?;
+            let new_path = PathLike::from_js_required(ctx, arguments, "newPath")?;
             Ok(Link { old_path, new_path })
         }
     }
@@ -2811,16 +2787,13 @@ pub mod args {
         #[cfg(not(windows))]
         pub link_type: (),
     }
-    impl Unprotect for Symlink {
-        #[inline] fn unprotect(&mut self) { self.target_path.unprotect(); self.new_path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Symlink; target_path, new_path);
     impl Symlink {
-        pub fn to_thread_safe(&mut self) { self.target_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
             // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883) → `Drop for PathLike`.
-            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("target must be a string or TypedArray")))?;
+            let old_path = PathLike::from_js_required(ctx, arguments, "target")?;
             // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888) → `Drop for PathLike`.
-            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let new_path = PathLike::from_js_required(ctx, arguments, "path")?;
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
             // 'file', or 'junction'. If the type argument is not set,
@@ -2859,13 +2832,10 @@ pub mod args {
         pub path: PathLike,
         pub encoding: Encoding,
     }
-    impl Unprotect for Readlink {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Readlink; path);
     impl Readlink {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readlink> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Utf8;
             if let Some(val) = arguments.next() {
                 arguments.eat();
@@ -2884,13 +2854,10 @@ pub mod args {
         pub path: PathLike,
         pub encoding: Encoding,
     }
-    impl Unprotect for Realpath {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Realpath; path);
     impl Realpath {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Realpath> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Utf8;
             if let Some(val) = arguments.next() {
                 arguments.eat();
@@ -2915,13 +2882,10 @@ pub mod args {
     pub struct Unlink {
         pub path: PathLike,
     }
-    impl Unprotect for Unlink {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Unlink; path);
     impl Unlink {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Unlink> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             Ok(Unlink { path })
         }
     }
@@ -2938,13 +2902,10 @@ pub mod args {
     impl Default for RmDir {
         fn default() -> Self { Self { path: PathLike::default(), force: false, max_retries: 0, recursive: false, retry_delay: 100 } }
     }
-    impl Unprotect for RmDir {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut force = false;
             let mut max_retries: u32 = 0;
@@ -2992,13 +2953,10 @@ pub mod args {
     impl Default for Mkdir {
         fn default() -> Self { Self { path: PathLike::default(), recursive: false, mode: Self::DEFAULT_MODE, always_return_none: false } }
     }
-    impl Unprotect for Mkdir {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Mkdir; path);
     impl Mkdir {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Mkdir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut mode: Mode = 0o777;
             if let Some(val) = arguments.next() {
@@ -3024,11 +2982,8 @@ pub mod args {
     impl Default for MkdirTemp {
         fn default() -> Self { Self { prefix: PathLike::Buffer(Buffer { buffer: bun_jsc::ArrayBuffer::EMPTY, owns_buffer: false }), encoding: Encoding::Utf8 } }
     }
-    impl Unprotect for MkdirTemp {
-        #[inline] fn unprotect(&mut self) { self.prefix.unprotect(); }
-    }
+    fs_args_path_forwarders!(MkdirTemp; prefix);
     impl MkdirTemp {
-        pub fn to_thread_safe(&mut self) { self.prefix.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<MkdirTemp> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(b"prefix", b"string, Buffer, or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
@@ -3053,11 +3008,8 @@ pub mod args {
         pub with_file_types: bool,
         pub recursive: bool,
     }
-    impl Unprotect for Readdir {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Readdir; path);
     impl Readdir {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn tag(&self) -> ret::ReaddirTag {
             match self.encoding {
                 Encoding::Buffer => ret::ReaddirTag::Buffers,
@@ -3065,7 +3017,7 @@ pub mod args {
             }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readdir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
@@ -3090,8 +3042,7 @@ pub mod args {
     impl Close {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Close> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Close { fd })
         }
     }
@@ -3102,13 +3053,10 @@ pub mod args {
         pub mode: Mode,
     }
     impl Default for Open { fn default() -> Self { Self { path: PathLike::default(), flags: FileSystemFlags::R, mode: DEFAULT_PERMISSION } } }
-    impl Unprotect for Open {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Open; path);
     impl Open {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Open> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut flags = FileSystemFlags::R;
             let mut mode: Mode = DEFAULT_PERMISSION;
             if let Some(val) = arguments.next() {
@@ -3151,8 +3099,7 @@ pub mod args {
     impl Futimes {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime is required")))?)?
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date")))?;
             arguments.eat();
@@ -3204,8 +3151,7 @@ pub mod args {
     impl Write {
         pub fn to_thread_safe(&mut self) { self.buffer.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Write> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             let buffer_value = arguments.next();
             let bv = buffer_value.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv))?;
@@ -3282,8 +3228,7 @@ pub mod args {
             // fs_binding.read(fd, buffer, offset, length, position)
 
             // fd = getValidatedFd(fd);
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
 
             //  validateBuffer(buffer);
             let buffer_value = arguments.next_eat().ok_or_else(||
@@ -3544,7 +3489,7 @@ pub mod args {
     }
     impl OpenDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<OpenDir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Buffer;
             let mut buffer_size: c_int = 32;
             if let Some(arg) = arguments.next() {
@@ -3582,15 +3527,10 @@ pub mod args {
         pub path: PathLike,
         pub mode: FileSystemFlags,
     }
-    impl Access {
-        pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
-    }
-    impl Unprotect for Access {
-        #[inline] fn unprotect(&mut self) { self.path.unprotect(); }
-    }
+    fs_args_path_forwarders!(Access; path);
     impl Access {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Access> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3604,8 +3544,7 @@ pub mod args {
     impl FdataSync {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FdataSync> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             Ok(FdataSync { fd })
         }
     }
@@ -3615,17 +3554,12 @@ pub mod args {
         pub dest: PathLike,
         pub mode: constants::Copyfile,
     }
-    impl CopyFile {
-        pub fn to_thread_safe(&mut self) { self.src.to_thread_safe(); self.dest.to_thread_safe(); }
-    }
-    impl Unprotect for CopyFile {
-        #[inline] fn unprotect(&mut self) { self.src.unprotect(); self.dest.unprotect(); }
-    }
+    fs_args_path_forwarders!(CopyFile; src, dest);
     impl CopyFile {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<CopyFile> {
-            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
+            let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `errdefer src.deinit()` → `Drop for PathLike` on early return.
-            let dest = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray")))?;
+            let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3652,11 +3586,8 @@ pub mod args {
         pub dest: PathLike,
         pub flags: CpFlags,
     }
-    impl Unprotect for Cp {
-        #[inline] fn unprotect(&mut self) { self.src.unprotect(); self.dest.unprotect(); }
-    }
+    fs_args_path_forwarders!(Cp; src, dest);
     impl Cp {
-        pub fn to_thread_safe(&mut self) { self.src.to_thread_safe(); self.dest.to_thread_safe(); }
         #[inline]
         pub fn into_thread_safe(mut self) -> ThreadSafe<Self> { self.to_thread_safe(); ThreadSafe::adopt(self) }
         // Zig `deinit()` was gated on `flags.deinit_paths`; in Rust the
@@ -3664,9 +3595,9 @@ pub mod args {
         // payloads (the only `deinit_paths: false` caller — shell `cp`), so the
         // flag is vestigial and the explicit hook is gone.
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
-            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
+            let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `errdefer src.deinit()` → `Drop for PathLike` on early return.
-            let dest = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray")))?;
+            let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
             let mut recursive = false;
             let mut error_on_exist = false;
             let mut force = true;
@@ -3707,8 +3638,7 @@ pub mod args {
     impl Fsync {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fsync> {
-            let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
+            let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Fsync { fd })
         }
     }
@@ -4880,6 +4810,7 @@ impl NodeFS {
         if !RETURN_PATH { return Ok(StringOrUndefined::None); }
         Ok(StringOrUndefined::String(BunString::create_from_os_path(&working_mem[..first_match as usize])))
     }
+
 
     pub fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
         let prefix_buf = &mut self.sync_error_buf;
@@ -7619,16 +7550,6 @@ fn map_rm_errno_narrow(e: E) -> E {
         E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
-}
-
-fn throw_invalid_fd_error(global: &JSGlobalObject, value: JSValue) -> JsError {
-    if value.is_number() {
-        return global.err(bun_jsc::ErrorCode::OUT_OF_RANGE, format_args!(
-            "The value of \"fd\" is out of range. It must be an integer. Received {}",
-            bun_core::fmt::double(value.as_number())
-        )).throw();
-    }
-    global.throw_invalid_argument_type_value(b"fd", b"number", value)
 }
 
 #[unsafe(no_mangle)]

@@ -4,7 +4,7 @@
 
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -126,14 +126,6 @@ impl Cd {
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cd {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Cd(c) => c,
-            _ => unreachable!(),
-        }
     }
 }
 

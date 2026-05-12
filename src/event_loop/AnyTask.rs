@@ -2,7 +2,6 @@
 //! Prefer adding a task type directly to `Task` instead of using this.
 
 use core::ffi::c_void;
-use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::Task;
@@ -47,46 +46,31 @@ impl AnyTask {
     }
 }
 
-// Zig: `pub fn New(comptime Type: type, comptime Callback: anytype) type { return struct { ... } }`
-//
-// The Zig version monomorphizes a `wrap` shim per (Type, Callback) pair so that
-// `AnyTask` only needs to store one erased fn pointer. Stable Rust cannot take a
-// function value as a const generic, so `Callback` is supplied via the
-// [`AnyTaskCallback`] trait instead — `New::<T>::wrap` is then a real
-// monomorphized `fn(*mut c_void) -> JsResult<()>` storable in
-// [`AnyTask::callback`], exactly like Zig's `wrap`.
-//
-// Call sites that bound a one-off closure in Zig (`AnyTask.New(T, &someFn)`)
-// either `impl AnyTaskCallback for T` or build `AnyTask { ctx, callback }`
-// directly with a hand-written shim — both are equivalent.
-
-/// Supplies the `comptime Callback` that Zig's `AnyTask.New(Type, Callback)`
-/// captured. Implement this on `T` and `New::<T>::wrap` becomes the type-erased
-/// trampoline stored in [`AnyTask::callback`].
-pub trait AnyTaskCallback {
-    /// Zig: `Callback(@as(*Type, @ptrCast(@alignCast(this.?))))`.
-    /// `this` is the exact pointer passed to [`New::init`].
-    fn run_any_task(this: *mut Self) -> JsResult<()>;
-}
-
-pub struct New<T>(PhantomData<fn(*mut T)>);
-
-impl<T: AnyTaskCallback> New<T> {
-    pub fn init(ctx: &mut T) -> AnyTask {
-        AnyTask {
-            callback: Self::wrap,
-            ctx: Some(NonNull::from(ctx).cast::<c_void>()),
+impl AnyTask {
+    /// Zig: `AnyTask.New(T, Callback).init(ctx)`.
+    ///
+    /// Builds an [`AnyTask`] from a typed `*mut T` context and a typed
+    /// callback, erasing both to `c_void` in one place. This is the direct
+    /// stable-Rust analogue of Zig's `comptime Callback` generator: instead of
+    /// monomorphising a `wrap` shim per `(Type, Callback)` pair, the typed
+    /// `fn` pointer itself is reinterpreted as the erased one — `*mut T` and
+    /// `*mut c_void` are ABI-identical for all `T: Sized`, so
+    /// `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
+    /// `extern "Rust"` ABI and the transmute is sound.
+    #[inline]
+    pub fn from_typed<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Self {
+        Self {
+            ctx: NonNull::new(ctx.cast::<c_void>()),
+            // SAFETY: `*mut T` and `*mut c_void` are guaranteed identical
+            // size/align/ABI (T: Sized), so the two `fn` pointer types are
+            // ABI-compatible. `run()` only ever calls back with the exact
+            // pointer stored above, which originated as `*mut T`.
+            callback: unsafe {
+                core::mem::transmute::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                    callback,
+                )
+            },
         }
-    }
-
-    pub fn wrap(this: *mut c_void) -> JsResult<()> {
-        // SAFETY: `this` was stored from a `*mut T` in `init` above; Zig's
-        // `@ptrCast(@alignCast(this.?))` is the same cast.
-        let this: *mut T = this.cast::<T>();
-        debug_assert!(!this.is_null());
-        // PERF(port): was `@call(bun.callmod_inline, Callback, .{this})` — the
-        // trait call is statically dispatched and inlines identically.
-        <T as AnyTaskCallback>::run_any_task(this)
     }
 }
 

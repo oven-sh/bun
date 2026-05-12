@@ -877,13 +877,6 @@ fn print_node_modules_folder_structure(
     Ok(())
 }
 
-/// Helper: write `args` into `buf` and return the written subslice.
-/// Mirrors `std.fmt.bufPrint(buf, fmt, args)` — Zig's `error.NoSpaceLeft`
-/// becomes a panic here (512 bytes is ample for a Resolution formatter, and
-/// both behaviours crash the CLI).
-#[inline]
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
-    bun_core::fmt::buf_print(buf, args).expect("buf_print overflow")
-}
+use bun_core::fmt::buf_print_infallible as buf_print;
 
 // ported from: src/cli/package_manager_command.zig

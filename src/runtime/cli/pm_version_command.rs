@@ -972,12 +972,8 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     v
 }
 
-// PORT NOTE: helper for `std.fmt.parseInt(u32, s, 10)` over `[]const u8`.
-// Input is a semver prerelease segment (ASCII); from_utf8 failure correctly maps to "not a number".
 #[inline]
-fn parse_u32(s: &[u8]) -> Option<u32> {
-    core::str::from_utf8(s).ok().and_then(|s| s.parse::<u32>().ok())
-}
+fn parse_u32(s: &[u8]) -> Option<u32> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
 // slices (Zig was `&.{...}` of `[]const u8`).

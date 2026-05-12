@@ -24,18 +24,7 @@ use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::{self, streams, Lifetime, ReadableStream, Request, Response};
 use crate::webcore::s3_stub as S3;
 
-bun_core::declare_scope!(Blob, visible);
-macro_rules! debug {
-    ($($args:tt)*) => { bun_core::scoped_log!(Blob, $($args)*); };
-}
-
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust crate split routes
-/// through the aio hook registered by `bun_runtime::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
+bun_core::define_scoped_log!(debug, Blob, visible);
 
 /// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
 /// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
@@ -261,7 +250,6 @@ pub trait BlobExt {
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> where Self: Sized;
-    fn finalize(self: Box<Self>) where Self: Sized;
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob where Self: Sized;
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
@@ -494,7 +482,7 @@ impl BlobExt for Blob {
             }
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) {
-                    self.poll.unref(vm_ctx());
+                    self.poll.unref(bun_io::js_vm_ctx());
                     self.blob.deinit();
                     // SAFETY: caller-owned ctx, kept alive by contract.
                     let c = unsafe { &mut *self.ctx };
@@ -542,7 +530,7 @@ impl BlobExt for Blob {
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
             });
-            t.poll.ref_(vm_ctx());
+            t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
             // PORT NOTE: reshaped for borrowck — `heap::alloc(t)` moves `t`,
             // so clone the `Arc<S3Credentials>` out (cheap atomic ref bump)
@@ -2286,18 +2274,8 @@ impl BlobExt for Blob {
         Ok(Blob::new(blob))
     }
 
-    fn finalize(self: Box<Self>) {
-        debug_assert!(
-            self.is_heap_allocated(),
-            "`finalize` may only be called on a heap-allocated Blob"
-        );
-        // PORT NOTE: `Ref::adopt` requires `Blob: ExternalSharedDescriptor`,
-        // which is not yet implemented. Decrement the intrusive refcount directly;
-        // `deref` calls `deinit()` (which `drop(heap::take)`s if heap-allocated)
-        // when the count reaches zero. Refcounted: hand ownership back to the
-        // raw refcount.
-        Blob__deref(bun_core::heap::release(self));
-    }
+    // `finalize` is inherent on `Blob` (bun_jsc::webcore_types) so codegen's
+    // `Blob::finalize(b)` resolves there ahead of the blanket `JsFinalize`.
 
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {
         // avoid allocating a Blob.Store if the buffer is actually empty
@@ -5251,7 +5229,7 @@ impl S3BlobDownloadTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
-        this_ref.poll_ref.ref_(vm_ctx());
+        this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
 
@@ -5294,7 +5272,7 @@ impl S3BlobDownloadTask {
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
         Blob::deinit(&mut self.blob);
-        self.poll_ref.unref(vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         // promise: Drop handles deinit.
     }
 }

@@ -302,21 +302,6 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     global.bun_vm().as_mut().console.cast::<ConsoleObject>()
 }
 
-/// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
-/// `bun_io::Write` trait. Both error types are `bun_core::Error`, so this is a
-/// straight delegation. Kept local to avoid an orphan-rule edit in `bun_core`.
-struct IoWriterAdapter<'a>(&'a mut bun_core::io::Writer);
-impl bun_io::Write for IoWriterAdapter<'_> {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        self.0.write_all(buf)
-    }
-    #[inline]
-    fn flush(&mut self) -> bun_io::Result<()> {
-        self.0.flush()
-    }
-}
-
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
@@ -486,8 +471,8 @@ fn message_with_type_and_level_(
         } else {
             unsafe { (*console).writer() }
         };
-    let mut writer_adapter = IoWriterAdapter(raw_writer);
-    let writer: &mut dyn bun_io::Write = &mut writer_adapter;
+    // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
+    let writer: &mut dyn bun_io::Write = raw_writer;
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
@@ -5661,7 +5646,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     fmt.can_throw_stack_overflow = true;
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
     let console = unsafe { &mut *vm_console(global) };
-    let mut writer = IoWriterAdapter(console.error_writer());
+    let mut writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else { return };

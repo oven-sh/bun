@@ -33,18 +33,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
-declare_scope!(Listener, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { scoped_log!(Listener, $($arg)*) };
-}
-
-/// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
-/// `KeepAlive::ref_/unref`.
-#[inline]
-fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
+bun_output::define_scoped_log!(log, Listener, visible);
 
 /// Bridge to the per-VM digest-keyed weak `SSL_CTX*` cache. The
 /// `bun_jsc::rare_data::SSLContextCache` slot is an opaque cycle-break stub;
@@ -295,7 +284,7 @@ impl Listener {
                 // transfers to the C++ wrapper.
                 let this_value = js_Listener::to_js(this, global);
                 this_ref.strong_self.with_mut(|s| s.set(global, this_value));
-                this_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+                this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 return Ok(this_value);
             }
         }
@@ -506,7 +495,7 @@ impl Listener {
         // `Listener::finalize` → `deinit`).
         let this_value = js_Listener::to_js(this, global);
         this_ref.strong_self.with_mut(|s| s.set(global, this_value));
-        this_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+        this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 
         Ok(this_value)
     }
@@ -732,7 +721,7 @@ impl Listener {
         // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
 
         if this.handlers.get().active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.strong_self.with_mut(|s| s.clear_without_deallocation());
             this.strong_data.with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
@@ -798,7 +787,7 @@ impl Listener {
         let this_ref = unsafe { &mut *this };
         this_ref.strong_self.with_mut(|s| s.deinit());
         this_ref.strong_data.with_mut(|s| s.deinit());
-        this_ref.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+        this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
         // Any still-open accepted sockets hold a `&listener.handlers` pointer, so
@@ -877,7 +866,7 @@ impl Listener {
         if matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
         }
-        this.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         this.strong_self.with_mut(|s| s.set(global, this_value));
         Ok(JSValue::UNDEFINED)
     }
@@ -892,7 +881,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.get().active_connections.get() == 0 {
             this.strong_self.with_mut(|s| s.clear_without_deallocation());
         }
@@ -1085,7 +1074,7 @@ impl Listener {
                     // SAFETY: tls is a valid heap pointer
                     let tls_ref = unsafe { &*tls };
                     TLSSocket::data_set_cached(tls_ref.get_this_value(global), global, default_data);
-                    tls_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+                    tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                     tls_ref.ref_();
 
                     // Transfer the borrowed CTX into the pipe's SSLWrapper. From
@@ -1162,7 +1151,7 @@ impl Listener {
                     let tcp_ref = unsafe { &*tcp };
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(tcp_ref.get_this_value(global), global, default_data);
-                    tcp_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+                    tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 
                     let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
@@ -1440,7 +1429,7 @@ fn connect_finish<const IS_SSL: bool>(
     // if this is from node:net there's surface where the user can .ref() and .deref()
     // before the connection starts. make sure we honor that here.
     if socket_ref.ref_pollref_on_connect.get() {
-        socket_ref.poll_ref.with_mut(|p| p.ref_(vm_event_loop_ctx()));
+        socket_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     }
 
     Ok(promise_value)

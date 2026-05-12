@@ -17,7 +17,7 @@ use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_io::{KeepAlive, EventLoopCtx, AllocatorType};
+use bun_io::KeepAlive;
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
@@ -70,62 +70,10 @@ impl Archive {
     pub fn store_ref(&self) -> &StoreRef { &self.store }
 }
 
-// `jsc.Codegen.JSArchive` — what the `#[bun_jsc::JsClass]` derive would emit.
-// Symbol names match generate-classes.ts (`${typeName}__fromJS` / `__create`).
-const _: () = {
-    // `*mut Archive` is opaque to C++ (linked by symbol name only); the
-    // pointee's transitive `Store` field has no `#[repr(C)]`, but the FFI
-    // boundary never dereferences it — silence the layout lint.
-    // Signatures match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
-    // macro byte-for-byte (`safe fn`, `*mut JSGlobalObject`) so the linker
-    // sees one consistent declaration — otherwise `clashing_extern_declarations`.
-    #[allow(improper_ctypes)]
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "Archive__fromJS"]
-        safe fn __from_js(value: JSValue) -> *mut Archive;
-        #[link_name = "Archive__fromJSDirect"]
-        safe fn __from_js_direct(value: JSValue) -> *mut Archive;
-        #[link_name = "Archive__create"]
-        safe fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
-        #[link_name = "Archive__getConstructor"]
-        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-    #[allow(improper_ctypes)]
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "Archive__fromJS"]
-        safe fn __from_js(value: JSValue) -> *mut Archive;
-        #[link_name = "Archive__fromJSDirect"]
-        safe fn __from_js_direct(value: JSValue) -> *mut Archive;
-        #[link_name = "Archive__create"]
-        safe fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
-        #[link_name = "Archive__getConstructor"]
-        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-
-    impl bun_jsc::JsClass for Archive {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js_direct(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = bun_core::heap::into_raw(Box::new(self));
-            // Ownership of `ptr` transfers to the C++ wrapper (freed via
-            // `ArchiveClass__finalize` → `finalize()`). `as_ptr()` routes
-            // through `JSGlobalObject`'s `UnsafeCell` interior so the `*mut`
-            // retains write provenance for C++.
-            __create(global.as_ptr(), ptr)
-        }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            __get_constructor(global.as_ptr())
-        }
-    }
-};
+// `jsc.Codegen.JSArchive` — codegen already emits `js_Archive`
+// (`generate-classes.ts:generateRust()`); route through it so the
+// `Archive__{fromJS,create,getConstructor}` externs are declared exactly once.
+bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Archive);
 
 impl Archive {
     /// `Archive.write(path, data, options?)` static class fn — codegen
@@ -676,14 +624,6 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
     const TAG: TaskTag = C::TAG;
 }
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly; the Rust port routes through the manual
-/// vtable bridge installed by `bun_runtime::init()`.
-#[inline]
-fn vm_ctx() -> EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(AllocatorType::Js)
-}
-
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
         // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
@@ -702,7 +642,7 @@ impl<C: TaskContext> AsyncTask<C> {
         let raw = bun_core::heap::into_raw(this);
         // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
-        unsafe { (*raw).keep_alive.ref_(vm_ctx()) };
+        unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
         Ok(raw)
     }
 
@@ -744,7 +684,7 @@ impl<C: TaskContext> AsyncTask<C> {
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
         let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(vm_ctx());
+        owned.keep_alive.unref(bun_io::js_vm_ctx());
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).
@@ -1325,32 +1265,14 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
-    // Use a small scratch buffer for small data, single allocation for large.
-    // PERF(port): the Zig spec used a 256 KiB on-stack array; Rust moves the
-    // scratch to the heap to avoid stack overflow. The allocation is gated on
-    // the small path so the large path doesn't pay for an unused 256 KiB Vec.
-    const STACK_THRESHOLD: usize = 256 * 1024;
-
-    if max_size <= STACK_THRESHOLD {
-        let mut stack_buf = vec![0u8; STACK_THRESHOLD];
-        let result = compressor.gzip(data, &mut stack_buf);
-        if result.status != libdeflate::Status::Success {
-            return Err(CompressError::GzipCompressFailed);
-        }
-        stack_buf.truncate(result.written);
-        return Ok(stack_buf);
-    }
-
-    let mut output = vec![0u8; max_size];
-    // errdefer free(output) — Drop handles it
-
-    let result = compressor.gzip(data, &mut output);
+    // PERF(port): the Zig spec used a 256 KiB on-stack scratch for small inputs;
+    // in Rust the scratch is heap-allocated either way, so the threshold is dead
+    // weight — just size the Vec to `max_size` once.
+    let mut output = Vec::with_capacity(max_size);
+    let result = compressor.compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip);
     if result.status != libdeflate::Status::Success {
         return Err(CompressError::GzipCompressFailed);
     }
-
-    output.truncate(result.written);
-    // Zig: realloc(output, written) catch output[0..written] — truncate is the moral equivalent.
     Ok(output)
 }
 

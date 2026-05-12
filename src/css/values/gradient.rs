@@ -1451,37 +1451,16 @@ impl Ellipse {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum ShapeExtent {
     /// The closest side of the box to the gradient's center.
-    #[strum(serialize = "closest-side")]
     ClosestSide,
     /// The farthest side of the box from the gradient's center.
-    #[strum(serialize = "farthest-side")]
     FarthestSide,
     /// The closest corner of the box to the gradient's center.
-    #[strum(serialize = "closest-corner")]
     ClosestCorner,
     /// The farthest corner of the box from the gradient's center.
-    #[strum(serialize = "farthest-corner")]
     FarthestCorner,
-}
-
-impl EnumProperty for ShapeExtent {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        // todo_stuff.match_ignore_ascii_case
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"closest-side") {
-            Some(ShapeExtent::ClosestSide)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"farthest-side") {
-            Some(ShapeExtent::FarthestSide)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"closest-corner") {
-            Some(ShapeExtent::ClosestCorner)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"farthest-corner") {
-            Some(ShapeExtent::FarthestCorner)
-        } else {
-            None
-        }
-    }
 }
 
 impl ShapeExtent {
@@ -1489,20 +1468,8 @@ impl ShapeExtent {
         *self == *other
     }
 
-    pub fn as_str(&self) -> &'static str {
-        crate::css_parser::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> Result<Self> {
-        crate::css_parser::enum_property_util::parse::<Self>(input)
-    }
-
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
         *self
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        crate::css_parser::enum_property_util::to_css(self, dest)
     }
 }
 

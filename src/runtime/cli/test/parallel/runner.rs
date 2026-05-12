@@ -216,10 +216,7 @@ pub fn run_as_coordinator(
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::try_from(d).unwrap()
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
-            // TODO(port): parseInt over &[u8]
-            core::str::from_utf8(s)
-                .ok()
-                .and_then(|s| s.parse::<i64>().ok())
+            bun_core::fmt::parse_int::<i64>(s, 10)
                 .unwrap_or(DEFAULT_SCALE_UP_AFTER_MS)
                 .max(0)
         } else {

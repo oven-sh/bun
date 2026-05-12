@@ -1,3 +1,4 @@
+use bun_collections::VecExt as _;
 use bun_http_types::Encoding::Encoding;
 use bun_string::MutableString;
 
@@ -153,16 +154,12 @@ impl Decompressor {
                 // SAFETY: see `seat` contract — same buffer pair as initial seat.
                 let (_, out) = unsafe { seat(buffer, &mut body_out_str.list) };
                 reader.list_ptr = out;
-                // expandToCapacity:
-                // SAFETY: capacity bytes are allocated; zlib initializes
-                // `[initial, capacity)` before `read_all`'s defer truncates
-                // `len` back to `total_out`, so no uninitialized byte is ever
-                // observed at the truncated length.
-                unsafe { reader.list_ptr.set_len(reader.list_ptr.capacity()) };
-                // SAFETY: `initial <= len <= capacity`; the offset is within the
-                // allocation and `read_all` only writes into `[initial, capacity)`.
-                reader.zlib.next_out = unsafe { reader.list_ptr.as_mut_ptr().add(initial) };
-                reader.zlib.avail_out = (reader.list_ptr.capacity() - initial) as u32;
+                // SAFETY: zlib writes the tail; `read_all` truncates to `total_out` before any read.
+                // `additional = 0`: the conditional reserve above already grew the buffer; `reserve(0)` is a no-op.
+                // `list_ptr.len() == initial` here (reserve does not change len), so the helper's internal `prev` matches.
+                let (next_out, avail_out) = unsafe { reader.list_ptr.reserve_expand_tail(0) };
+                reader.zlib.next_out = next_out;
+                reader.zlib.avail_out = avail_out as u32;
                 // we reset the total out so we can track how much we decompressed this time
                 reader.zlib.total_out = initial as _;
             }

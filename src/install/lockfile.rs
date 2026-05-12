@@ -300,26 +300,17 @@ impl Scripts {
         }
     }
 
-    /// Iterate (name, &mut entries) pairs in declaration order — replaces Zig `inline for` over field names.
-    fn fields_mut(&mut self) -> [(&'static str, &mut Vec<Box<[u8]>>); 6] {
-        [
-            ("preinstall", &mut self.preinstall),
-            ("install", &mut self.install),
-            ("postinstall", &mut self.postinstall),
-            ("preprepare", &mut self.preprepare),
-            ("prepare", &mut self.prepare),
-            ("postprepare", &mut self.postprepare),
-        ]
-    }
-
+    /// (name, &entries) in `NAMES` order — single source of truth for the name half.
+    /// Rust has no `@field(self, name)`; the field-ref half stays hand-listed,
+    /// but the string half is derived from `NAMES` so the literals exist exactly once.
     fn fields(&self) -> [(&'static str, &Vec<Box<[u8]>>); 6] {
         [
-            ("preinstall", &self.preinstall),
-            ("install", &self.install),
-            ("postinstall", &self.postinstall),
-            ("preprepare", &self.preprepare),
-            ("prepare", &self.prepare),
-            ("postprepare", &self.postprepare),
+            (Self::NAMES[0], &self.preinstall),
+            (Self::NAMES[1], &self.install),
+            (Self::NAMES[2], &self.postinstall),
+            (Self::NAMES[3], &self.preprepare),
+            (Self::NAMES[4], &self.prepare),
+            (Self::NAMES[5], &self.postprepare),
         ]
     }
 
@@ -489,24 +480,7 @@ impl<'a> LoadResult<'a> {
     /// Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
     /// Callers reach this only after `handleLoadLockfileErrors` has exited on
     /// the `NotFound`/`Err` arms, so the variant is known-`Ok`.
-    #[inline]
-    #[track_caller]
-    pub fn ok(&self) -> &LoadResultOk<'a> {
-        match self {
-            LoadResult::Ok(ok) => ok,
-            _ => unreachable!("LoadResult::ok() on non-Ok variant"),
-        }
-    }
-
-    /// Mutable projection of [`LoadResult::ok`].
-    #[inline]
-    #[track_caller]
-    pub fn ok_mut(&mut self) -> &mut LoadResultOk<'a> {
-        match self {
-            LoadResult::Ok(ok) => ok,
-            _ => unreachable!("LoadResult::ok_mut() on non-Ok variant"),
-        }
-    }
+    bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -2187,8 +2187,10 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
+ "enumset",
  "libc",
  "scopeguard",
+ "strum",
 ]
 
 [[package]]
@@ -2601,6 +2603,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_collections",
  "bun_core",
  "bun_io",
  "bun_zlib_sys",

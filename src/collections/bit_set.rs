@@ -1433,6 +1433,22 @@ pub enum AutoBitSet {
     Dynamic(DynamicBitSetUnmanaged),
 }
 
+// ─── two-arm forward helper ────────────────────────────────────────────
+// Zig had `switch (this.*) { inline else => |*b| b.method() }` for the
+// symmetric arms (setAll/count/findFirstSet/Iterator.next). The Rust port
+// regressed those to open-coded matches; this macro restores the collapse
+// and is applied to every method whose Static/Dynamic arms are textually
+// identical. Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
+// stay open-coded — they genuinely differ.
+macro_rules! auto_forward {
+    ($self:expr, |$b:ident| $body:expr) => {
+        match $self {
+            AutoBitSet::Static($b) => $body,
+            AutoBitSet::Dynamic($b) => $body,
+        }
+    };
+}
+
 impl AutoBitSet {
     #[inline(always)]
     pub fn needs_dynamic(bit_length: usize) -> bool {
@@ -1448,10 +1464,7 @@ impl AutoBitSet {
     }
 
     pub fn is_set(&self, index: usize) -> bool {
-        match self {
-            AutoBitSet::Static(s) => s.is_set(index),
-            AutoBitSet::Dynamic(d) => d.is_set(index),
-        }
+        auto_forward!(self, |b| b.is_set(index))
     }
 
     /// Are any of the bits in `this` also set in `other`?
@@ -1471,17 +1484,11 @@ impl AutoBitSet {
     }
 
     pub fn set(&mut self, index: usize) {
-        match self {
-            AutoBitSet::Static(s) => s.set(index),
-            AutoBitSet::Dynamic(d) => d.set(index),
-        }
+        auto_forward!(self, |b| b.set(index))
     }
 
     pub fn unset(&mut self, index: usize) {
-        match self {
-            AutoBitSet::Static(s) => s.unset(index),
-            AutoBitSet::Dynamic(d) => d.unset(index),
-        }
+        auto_forward!(self, |b| b.unset(index))
     }
 
     pub fn raw_bytes(&self) -> &[u8] {
@@ -1505,74 +1512,37 @@ impl AutoBitSet {
     }
 
     pub fn for_each<Ctx>(&self, ctx: &mut Ctx, function: fn(&mut Ctx, usize)) {
-        match self {
-            AutoBitSet::Static(s) => {
-                let mut iter =
-                    s.iterator::<true, true>();
-                while let Some(index) = iter.next() {
-                    function(ctx, index);
-                }
-            }
-            AutoBitSet::Dynamic(d) => {
-                let mut iter =
-                    d.iterator::<true, true>();
-                while let Some(index) = iter.next() {
-                    function(ctx, index);
-                }
-            }
+        let mut iter = self.iterator::<true, true>();
+        while let Some(index) = iter.next() {
+            function(ctx, index);
         }
     }
 
     pub fn set_all(&mut self, value: bool) {
-        match self {
-            AutoBitSet::Static(s) => s.set_all(value),
-            AutoBitSet::Dynamic(d) => d.set_all(value),
-        }
+        auto_forward!(self, |b| b.set_all(value))
     }
 
     pub fn count(&self) -> usize {
-        match self {
-            AutoBitSet::Static(s) => s.count(),
-            AutoBitSet::Dynamic(d) => d.count(),
-        }
+        auto_forward!(self, |b| b.count())
     }
 
     pub fn find_first_set(&self) -> Option<usize> {
-        match self {
-            AutoBitSet::Static(s) => s.find_first_set(),
-            AutoBitSet::Dynamic(d) => d.find_first_set(),
-        }
+        auto_forward!(self, |b| b.find_first_set())
     }
 
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> AutoBitSetIterator<'_, KIND_SET, DIR_FWD> {
-        match self {
-            AutoBitSet::Static(s) => {
-                AutoBitSetIterator::Static(s.iterator::<KIND_SET, DIR_FWD>())
-            }
-            AutoBitSet::Dynamic(d) => {
-                AutoBitSetIterator::Dynamic(d.iterator::<KIND_SET, DIR_FWD>())
-            }
-        }
+        auto_forward!(self, |b| b.iterator::<KIND_SET, DIR_FWD>())
     }
 }
 
-pub enum AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> {
-    Static(BitSetIterator<'a, KIND_SET, DIR_FWD>),
-    Dynamic(BitSetIterator<'a, KIND_SET, DIR_FWD>),
-}
-
-impl<'a, const KIND_SET: bool, const DIR_FWD: bool>
-    AutoBitSetIterator<'a, KIND_SET, DIR_FWD>
-{
-    pub fn next(&mut self) -> Option<usize> {
-        match self {
-            AutoBitSetIterator::Static(it) => it.next(),
-            AutoBitSetIterator::Dynamic(it) => it.next(),
-        }
-    }
-}
+// Both enum arms already produce the SAME concrete `BitSetIterator<'a,K,D>`
+// (see ArrayBitSet::iterator / DynamicBitSetUnmanaged::iterator), so the
+// wrapper enum was a no-op layer of indirection. Keep the public name as a
+// type alias for any external callers.
+pub type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
+    BitSetIterator<'a, KIND_SET, DIR_FWD>;
 
 impl Drop for AutoBitSet {
     fn drop(&mut self) {

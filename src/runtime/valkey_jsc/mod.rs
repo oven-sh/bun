@@ -82,19 +82,4 @@ impl JSValkeyClient {
     }
 }
 
-impl crate::jsc::JsClass for JSValkeyClient {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_RedisClient::from_js(value).map(|p| p.as_ptr())
-    }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_RedisClient::from_js_direct(value).map(|p| p.as_ptr())
-    }
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // Ownership transfers to the C++ wrapper (freed via finalize).
-        let ptr = bun_core::heap::into_raw(Box::new(self));
-        js_RedisClient::to_js(ptr, global)
-    }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        js_RedisClient::get_constructor(global)
-    }
-}
+bun_jsc::impl_js_class_via_generated!(JSValkeyClient => crate::generated_classes::js_RedisClient);

@@ -584,11 +584,8 @@ impl<'src> HtmlRenderer<'src> {
             | b'='
             | b'%' => self.write_byte(byte),
             _ => {
-                let mut buf = [0u8; 3];
-                buf[0] = b'%';
-                buf[1] = hex_digit(byte >> 4);
-                buf[2] = hex_digit(byte & 0x0F);
-                self.write(&buf);
+                let [hi, lo] = bun_core::fmt::hex_byte_upper(byte);
+                self.write(&[b'%', hi, lo]);
             }
         }
     }
@@ -683,19 +680,8 @@ impl<'src> HtmlRenderer<'src> {
     }
 
     fn write_decimal(&mut self, value: u32) {
-        let mut buf = [0u8; 10];
-        let mut v = value;
-        let mut i: usize = buf.len();
-        if v == 0 {
-            self.write_byte(b'0');
-            return;
-        }
-        while v > 0 {
-            i -= 1;
-            buf[i] = b'0' + u8::try_from(v % 10).expect("int cast");
-            v /= 10;
-        }
-        self.write(&buf[i..]);
+        let mut buf = [0u8; 20];
+        self.write(bun_core::fmt::itoa_u64(&mut buf, u64::from(value)));
     }
 }
 
@@ -728,13 +714,6 @@ impl RendererImpl for HtmlRenderer<'_> {
     }
 }
 
-fn hex_digit(v: u8) -> u8 {
-    if v < 10 {
-        b'0' + v
-    } else {
-        b'A' + v - 10
-    }
-}
 
 /// GFM 6.11: Check if HTML content starts with a disallowed tag.
 /// Disallowed tags have their leading `<` replaced with `&lt;`.

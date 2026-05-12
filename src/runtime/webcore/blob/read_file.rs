@@ -15,6 +15,8 @@ use crate::webcore::blob::{
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::Lifetime;
+#[cfg(windows)]
+use bun_collections::ByteVecExt as _;
 use bun_str::String as BunString;
 use bun_sys::{self, Fd, Stat};
 #[cfg(windows)]
@@ -24,7 +26,7 @@ use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
 bun_output::declare_scope!(ReadFile, hidden);
@@ -191,6 +193,8 @@ pub struct ReadFile {
     pub state: AtomicU8, // ClosingState
 }
 
+bun_threading::intrusive_work_task!(ReadFile, task);
+
 // Zig: `pub const getFd = FileOpener(@This()).getFd;` / `doClose = FileCloser(@This()).doClose;`
 // — modeled as trait impls; the default methods on the traits provide the bodies.
 impl FileOpener for ReadFile {
@@ -248,9 +252,7 @@ impl FileCloser for ReadFile {
 
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
-        let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(ReadFile, task, task))
-        };
+        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
         this.close_after_io = false;
         ReadFile::update(this);
     }
@@ -712,9 +714,7 @@ impl ReadFile {
 
     unsafe fn do_read_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to ReadFile.task (intrusive field).
-        let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(ReadFile, task, task))
-        };
+        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
 
         this.update();
     }
@@ -1306,11 +1306,8 @@ impl<'a> ReadFileUV<'a> {
         }
 
         this.read_off += SizeType::try_from(result.int()).expect("int cast");
-        // SAFETY: libuv wrote result.int() initialized bytes into spare capacity.
-        unsafe {
-            this.buffer
-                .set_len(this.buffer.len() + usize::try_from(result.int()).expect("int cast"))
-        };
+        // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
+        unsafe { this.buffer.uv_commit(usize::try_from(result.int()).expect("int cast")) };
 
         this.req.deinit();
         this.queue_read();

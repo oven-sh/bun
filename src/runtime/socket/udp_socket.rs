@@ -28,14 +28,6 @@ use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6, INET6
 
 bun_output::declare_scope!(UdpSocket, visible);
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 /// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
 /// `errno_sys` constructor.
@@ -621,7 +613,7 @@ impl UDPSocket {
         // Disarm errdefer.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
+        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(global_this, this_value))
     }
 
@@ -1407,7 +1399,7 @@ impl UDPSocket {
     pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
         if !this.closed.get() {
-            this.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
+            this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1422,7 +1414,7 @@ impl UDPSocket {
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
-        this.poll_ref.with_mut(|p| p.unref(vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
         Ok(JSValue::UNDEFINED)
     }

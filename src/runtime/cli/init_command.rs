@@ -15,7 +15,6 @@ use bun_str::{strings, MutableString, ZStr};
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;
-use crate::create_command::initialize_store;
 use bun_bundler::options;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -414,7 +413,7 @@ impl InitCommand {
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0)
                 .ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
-        initialize_store();
+        bun_ast::initialize_store();
         // Arena for JSON parse / Expr building (Zig used the AST store).
         let bump = bun_alloc::Arena::new();
         'read_package_json: {

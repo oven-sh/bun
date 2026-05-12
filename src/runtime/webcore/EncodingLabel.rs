@@ -66,16 +66,7 @@ impl EncodingLabel {
 
     pub fn which(input_: &[u8]) -> Option<EncodingLabel> {
         let input = strings::trim(input_, b" \t\r\n\x0C");
-        // All keys in STRING_MAP are lowercase ASCII; lookup is case-insensitive per WHATWG.
-        // Longest key is 19 bytes, so a small stack buffer covers all valid labels.
-        let mut buf = [0u8; 32];
-        if input.len() > buf.len() {
-            return None;
-        }
-        for (i, &b) in input.iter().enumerate() {
-            buf[i] = b.to_ascii_lowercase();
-        }
-        STRING_MAP.get(&buf[..input.len()]).copied()
+        strings::in_map_case_insensitive(input, &STRING_MAP)
     }
 }
 

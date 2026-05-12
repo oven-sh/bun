@@ -3,7 +3,7 @@
 //! the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
 
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Basic Win32 typedefs (owned here; mirror std.os.windows / winnt.h)
@@ -32,6 +32,8 @@ pub type LPCSTR = *const CHAR;
 pub type LPWSTR = *mut WCHAR;
 pub type LPCWSTR = *const WCHAR;
 pub type PWSTR = *mut WCHAR;
+pub type SHORT = c_short;
+pub type ULONG_PTR = usize;
 
 pub const FALSE: BOOL = 0;
 pub const TRUE: BOOL = 1;
@@ -70,6 +72,123 @@ pub struct FILETIME {
     pub dwLowDateTime: DWORD,
     pub dwHighDateTime: DWORD,
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Win32 POD structs shared by `bun_libuv_sys` (uv/win.h embeds) and
+// `bun_sys::windows`. Single source of truth ≙ Zig's `std.os.windows`.
+// All derive Clone+Copy: libuv embeds them in `uv_req_s`/`uv_tty_s`/
+// `uv_fs_s` which themselves derive Copy, so non-Copy here would break
+// the derive chain.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `OVERLAPPED` (`minwinbase.h`) — 32 bytes / align 8 on x64.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct OVERLAPPED {
+    pub Internal: ULONG_PTR,
+    pub InternalHigh: ULONG_PTR,
+    pub Offset: DWORD,
+    pub OffsetHigh: DWORD,
+    pub hEvent: HANDLE,
+}
+
+/// `RTL_CRITICAL_SECTION` (`winnt.h`) — 40 bytes / align 8 on x64.
+/// libuv aliases this as `uv_mutex_t`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CRITICAL_SECTION {
+    pub DebugInfo: *mut c_void,
+    pub LockCount: LONG,
+    pub RecursionCount: LONG,
+    pub OwningThread: HANDLE,
+    pub LockSemaphore: HANDLE,
+    pub SpinCount: ULONG_PTR,
+}
+
+/// `WIN32_FIND_DATAW` (`minwinbase.h`) — 592 bytes / align 4.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WIN32_FIND_DATAW {
+    pub dwFileAttributes: DWORD,
+    pub ftCreationTime: FILETIME,
+    pub ftLastAccessTime: FILETIME,
+    pub ftLastWriteTime: FILETIME,
+    pub nFileSizeHigh: DWORD,
+    pub nFileSizeLow: DWORD,
+    pub dwReserved0: DWORD,
+    pub dwReserved1: DWORD,
+    pub cFileName: [WCHAR; 260],
+    pub cAlternateFileName: [WCHAR; 14],
+}
+
+// ── Console input records (`wincon.h`) ────────────────────────────────────
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union KEY_EVENT_RECORD_uChar {
+    pub UnicodeChar: WCHAR,
+    pub AsciiChar: CHAR,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KEY_EVENT_RECORD {
+    pub bKeyDown: BOOL,
+    pub wRepeatCount: WORD,
+    pub wVirtualKeyCode: WORD,
+    pub wVirtualScanCode: WORD,
+    pub uChar: KEY_EVENT_RECORD_uChar,
+    pub dwControlKeyState: DWORD,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MOUSE_EVENT_RECORD {
+    pub dwMousePosition: COORD,
+    pub dwButtonState: DWORD,
+    pub dwControlKeyState: DWORD,
+    pub dwEventFlags: DWORD,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WINDOW_BUFFER_SIZE_EVENT {
+    pub dwSize: COORD,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MENU_EVENT_RECORD {
+    pub dwCommandId: UINT,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FOCUS_EVENT_RECORD {
+    pub bSetFocus: BOOL,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union INPUT_RECORD_Event {
+    pub KeyEvent: KEY_EVENT_RECORD,
+    pub MouseEvent: MOUSE_EVENT_RECORD,
+    pub WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_EVENT,
+    pub MenuEvent: MENU_EVENT_RECORD,
+    pub FocusEvent: FOCUS_EVENT_RECORD,
+}
+/// `INPUT_RECORD` (`wincon.h`) — 20 bytes / align 4.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct INPUT_RECORD {
+    pub EventType: WORD,
+    pub Event: INPUT_RECORD_Event,
+}
+
+// Layout pins: a typo in any of the above is a silent ABI break across the
+// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
+// `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
+// under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
+#[cfg(all(windows, target_pointer_width = "64"))]
+const _: () = {
+    assert!(core::mem::size_of::<OVERLAPPED>() == 32);
+    assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
+    assert!(core::mem::size_of::<WIN32_FIND_DATAW>() == 592);
+    assert!(core::mem::size_of::<INPUT_RECORD>() == 20);
+};
 
 #[repr(C)]
 pub struct SECURITY_ATTRIBUTES {
@@ -503,6 +622,23 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
+        /// `hObject` is an opaque kernel handle (validated kernel-side; bad
+        /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
+        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+        /// `CreateProcessW` (`processthreadsapi.h`).
+        pub fn CreateProcessW(
+            lpApplicationName: LPCWSTR,
+            lpCommandLine: LPWSTR,
+            lpProcessAttributes: *mut c_void,
+            lpThreadAttributes: *mut c_void,
+            bInheritHandles: BOOL,
+            dwCreationFlags: DWORD,
+            lpEnvironment: *mut c_void,
+            lpCurrentDirectory: LPCWSTR,
+            lpStartupInfo: *mut STARTUPINFOW,
+            lpProcessInformation: *mut PROCESS_INFORMATION,
+        ) -> BOOL;
         /// `SetConsoleCtrlHandler` — install/uninstall a console ctrl handler.
         /// No pointer preconditions: the handler is an `Option<fn>` (null-safe)
         /// and `Add` is a by-value BOOL.
@@ -1285,6 +1421,186 @@ pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
     pub JobMemoryLimit: usize,
     pub PeakProcessMemoryUsed: usize,
     pub PeakJobMemoryUsed: usize,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Process creation POD (`processthreadsapi.h`). Mirrors std.os.windows.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `STARTUPINFOW` (`processthreadsapi.h`).
+#[repr(C)]
+pub struct STARTUPINFOW {
+    pub cb: DWORD,
+    pub lpReserved: PWSTR,
+    pub lpDesktop: PWSTR,
+    pub lpTitle: PWSTR,
+    pub dwX: DWORD,
+    pub dwY: DWORD,
+    pub dwXSize: DWORD,
+    pub dwYSize: DWORD,
+    pub dwXCountChars: DWORD,
+    pub dwYCountChars: DWORD,
+    pub dwFillAttribute: DWORD,
+    pub dwFlags: DWORD,
+    pub wShowWindow: WORD,
+    pub cbReserved2: WORD,
+    pub lpReserved2: *mut u8,
+    pub hStdInput: HANDLE,
+    pub hStdOutput: HANDLE,
+    pub hStdError: HANDLE,
+}
+
+/// `STARTUPINFOEXW` (`winbase.h`) — `STARTUPINFOW` + proc-thread attribute list.
+#[repr(C)]
+pub struct STARTUPINFOEXW {
+    pub StartupInfo: STARTUPINFOW,
+    pub lpAttributeList: *mut u8,
+}
+
+/// `PROCESS_INFORMATION` (`processthreadsapi.h`).
+#[repr(C)]
+pub struct PROCESS_INFORMATION {
+    pub hProcess: HANDLE,
+    pub hThread: HANDLE,
+    pub dwProcessId: DWORD,
+    pub dwThreadId: DWORD,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// TEB → PEB → RTL_USER_PROCESS_PARAMETERS chain (`winternl.h` / phnt).
+// Mirrors `std.os.windows.{teb, peb, TEB, PEB, RTL_USER_PROCESS_PARAMETERS,
+// CURDIR}` so the three former duplicators (`bun_core::windows_sys`,
+// `bun_sys::windows`, the freestanding `bun_shim_impl` shim) all re-export
+// from this tier-0 leaf. Only fields actually dereferenced by Bun are
+// modelled; `offset_of!` asserts pin them to the documented x64 offsets so a
+// typo in a padding array fails at compile time, not at runtime.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `CURDIR` (`winternl.h` / phnt) — `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`.
+#[repr(C)]
+pub struct CURDIR {
+    pub DosPath: UNICODE_STRING,
+    pub Handle: HANDLE,
+}
+/// Zig-style camelCase alias (`bun_core` callers).
+pub type Curdir = CURDIR;
+
+/// `RTL_USER_PROCESS_PARAMETERS` (`winternl.h`) — minimal view.
+#[repr(C)]
+pub struct RTL_USER_PROCESS_PARAMETERS {
+    // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
+    _reserved1: [u8; 16],
+    // {ConsoleHandle, ConsoleFlags+pad} — 2 × pointer-size.
+    _reserved2: [*mut c_void; 2],
+    pub hStdInput: HANDLE,
+    pub hStdOutput: HANDLE,
+    pub hStdError: HANDLE,
+    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. The handle
+    /// is what Zig's `std.fs.cwd().fd` returns on Windows; `Fd::cwd()` reads
+    /// it so `openat(Fd::cwd(), …)` resolves relative paths against the live
+    /// process cwd via `NtCreateFile`'s `RootDirectory`.
+    pub CurrentDirectory: CURDIR,
+    pub DllPath: UNICODE_STRING,
+    pub ImagePathName: UNICODE_STRING,
+    pub CommandLine: UNICODE_STRING,
+    // (fields beyond CommandLine are not read by Bun)
+}
+/// Zig-style camelCase alias (`bun_core` callers).
+pub type ProcessParameters = RTL_USER_PROCESS_PARAMETERS;
+// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20,
+// `CurrentDirectory.Handle` at 0x48, and `ImagePathName` at 0x60 on x64.
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, hStdInput) == 0x20);
+    assert!(
+        core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory)
+            + core::mem::offset_of!(CURDIR, Handle) == 0x48
+    );
+    assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, ImagePathName) == 0x60);
+};
+
+/// `PEB` (`winternl.h`) — minimal view.
+#[repr(C)]
+pub struct PEB {
+    _reserved1: [u8; 2],
+    pub BeingDebugged: u8,
+    _reserved2: [u8; 1],
+    _reserved3: [*mut c_void; 2],
+    pub Ldr: *mut c_void,
+    // Raw pointer, NOT `&'static`: the OS/CRT mutate `RTL_USER_PROCESS_PARAMETERS`
+    // out-of-band (e.g. `SetStdHandle()` writes `hStd*`), so a Rust shared
+    // reference would assert false immutability to the optimizer (UB).
+    pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
+}
+/// Legacy alias (former `bun_core::windows_sys` name).
+pub type PebView = PEB;
+
+/// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
+#[repr(C)]
+pub struct TEB {
+    /// `NT_TIB` is 7 pointers on x64 (`ExceptionList`, `StackBase`,
+    /// `StackLimit`, `SubSystemTib`, `FiberData`/`Version`,
+    /// `ArbitraryUserPointer`, `Self`).
+    _nt_tib: [*mut c_void; 7],
+    pub EnvironmentPointer: *mut c_void,
+    /// `CLIENT_ID` — `{UniqueProcess, UniqueThread}`.
+    _client_id: [*mut c_void; 2],
+    pub ActiveRpcHandle: *mut c_void,
+    pub ThreadLocalStoragePointer: *mut c_void,
+    pub ProcessEnvironmentBlock: *mut PEB,
+    // (fields beyond ProcessEnvironmentBlock are not read by Bun)
+}
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
+
+/// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
+///
+/// Safe fn: the only precondition — that the segment register / `x18`
+/// reservation is the OS thread-block pointer — is guaranteed by the Windows
+/// ABI for every thread, so there is no caller-side obligation. The deref
+/// obligation lives with the caller of the returned `*mut TEB`.
+#[inline(always)]
+pub fn teb() -> *mut TEB {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: on Windows x64 `gs:[0x30]` is the OS-maintained TEB self-
+    // pointer; reading it has no side effects and is always valid.
+    unsafe {
+        let p: *mut TEB;
+        core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
+        p
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: on Windows ARM64 `x18` is the reserved OS thread-block
+    // pointer; reading it has no side effects and is always valid.
+    unsafe {
+        let p: *mut TEB;
+        core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
+        p
+    }
+}
+
+/// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `TEB+0x60` (ARM64).
+///
+/// Returns a raw pointer (NOT `&'static PEB`): the PEB is owned and mutated
+/// by the OS/CRT behind Rust's back (`SetStdHandle`, debugger toggling
+/// `BeingDebugged`, …). Materializing a `&'static` to it would be UB under
+/// Rust's aliasing rules. Callers must read fields through raw-pointer deref.
+#[inline(always)]
+pub fn peb() -> *const PEB {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: reading `gs:[0x60]` is the documented Windows-x64 ABI for the
+    // current thread's PEB pointer; no caller precondition.
+    unsafe {
+        let p: *const PEB;
+        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
+        p
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
+    // pointer field. Both are valid for the calling thread's lifetime.
+    unsafe {
+        *(teb().cast::<u8>().add(0x60) as *const *const PEB)
+    }
 }
 
 // ── Console ctrl-handler dwCtrlType values (`wincon.h`) ───────────────────

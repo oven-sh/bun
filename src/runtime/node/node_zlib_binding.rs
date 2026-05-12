@@ -68,14 +68,6 @@ impl Error {
 
 // ─── local shims (upstream-crate gaps) ────────────────────────────────────
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 /// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`
 /// in this crate's view yet; mirror Zig's `@intFromFloat(value.asNumber())`.
 #[inline]
@@ -94,7 +86,7 @@ fn flush_value_is_valid(n: u32) -> bool {
 impl CountedKeepAlive {
     pub fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
-            self.keep_alive.ref_(vm_ctx());
+            self.keep_alive.ref_(bun_io::js_vm_ctx());
         }
         self.ref_count += 1;
     }
@@ -102,7 +94,7 @@ impl CountedKeepAlive {
     pub fn unref(&mut self, _vm: &VirtualMachine) {
         self.ref_count -= 1;
         if self.ref_count == 0 {
-            self.keep_alive.unref(vm_ctx());
+            self.keep_alive.unref(bun_io::js_vm_ctx());
         }
     }
 }

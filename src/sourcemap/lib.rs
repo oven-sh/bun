@@ -1327,33 +1327,13 @@ pub fn append_source_map_chunk(
     Ok(())
 }
 
-// TODO(port): move to bun_str::strings (these mirror std.mem.lastIndexOf)
-fn last_index_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.len() > haystack.len() { return None; }
-    let mut i = haystack.len() - needle.len();
-    loop {
-        if &haystack[i..i + needle.len()] == needle { return Some(i); }
-        if i == 0 { return None; }
-        i -= 1;
-    }
-}
-fn last_index_of_u16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
-    if needle.len() > haystack.len() { return None; }
-    let mut i = haystack.len() - needle.len();
-    loop {
-        if &haystack[i..i + needle.len()] == needle { return Some(i); }
-        if i == 0 { return None; }
-        i -= 1;
-    }
-}
-
 /// Always returns UTF-8.
 // TODO(port): Zig was generic over `comptime T: type` (u8/u16). Rust cannot
 // express `[]const T` literals generically without a helper trait; split into
 // two functions and dispatch at the (only) callsite.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_str::zig_string::Slice> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
-    let found = last_index_of(source, NEEDLE)?;
+    let found = bun_str::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
     let end = source[start..]
         .iter()
@@ -1366,7 +1346,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_str::zig_string::Slic
 
 fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_str::zig_string::Slice> {
     let needle: &[u16] = bun_str::w!("\n//# sourceMappingURL=");
-    let found = last_index_of_u16(source, needle)?;
+    let found = bun_str::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
     let end = source[start..]
         .iter()

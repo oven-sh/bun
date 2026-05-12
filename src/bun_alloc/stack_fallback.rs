@@ -258,12 +258,8 @@ unsafe impl Allocator for ArenaPtr {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         if self.arena.is_null() {
-            let p = if mimalloc::must_use_aligned_alloc(layout.align()) {
-                mimalloc::mi_malloc_aligned(layout.size(), layout.align())
-            } else {
-                mimalloc::mi_malloc(layout.size())
-            };
-            return heap_ref_result(p, layout.size());
+            let p = mimalloc::mi_malloc_auto_align(layout.size(), layout.align());
+            return alloc_result(p, layout.size());
         }
         // SAFETY: non-null + caller contract → live `MimallocArena`.
         unsafe { &*self.arena }.allocate(layout)
@@ -294,7 +290,7 @@ unsafe impl Allocator for ArenaPtr {
             let p = unsafe {
                 mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
             };
-            return heap_ref_result(p, new.size());
+            return alloc_result(p, new.size());
         }
         // SAFETY: non-null + caller contract.
         unsafe { (&*self.arena).grow(ptr, old, new) }
@@ -353,12 +349,7 @@ impl MimallocHeapRef {
     }
 }
 
-#[inline(always)]
-fn heap_ref_result(p: *mut core::ffi::c_void, size: usize) -> Result<NonNull<[u8]>, AllocError> {
-    NonNull::new(p.cast::<u8>())
-        .map(|p| NonNull::slice_from_raw_parts(p, size))
-        .ok_or(AllocError)
-}
+use crate::alloc_result;
 
 // SAFETY: identical contract to `&MimallocArena` / `AstAlloc` —
 // `mi_[heap_]malloc[_aligned]` yields ≥`size` bytes aligned to `align`;
@@ -370,22 +361,13 @@ unsafe impl Allocator for MimallocHeapRef {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let h = self.heap;
-        // SAFETY: `h` is null (global path, no preconditions) or live per the
-        // caller contract on `new`.
-        let p = unsafe {
-            if h.is_null() {
-                if mimalloc::must_use_aligned_alloc(layout.align()) {
-                    mimalloc::mi_malloc_aligned(layout.size(), layout.align())
-                } else {
-                    mimalloc::mi_malloc(layout.size())
-                }
-            } else if mimalloc::must_use_aligned_alloc(layout.align()) {
-                mimalloc::mi_heap_malloc_aligned(h, layout.size(), layout.align())
-            } else {
-                mimalloc::mi_heap_malloc(h, layout.size())
-            }
+        let p = if h.is_null() {
+            mimalloc::mi_malloc_auto_align(layout.size(), layout.align())
+        } else {
+            // SAFETY: `h` is live per the caller contract on `new`.
+            unsafe { mimalloc::mi_heap_malloc_auto_align(h, layout.size(), layout.align()) }
         };
-        heap_ref_result(p, layout.size())
+        alloc_result(p, layout.size())
     }
 
     #[inline]
@@ -411,7 +393,7 @@ unsafe impl Allocator for MimallocHeapRef {
                 mimalloc::mi_heap_realloc_aligned(h, ptr.as_ptr().cast(), new.size(), new.align())
             }
         };
-        heap_ref_result(p, new.size())
+        alloc_result(p, new.size())
     }
 
     #[inline]

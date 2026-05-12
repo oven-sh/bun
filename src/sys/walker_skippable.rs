@@ -1,6 +1,7 @@
 use core::ops::Range;
 
 use bun_alloc::AllocError;
+use bun_core::slice_as_bytes;
 use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
 use crate::{self as sys, dir_iterator, Fd, FdExt};
 use bun_wyhash::Wyhash11;
@@ -252,13 +253,6 @@ pub fn walk(
         skip_dirnames: skip_dirnames_,
         resolve_unknown_entry_types: false,
     })
-}
-
-/// Reinterpret a slice of `OSPathChar` (or any POD `T`) as bytes.
-/// Mirrors `std.mem.sliceAsBytes`.
-#[inline]
-fn slice_as_bytes<T: bun_core::NoUninit>(s: &[T]) -> &[u8] {
-    bun_core::cast_slice(s)
 }
 
 // ported from: src/sys/walker_skippable.zig

@@ -36,23 +36,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Encoding { Ascii, Utf8, Latin1, Utf16 }
 
-/// Minimal byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
-/// Zig's `anytype` writer interface is the analogue. This now bridges to
-/// `bun_io::Write` via a blanket impl so external callers (e.g. ConsoleObject)
-/// can pass `&mut dyn bun_io::Write` directly into `write_json_string`.
-pub trait Write {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
-}
-/// Blanket bridge: any `bun_io::Write` (incl. `Vec<u8>`, `MutableString`,
-/// `&mut dyn bun_io::Write`)
-/// satisfies the printer's local `Write`. This replaces the former explicit
-/// `impl Write for Vec<u8>` to avoid overlap.
-impl<T: bun_io::Write + ?Sized> Write for T {
-    #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        bun_io::Write::write_all(self, bytes)
-    }
-}
+/// Byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
+/// Re-exported from `bun_io` (canonical in `bun_core::io`); any `bun_io::Write`
+/// — `Vec<u8>`, `MutableString`, `&mut dyn bun_io::Write` — satisfies this.
+pub use bun_io::Write;
 
 use bun_ast as js_ast;
 use js_ast::Ref;
@@ -93,6 +80,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::{ArrayHashMap, HashMap, VecExt};
+    use bun_core::slice_as_bytes;
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -632,13 +620,6 @@ pub mod analyze_transpiled_module {
             Ok(())
         }
     }
-
-    #[inline]
-    fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-        // `NoUninit` statically guarantees `T` is POD with no uninitialized bytes,
-        // so the byte view is sound without an `unsafe` block at this layer.
-        bytemuck::cast_slice::<T, u8>(s)
-    }
 }
 
 /// Cold path — called at most once per print to persist output. Dispatch lives
@@ -646,12 +627,11 @@ pub mod analyze_transpiled_module {
 /// link-interface); the printer just holds the raw pointer.
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
-use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS;
-const FIRST_ASCII: u32 = 0x20;
-const LAST_ASCII: u32 = 0x7E;
-const FIRST_HIGH_SURROGATE: u32 = 0xD800;
-const FIRST_LOW_SURROGATE: u32 = 0xDC00;
-const LAST_LOW_SURROGATE: u32 = 0xDFFF;
+use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS; // remaining `\xHH` site below
+use bun_str::printer::{
+    FIRST_ASCII, LAST_ASCII, FIRST_HIGH_SURROGATE, LAST_LOW_SURROGATE, bmp_escape,
+    surrogate_pair_escape,
+};
 
 /// For support JavaScriptCore
 const ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING: bool = true;
@@ -966,24 +946,9 @@ where
                     let k = usize::try_from(c).expect("int cast");
                     writer.write_all(&[b'\\', b'x', HEX_CHARS[(k >> 4) & 0xF], HEX_CHARS[k & 0xF]])?;
                 } else if c <= 0xFFFF {
-                    let k = usize::try_from(c).expect("int cast");
-                    writer.write_all(&[
-                        b'\\', b'u',
-                        HEX_CHARS[(k >> 12) & 0xF],
-                        HEX_CHARS[(k >> 8) & 0xF],
-                        HEX_CHARS[(k >> 4) & 0xF],
-                        HEX_CHARS[k & 0xF],
-                    ])?;
+                    writer.write_all(&bmp_escape(c as u32))?;
                 } else {
-                    let k = usize::try_from(c - 0x10000).expect("int cast");
-                    let lo = FIRST_HIGH_SURROGATE as usize + ((k >> 10) & 0x3FF);
-                    let hi = FIRST_LOW_SURROGATE as usize + (k & 0x3FF);
-                    writer.write_all(&[
-                        b'\\', b'u',
-                        HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
-                        b'\\', b'u',
-                        HEX_CHARS[hi >> 12], HEX_CHARS[(hi >> 8) & 15], HEX_CHARS[(hi >> 4) & 15], HEX_CHARS[hi & 15],
-                    ])?;
+                    writer.write_all(&surrogate_pair_escape(c as u32))?;
                 }
             }
         }
@@ -1747,9 +1712,8 @@ where
     fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
         // PERF(port): Zig used std.fmt.count + bufPrint into reserved space (no heap).
         // TODO(port): implement `count` over fmt::Arguments to match.
-        use std::io::Write as _;
         let mut buf: Vec<u8> = Vec::new();
-        write!(&mut buf, "{}", args).expect("unreachable");
+        Write::write_fmt(&mut buf, format_args!("{}", args)).expect("unreachable");
         let ptr = self.writer.reserve(buf.len() as u64)?;
         // SAFETY: writer reserved buf.len() bytes
         unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, buf.len()); }
@@ -2870,16 +2834,7 @@ where
                     }
 
                     match cursor.c as u32 {
-                        0..=0xFFFF => {
-                            let c = usize::try_from(cursor.c).expect("int cast");
-                            self.print(&[
-                                b'\\', b'u',
-                                HEX_CHARS[c >> 12],
-                                HEX_CHARS[(c >> 8) & 15],
-                                HEX_CHARS[(c >> 4) & 15],
-                                HEX_CHARS[c & 15],
-                            ][..]);
-                        }
+                        c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
                         _ => {
                             self.print(b"\\u{");
                             let _ = self.fmt(format_args!("{:x}", cursor.c));
@@ -4083,25 +4038,8 @@ where
                         }
 
                         match cursor.c as u32 {
-                            0..=0xFFFF => {
-                                let c = usize::try_from(cursor.c).expect("int cast");
-                                self.print(&[
-                                    b'\\', b'u',
-                                    HEX_CHARS[c >> 12], HEX_CHARS[(c >> 8) & 15],
-                                    HEX_CHARS[(c >> 4) & 15], HEX_CHARS[c & 15],
-                                ][..]);
-                            }
-                            c => {
-                                let k = usize::try_from(c - 0x10000).expect("int cast");
-                                let lo = (FIRST_HIGH_SURROGATE as usize) + ((k >> 10) & 0x3FF);
-                                let hi = (FIRST_LOW_SURROGATE as usize) + (k & 0x3FF);
-                                self.print(&[
-                                    b'\\', b'u',
-                                    HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
-                                    b'\\', b'u',
-                                    HEX_CHARS[hi >> 12], HEX_CHARS[(hi >> 8) & 15], HEX_CHARS[(hi >> 4) & 15], HEX_CHARS[hi & 15],
-                                ][..]);
-                            }
+                            c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
+                            c => self.print(&surrogate_pair_escape(c)[..]),
                         }
                     }
                 }
@@ -5998,21 +5936,15 @@ where
             let mut c: CodeUnitType = name[i] as CodeUnitType;
             i += 1;
 
-            if c & !0x03ff == 0xd800 && i < n {
-                c = 0x10000 + (((c & 0x03ff) << 10) | (name[i] as CodeUnitType & 0x03ff));
+            if strings::u16_is_lead(name[i - 1]) && i < n {
+                // INTENTIONALLY no `u16_is_trail` check — matches Zig js_printer.zig:5311.
+                c = strings::u16_get_supplementary(name[i - 1], name[i]);
                 i += 1;
             }
 
             if ASCII_ONLY && c > LAST_ASCII {
                 match c {
-                    0..=0xFFFF => {
-                        let cu = usize::try_from(c).expect("int cast");
-                        self.print(&[
-                            b'\\', b'u',
-                            HEX_CHARS[cu >> 12], HEX_CHARS[(cu >> 8) & 15],
-                            HEX_CHARS[(cu >> 4) & 15], HEX_CHARS[cu & 15],
-                        ][..]);
-                    }
+                    0..=0xFFFF => self.print(&bmp_escape(c)[..]),
                     _ => {
                         self.print(b"\\u");
                         let buf_ptr = self.writer.reserve(4).expect("unreachable");
@@ -6557,9 +6489,7 @@ impl BufferWriter {
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
-        use bun_core::OrWriteFailed as _;
-        use std::io::Write as _;
-        write!(&mut self.buffer.list, "{}", args).or_write_failed()
+        Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))
     }
 
     pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
@@ -6599,9 +6529,9 @@ impl BufferWriter {
     #[inline] pub fn get_last_last_byte(&self) -> u8 { self.last_bytes[0] }
 
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
-        self.buffer.grow_if_needed(usize::try_from(count).expect("int cast"))?;
-        // SAFETY: grow_if_needed ensured capacity; pointer to one-past-len is valid for write
-        unsafe { Ok(self.buffer.list.as_mut_ptr().add(self.buffer.list.len())) }
+        let n = usize::try_from(count).expect("int cast");
+        // advance_by() commits len after the caller writes into this region.
+        Ok(self.buffer.list.reserve_spare(n).as_mut_ptr().cast())
     }
 
     pub fn advance_by(&mut self, count: u64) {

@@ -28,8 +28,14 @@ runs:
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_DOWNLOAD_URL: ${{ inputs.download-url }}
         BUN_BIN_DIR: ${{ runner.temp }}/.bun/bin
+        BUN_WORK_DIR: ${{ runner.temp }}/.bun/download
       run: |
         set -euo pipefail
+        # Do all download/verify/unzip work outside the checkout so callers
+        # that commit "all changes" afterwards (autofix-ci) don't pick up
+        # the .zip / SHASUMS256.txt as untracked files.
+        mkdir -p "$BUN_WORK_DIR"
+        cd "$BUN_WORK_DIR"
         case "$(uname -s)" in
           Linux*)  os=linux;;
           Darwin*) os=darwin;;

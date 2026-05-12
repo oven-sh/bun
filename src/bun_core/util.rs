@@ -563,10 +563,11 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
     // concurrent `setenv` and compiles to the same single load as a plain
     // `static` read.
     unsafe extern "C" {
-        static environ: core::sync::atomic::AtomicPtr<*const core::ffi::c_char>;
+        // `safe static` (Rust 2024 `unsafe extern`) discharges the link-time
+        // existence proof; `AtomicPtr::load` itself is already safe.
+        safe static environ: core::sync::atomic::AtomicPtr<*const core::ffi::c_char>;
     }
-    // SAFETY: `environ` is the libc-managed process env block.
-    unsafe { environ.load(core::sync::atomic::Ordering::Relaxed) }
+    environ.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
@@ -969,8 +970,7 @@ impl Fd {
     #[inline] pub fn native(self) -> FdNative {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
-            // SAFETY: FFI call into libuv; file_number came from _open_osfhandle.
-            DecodeWindows::Uv(file_number) => unsafe { fd::uv_get_osfhandle(file_number) },
+            DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
         }
     }
     /// Borrow this `Fd` as a [`std::os::fd::BorrowedFd`] for handing to APIs
@@ -1089,8 +1089,7 @@ impl Fd {
         match self.kind() {
             FdKind::Uv => Ok(self),
             FdKind::System => {
-                // SAFETY: FFI; `uv_open_osfhandle` wraps `_open_osfhandle(h, 0)`.
-                let crt_fd = unsafe { fd::uv_open_osfhandle(self.native()) };
+                let crt_fd = fd::uv_open_osfhandle(self.native());
                 if crt_fd == -1 { Err(()) } else { Ok(Fd::from_uv(crt_fd)) }
             }
         }
@@ -1378,12 +1377,17 @@ pub mod fd {
 
     #[cfg(windows)]
     unsafe extern "C" {
-        // libuv: convert C-runtime fd → OS HANDLE.
-        pub fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
+        /// libuv: convert C-runtime fd → OS HANDLE. By-value `c_int` in, opaque
+        /// HANDLE out — wraps `_get_osfhandle`, which validates the fd and
+        /// returns `INVALID_HANDLE_VALUE` on a bad index. No memory-safety
+        /// preconditions.
+        pub safe fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
         /// libuv: `_open_osfhandle(os_fd, 0)` — wraps a HANDLE in a CRT fd so
         /// libuv `uv_fs_*` (which speak `uv_file == int`) can use it. Returns
-        /// `-1` on `EMFILE` (CRT fd table full).
-        pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
+        /// `-1` on `EMFILE` (CRT fd table full) or invalid handle. The `*mut
+        /// c_void` is an opaque kernel HANDLE, never dereferenced; no
+        /// memory-safety preconditions.
+        pub safe fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
@@ -2479,6 +2483,16 @@ pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
     bytemuck::bytes_of(v)
 }
 
+/// Mutable counterpart of [`bytes_of`]: reinterpret `&mut T` as `&mut [u8]`.
+///
+/// Safe: the [`bytemuck::Pod`] bound guarantees `T` has no padding bytes and
+/// every bit pattern is a valid `T`, so writing arbitrary bytes through the
+/// returned slice cannot produce an invalid value.
+#[inline]
+pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
+    bytemuck::bytes_of_mut(v)
+}
+
 /// Port of Zig `std.mem.sliceAsBytes` / `bun.reinterpretSlice` for the
 /// read-only `&[A]` → `&[B]` direction. Safe: the [`bytemuck::NoUninit`] bound
 /// on `A` guarantees every source byte is initialized, and
@@ -3505,12 +3519,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // Signal the watcher-manager parent via magic exit code.
         use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError};
         unsafe extern "system" {
-            fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
+            // `h` is an opaque kernel HANDLE (never dereferenced in-process);
+            // the kernel validates it and returns FALSE on a bad handle. No
+            // memory-safety preconditions.
+            safe fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
         }
         // = 3224497970, bun.windows.watcher_reload_exit (windows.zig). Parent
         // watcher-manager compares the child's exit code against exactly this.
         const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;
-        let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
+        let rc = TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT);
         if rc == 0 {
             let err = GetLastError();
             if may_return {

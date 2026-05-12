@@ -156,9 +156,9 @@ impl SmolStr {
 
     pub fn slice(&self) -> &[u8] {
         if self.is_inlined() {
-            // SAFETY: on little-endian the low `len` bytes of the backing u128 are the inline data.
-            let bytes = (&raw const self.0).cast::<u8>();
-            return unsafe { core::slice::from_raw_parts(bytes, self.len() as usize) };
+            // On little-endian the low `len` bytes of the backing u128 are the
+            // inline data; `u128: Pod` lets us view them safely.
+            return &bun_core::bytes_of(&self.0)[..self.len() as usize];
         }
         // SAFETY: heap ptr + raw_len describe a live allocation owned by self.
         unsafe { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
@@ -309,14 +309,15 @@ impl Inlined {
     }
 
     pub fn slice(&self) -> &[u8] {
-        // SAFETY: bytes 0..len of the backing u128 are the inline data on little-endian.
-        unsafe { core::slice::from_raw_parts(self.ptr_const(), self.len() as usize) }
+        // Bytes 0..len of the backing u128 are the inline data on little-endian;
+        // `u128: Pod` lets us view them safely.
+        &bun_core::bytes_of(&self.0)[..self.len() as usize]
     }
 
     pub fn slice_mut(&mut self) -> &mut [u8] {
         let len = self.len() as usize;
-        // SAFETY: same as `slice`.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr(), len) }
+        // `u128: Pod` lets us view its bytes safely; first `len` are the data.
+        &mut bun_core::bytes_of_mut(&mut self.0)[..len]
     }
 
     pub fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {

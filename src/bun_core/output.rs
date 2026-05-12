@@ -17,7 +17,7 @@ use core::fmt;
 // inside this module doesn't matter for the early call sites.
 #[allow(unused_imports)]
 use crate::{pretty, prettyln, pretty_error, pretty_errorln, note, warn, err_generic, declare_scope, scoped_log};
-use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
 
 use crate::env_var;
 use crate::Global;
@@ -272,19 +272,18 @@ static STDOUT_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamT
 static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 
 // Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr).
-// `RacyCell<[i32;3]>` is `repr(transparent)` over `UnsafeCell<[i32;3]>`, so the
-// `#[no_mangle]` symbol layout is identical to a plain `[i32;3]` for C readers.
+// `[AtomicI32; 3]` has identical layout to `[i32; 3]` (`AtomicI32` is
+// `#[repr(C, align(4))]`), so the `#[no_mangle]` symbol is bit-compatible with
+// the C declaration `int32_t bun_stdio_tty[3]`. Using atomics instead of
+// `RacyCell` makes Rust-side reads/writes fully safe (cell-get reduction).
 #[unsafe(no_mangle)]
-pub static bun_stdio_tty: crate::RacyCell<[i32; 3]> = crate::RacyCell::new([0, 0, 0]);
+pub static bun_stdio_tty: [AtomicI32; 3] = [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
 
-/// Safe read of `bun_stdio_tty[idx]`. One `unsafe` for all `is_std*_tty()`
-/// callers (nonnull-asref reduction: 5 sites → 1).
+/// Read `bun_stdio_tty[idx]`. Written once at startup (in `Source::set_init` /
+/// `bun_initialize_process`) before reader threads spawn, so `Relaxed` suffices.
 #[inline]
 fn stdio_tty_flag(idx: usize) -> bool {
-    // SAFETY: `bun_stdio_tty` is plain `[i32; 3]` data written once at startup
-    // (in `Source::set_init` / `bun_initialize_process`) before any reader
-    // thread is spawned; subsequent access is read-only.
-    unsafe { (*bun_stdio_tty.get())[idx] != 0 }
+    bun_stdio_tty[idx].load(Ordering::Relaxed) != 0
 }
 
 // TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
@@ -549,8 +548,7 @@ pub mod windows_stdio {
     }
 
     pub fn init() {
-        // SAFETY: FFI call with no preconditions.
-        unsafe { w::libuv::uv_disable_stdio_inheritance() };
+        w::libuv::uv_disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -587,14 +585,13 @@ pub mod windows_stdio {
 
         let mut mode: w::DWORD = 0;
         // SAFETY: single-threaded startup; `stdin/stdout/stderr` are valid handles (or
-        // INVALID_HANDLE_VALUE, which Get/SetConsoleMode reject with 0); CONSOLE_MODE /
-        // bun_stdio_tty are write-once caches.
+        // INVALID_HANDLE_VALUE, which Get/SetConsoleMode reject with 0); CONSOLE_MODE
+        // is a write-once cache.
         unsafe {
             let console_mode = &mut *CONSOLE_MODE.get();
-            let stdio_tty = &mut *bun_stdio_tty.get();
             if c::GetConsoleMode(stdin, &mut mode) != 0 {
                 console_mode[0] = Some(mode);
-                stdio_tty[0] = 1;
+                bun_stdio_tty[0].store(1, Ordering::Relaxed);
                 // There are no flags to set on standard in, but just in case something
                 // later modifies the mode, we can still reset it at the end of program run
                 //
@@ -604,7 +601,7 @@ pub mod windows_stdio {
 
             if c::GetConsoleMode(stdout, &mut mode) != 0 {
                 console_mode[1] = Some(mode);
-                stdio_tty[1] = 1;
+                bun_stdio_tty[1].store(1, Ordering::Relaxed);
                 c::SetConsoleMode(
                     stdout,
                     w::ENABLE_PROCESSED_OUTPUT
@@ -616,7 +613,7 @@ pub mod windows_stdio {
 
             if c::GetConsoleMode(stderr, &mut mode) != 0 {
                 console_mode[2] = Some(mode);
-                stdio_tty[2] = 1;
+                bun_stdio_tty[2].store(1, Ordering::Relaxed);
                 c::SetConsoleMode(
                     stderr,
                     w::ENABLE_PROCESSED_OUTPUT
@@ -637,23 +634,24 @@ pub mod stdio {
     // TODO(port): move to bun_core_sys
     unsafe extern "C" {
         // Written once by C at process startup before threads; Rust only reads.
-        // C mutates these bytes, so a plain non-`mut` extern static would
-        // assert immutability to the optimizer (UB). `RacyCell` is
-        // `#[repr(transparent)]` over `UnsafeCell<[i32; 3]>`, so the extern
-        // layout is unchanged while Rust sees interior mutability.
-        pub static bun_is_stdio_null: crate::RacyCell<[i32; 3]>;
-        pub fn bun_initialize_process();
-        pub fn bun_restore_stdio();
+        // `[AtomicI32; 3]` has identical layout to C's `int32_t[3]` (`AtomicI32`
+        // is `#[repr(C, align(4))]`) and, unlike a plain non-`mut` extern static,
+        // does not assert immutability to the optimizer. `safe static` (Rust
+        // 2024 `unsafe extern`) discharges the link-time existence proof here so
+        // readers need no `unsafe` (cell-get reduction).
+        pub safe static bun_is_stdio_null: [AtomicI32; 3];
+        /// No preconditions; one-shot stdio fixup at process startup.
+        pub safe fn bun_initialize_process();
+        /// No preconditions; restores TTY state on the standard streams.
+        pub safe fn bun_restore_stdio();
     }
 
-    /// Safe read of `bun_is_stdio_null[idx]`. One `unsafe` for all
-    /// `is_std*_null()` callers (nonnull-asref reduction: 3 sites → 1).
+    /// Read `bun_is_stdio_null[idx]`. Written once by C
+    /// (`bun_initialize_process`) at startup before threads, so `Relaxed`
+    /// suffices.
     #[inline]
     fn stdio_null_flag(idx: usize) -> bool {
-        // SAFETY: `bun_is_stdio_null` is plain `[i32; 3]` data written once by
-        // C (`bun_initialize_process`) at startup before threads; subsequent
-        // access from Rust is read-only.
-        unsafe { (*bun_is_stdio_null.get())[idx] == 1 }
+        bun_is_stdio_null[idx].load(Ordering::Relaxed) == 1
     }
 
     pub fn is_stderr_null() -> bool {
@@ -667,8 +665,7 @@ pub mod stdio {
     }
 
     pub fn init() {
-        // SAFETY: FFI call with no preconditions; called once at process startup.
-        unsafe { bun_initialize_process() };
+        bun_initialize_process();
 
         #[cfg(windows)]
         super::windows_stdio::init();
@@ -690,8 +687,7 @@ pub mod stdio {
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: FFI call with no preconditions.
-            unsafe { bun_restore_stdio() };
+            bun_restore_stdio();
         }
     }
 }
@@ -2522,7 +2518,8 @@ pub fn enable_scoped_debug_writer() {
 
 // TODO(port): move to bun_core_sys
 unsafe extern "C" {
-    fn getpid() -> c_int;
+    /// No preconditions; returns the calling process's PID.
+    safe fn getpid() -> c_int;
 }
 
 pub fn init_scoped_debug_writer_at_startup() {
@@ -2538,8 +2535,7 @@ pub fn init_scoped_debug_writer_at_startup() {
             // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
-            // SAFETY: FFI call with no preconditions.
-            write!(&mut pid, "{}", unsafe { getpid() }).expect("failed to allocate path");
+            write!(&mut pid, "{}", getpid()).expect("failed to allocate path");
 
             let path_fmt = strings::replace_owned(path, b"{pid}", &pid);
 

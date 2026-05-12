@@ -128,6 +128,7 @@ pub use kernel32 as c;
 /// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
 pub mod libuv {
     unsafe extern "C" {
-        pub fn uv_disable_stdio_inheritance();
+        /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
+        pub safe fn uv_disable_stdio_inheritance();
     }
 }

@@ -2015,9 +2015,10 @@ pub mod ffi {
         #[cfg(windows)]
         {
             // Windows CRT: `int *_errno(void)` — thread-local errno for the
-            // C runtime (distinct from Win32 `GetLastError()`).
-            unsafe extern "C" { fn _errno() -> *mut core::ffi::c_int; }
-            return unsafe { _errno() };
+            // C runtime (distinct from Win32 `GetLastError()`). No args, no
+            // preconditions; the returned pointer is never null.
+            unsafe extern "C" { safe fn _errno() -> *mut core::ffi::c_int; }
+            return _errno();
         }
     }
 

@@ -1363,10 +1363,12 @@ impl ErrorCode {
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
         let mut message = bun_string::String::create_format(args);
-        // SAFETY: `global` is a live `JSC::JSGlobalObject*`; `message` is a
-        // valid `bun.String` borrowed for the call. C++ clones the impl into a
+        // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
+        // handles (see `GlobalObjectRef` doc); `opaque_ref` is the safe
+        // ZST-handle deref proof (panics on null). C++ clones the impl into a
         // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
-        let v = unsafe { Bun__createErrorWithCode(global.as_global_ptr(), self, &raw mut message) };
+        let global = JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>());
+        let v = Bun__createErrorWithCode(global, self, &mut message);
         message.deref();
         v
     }
@@ -1392,11 +1394,15 @@ impl core::fmt::Display for ErrorCode {
     }
 }
 
+// safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+// ABI-identical to non-null `*mut`); `bun_string::String` is `#[repr(C)]` and
+// the C++ side reads it in-place (clones the impl into a JSString); `ErrorCode`
+// is a by-value `#[repr(u16)]` POD.
 unsafe extern "C" {
-    fn Bun__createErrorWithCode(
-        global: *mut c_void,
+    safe fn Bun__createErrorWithCode(
+        global: &JSGlobalObject,
         code: ErrorCode,
-        message: *mut bun_string::String,
+        message: &mut bun_string::String,
     ) -> JSValue;
 }
 

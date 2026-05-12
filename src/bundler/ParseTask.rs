@@ -2143,10 +2143,11 @@ fn run_with_source_code(
     #[cfg(debug_assertions)]
     let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
 
-    // SAFETY: `ctx` backref valid. Read the pointer field via `worker_raw`
-    // (not `this`) so no parent-`&mut` access pops the `transpiler`/`resolver`
-    // tag chain derived above.
-    let worker_ctx = unsafe { &*(*worker_raw).ctx };
+    // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
+    // Read the `BackRef` field via `worker_raw` (not `this`) so no
+    // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
+    // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
+    let worker_ctx = unsafe { (*worker_raw).ctx };
 
     let will_close_file_descriptor = matches!(task.contents_or_fd, ContentsOrFd::Fd { .. })
         && entry.fd.is_valid()
@@ -2635,9 +2636,10 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
-    // SAFETY: worker.ctx backref valid; `linker.r#loop` is a live AnyEventLoop
-    // owned by the BundleThread / runtime for the duration of the bundle.
-    let r#loop = unsafe { (*worker.ctx).linker.r#loop };
+    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); `linker.r#loop` is
+    // a live AnyEventLoop owned by the BundleThread / runtime for the duration
+    // of the bundle.
+    let r#loop = worker.ctx.linker.r#loop;
     worker.unget();
     // Zig `worker.ctx.loop().*` is non-optional (.zig:1416) — `BundleV2::init`
     // always sets `linker.r#loop` before scheduling any ParseTask. Running

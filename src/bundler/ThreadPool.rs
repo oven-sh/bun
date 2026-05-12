@@ -418,7 +418,8 @@ impl ThreadPool {
         // other thread looks it up under a different `id`).
         unsafe {
             worker.write(Worker {
-                ctx: self.v2,
+                // Placeholder — overwritten by `init()` immediately below.
+                ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
                 heap: None,
                 arena: ptr::null(),
                 thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
@@ -458,7 +459,11 @@ pub struct Worker {
     // `std.mem.Allocator` vtable; here it's just `&heap`.
     pub arena: *const ThreadLocalArena,
 
-    pub ctx: *const BundleV2<'static>,
+    /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
+    /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
+    /// before the bundle is dropped). `BackRef` so call sites read
+    /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
+    pub ctx: bun_ptr::BackRef<BundleV2<'static>>,
 
     /// `None` until [`Worker::create`] populates it; every read site is
     /// post-`has_created`.
@@ -615,7 +620,9 @@ impl Worker {
     }
 
     pub fn init(&mut self, v2: &BundleV2<'_>) {
-        self.ctx = std::ptr::from_ref::<BundleV2<'_>>(v2).cast();
+        // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
+        // bundle outlives every worker).
+        self.ctx = bun_ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {
@@ -647,7 +654,7 @@ impl Worker {
         self.ast_memory_store.reset();
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
-        self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
+        self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
@@ -687,10 +694,10 @@ impl Worker {
         let data = self.data.as_mut().expect("Worker.data set in create()");
         if target == Target::Browser && data.transpiler.options.target != target {
             if data.other_transpiler.is_none() {
-                // SAFETY: `ctx` is a valid backref (set in `create()`); the
-                // `BundleV2` outlives every worker.
+                // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
+                // outlives every worker — safe `Deref`.
                 let client: &Transpiler<'_> =
-                    unsafe { &*self.ctx }.client_transpiler_ref().unwrap();
+                    self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
                 // pinned for the worker's lifetime.
                 let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };

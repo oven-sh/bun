@@ -168,12 +168,15 @@ pub extern "C" fn us_socket_buffered_js_write(
         }
 
         let data_slice = node_buffer.slice();
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
+        // single `&mut` does not alias the re-entrant write path documented at
+        // the top of this fn (raw `socket` is still kept for that reason).
+        let socket_ref = us_socket_t::opaque_mut(socket);
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
-            // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `socket` is live; borrow
-            // is dropped before any further JS execution that could re-enter this socket.
-            let written: u32 = u32::try_from(unsafe { (*socket).write(to_flush) }.max(0)).unwrap();
+            let written: u32 = u32::try_from(socket_ref.write(to_flush).max(0)).unwrap();
             stream_buffer.wrote(written as usize);
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < to_flush_len {
@@ -185,9 +188,8 @@ pub extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            // SAFETY: see above — `socket` is live for the duration of this call.
             let written: u32 =
-                u32::try_from(unsafe { (*socket).write(data_slice) }.max(0)).unwrap();
+                u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
                 stream_buffer.write(&data_slice[written as usize..]);
@@ -195,8 +197,7 @@ pub extern "C" fn us_socket_buffered_js_write(
             }
         }
         if ended {
-            // SAFETY: `socket` is live (see above).
-            unsafe { (*socket).shutdown() };
+            socket_ref.shutdown();
         }
         JSValue::TRUE
     };

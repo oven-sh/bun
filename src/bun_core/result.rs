@@ -7,9 +7,10 @@
 //
 // Rust has no link-time global enum, so we intern at runtime: a process-wide
 // append-only `&'static str` table guarded by an RwLock. The `err!()` macro
-// caches each call-site's code in a `OnceLock`, so the lock is touched once
-// per *name-site*, not once per call — matching Zig's zero-cost comparison
-// (`e == err!(Foo)` is a u16 compare after first use).
+// caches each call-site's code in a 2-byte `AtomicU16` slot (zero-init →
+// `.bss`), so the lock is touched once per *name-site*, not once per call —
+// matching Zig's zero-cost comparison (`e == err!(Foo)` is a u16 compare
+// after first use).
 //
 // Layout is `#[repr(transparent)] NonZeroU16`, so `Option<Error>` is one u16
 // and FFI/packed-struct slots that held a Zig `anyerror` keep the same width.
@@ -324,6 +325,20 @@ fn intern_slow(name: &'static str) -> NonZeroU16 {
     unsafe { NonZeroU16::new_unchecked(code as u16) }
 }
 
+/// Cold half of the `err!()` macro: intern `name` and publish the code into
+/// `slot`. Non-generic (`&AtomicU16` + `&'static str`) so every `err!` call
+/// site shares ONE `.text` body — the previous `OnceLock::get_or_init(|| …)`
+/// monomorphized a fresh closure type per site (~1.9k copies). `Relaxed` is
+/// sufficient: the slot only caches an idempotent u16; a racing reader that
+/// observes `0` simply re-interns to the same value.
+#[cold]
+#[inline(never)]
+pub fn intern_cached(slot: &core::sync::atomic::AtomicU16, name: &'static str) -> Error {
+    let e = Error::intern(name);
+    slot.store(e.as_u16(), core::sync::atomic::Ordering::Relaxed);
+    e
+}
+
 impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
     pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
@@ -336,6 +351,11 @@ impl Error {
     /// Intern `name`, returning its process-unique code. Idempotent: the same
     /// string (by value) always yields the same `Error`. This is the runtime
     /// half of Zig's link-time `anyerror` assignment.
+    ///
+    /// `#[cold]`: only reached on a per-site cache miss (or `err!(from e)`);
+    /// keeps the SEED scan + RwLock probe out of `.text.hot` so
+    /// `--sort-section=name` groups it with the other unlikely paths.
+    #[cold]
     pub fn intern(name: &'static str) -> Self {
         // Fast path: SEED hit (covers all errno + common names) without locking.
         if let Some(i) = SEED.iter().position(|&s| s == name) {

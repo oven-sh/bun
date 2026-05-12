@@ -338,7 +338,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             });
         }
 
-        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
+        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -360,10 +360,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // SAFETY: bounds checked above; backing JS buffer outlives this call.
-        out = Some(unsafe {
-            core::slice::from_raw_parts_mut(out_buf.ptr.add(out_off as usize), out_len as usize)
-        });
+        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
+        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
+        out = Some(&mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize]);
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
@@ -575,7 +574,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             });
         }
 
-        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
+        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -597,10 +596,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // SAFETY: bounds checked above; backing JS buffer outlives this call.
-        out = Some(unsafe {
-            core::slice::from_raw_parts_mut(out_buf.ptr.add(out_off as usize), out_len as usize)
-        });
+        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
+        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
+        out = Some(&mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize]);
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {

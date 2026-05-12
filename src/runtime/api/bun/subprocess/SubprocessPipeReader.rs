@@ -369,12 +369,15 @@ impl PipeReader {
 
     // TODO(port): `loop` is a Rust keyword; renamed to `loop_`. Callers (BufferedReader vtable) must match.
     pub fn loop_(&self) -> *mut AsyncLoop {
-        // `event_loop.virtual_machine` is set by the time a PipeReader is created.
+        // `event_loop.virtual_machine` is set by the time a PipeReader is
+        // created. The VM is the per-thread singleton owning `event_loop`, so
+        // the `BackRef` invariant (pointee outlives holder) trivially holds.
         let vm = self
             .event_loop
             .virtual_machine
+            .map(bun_ptr::BackRef::from)
             .expect("event_loop.virtual_machine");
-        let uws = unsafe { vm.as_ref() }.uws_loop();
+        let uws = vm.uws_loop();
         #[cfg(windows)]
         {
             // SAFETY: uws loop pointer is live for the VM lifetime.

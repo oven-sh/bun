@@ -116,11 +116,12 @@ impl ZigStringJs for ZigString {
     }
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        // Signature matches `bun_jsc`'s decl exactly (avoids
+        // `clashing_extern_declarations`); both params are non-null refs.
         unsafe extern "C" {
-            fn ZigString__toValueGC(arg0: *const ZigString, arg1: *const JSGlobalObject) -> JSValue;
+            safe fn ZigString__toValueGC(arg0: &ZigString, arg1: &JSGlobalObject) -> JSValue;
         }
-        // SAFETY: `self` is a valid repr(C) ZigString; `global` is live.
-        unsafe { ZigString__toValueGC(self, global) }
+        ZigString__toValueGC(self, global)
     }
 }
 

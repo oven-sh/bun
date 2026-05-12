@@ -222,9 +222,11 @@ pub struct PathParsed<'a, T: PathChar> {
 }
 
 // path.zig:2750 — `extern "c" fn PathParsedObject__create(*jsc.JSGlobalObject, jsc.JSValue × 5) jsc.JSValue;`
+// `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params are
+// by-value `JSValue`, so no caller-side preconditions remain.
 unsafe extern "C" {
-    fn PathParsedObject__create(
-        global: *const JSGlobalObject,
+    safe fn PathParsedObject__create(
+        global: &JSGlobalObject,
         root: JSValue,
         dir: JSValue,
         base: JSValue,
@@ -243,8 +245,7 @@ impl<'a, T: PathChar> PathParsed<'a, T> {
         let base = create_js_string_t::<T>(global_object, self.base)?;
         let ext = create_js_string_t::<T>(global_object, self.ext)?;
         let name_val = create_js_string_t::<T>(global_object, self.name)?;
-        // SAFETY: FFI call with valid global object pointer.
-        Ok(unsafe { PathParsedObject__create(global_object, root, dir, base, ext, name_val) })
+        Ok(PathParsedObject__create(global_object, root, dir, base, ext, name_val))
     }
 }
 

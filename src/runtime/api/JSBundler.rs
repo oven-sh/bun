@@ -1516,21 +1516,25 @@ pub mod js_bundler {
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
+    // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
+    // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
+    // validity proof lives in the type. `tombstone`/`runSetupFunction` keep raw
+    // `*mut` because their callers hold only a raw pointer.
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
         fn JSBundlerPlugin__tombstone(plugin: *mut Plugin);
-        fn JSBundlerPlugin__runOnEndCallbacks(
-            plugin: *mut Plugin,
+        safe fn JSBundlerPlugin__runOnEndCallbacks(
+            plugin: &mut Plugin,
             build_promise: JSValue,
             build_result: JSValue,
             rejection: JSValue,
         ) -> JSValue;
-        fn JSBundlerPlugin__globalObject(plugin: *mut Plugin) -> *mut JSGlobalObject;
-        fn JSBundlerPlugin__appendDeferPromise(plugin: *mut Plugin) -> JSValue;
-        fn JSBundlerPlugin__setConfig(plugin: *mut Plugin, config: *mut c_void);
+        safe fn JSBundlerPlugin__globalObject(plugin: &mut Plugin) -> *mut JSGlobalObject;
+        safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
+        safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         fn JSBundlerPlugin__runSetupFunction(
             plugin: *mut Plugin,
             object: JSValue,
@@ -1539,8 +1543,8 @@ pub mod js_bundler {
             is_last: JSValue,
             is_bake: JSValue,
         ) -> JSValue;
-        fn JSBundlerPlugin__loadAndResolvePluginsForServe(
-            plugin: *const Plugin,
+        safe fn JSBundlerPlugin__loadAndResolvePluginsForServe(
+            plugin: &Plugin,
             plugins: JSValue,
             bunfig_folder: JSValue,
         ) -> JSValue;
@@ -1610,15 +1614,12 @@ pub mod js_bundler {
             // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
             // (whose own scope ctor asserts) is wrong.
             bun_jsc::top_scope!(scope, global_this);
-            // SAFETY: self is valid opaque FFI handle
-            let value = unsafe {
-                JSBundlerPlugin__runOnEndCallbacks(
-                    self,
-                    build_promise.as_value(global_this),
-                    build_result,
-                    rejection_value,
-                )
-            };
+            let value = JSBundlerPlugin__runOnEndCallbacks(
+                self,
+                build_promise.as_value(global_this),
+                build_result,
+                rejection_value,
+            );
             scope.return_if_exception()?;
             Ok(value)
         }
@@ -1631,13 +1632,13 @@ pub mod js_bundler {
         }
 
         fn global_object(&mut self) -> &JSGlobalObject {
-            // SAFETY: self is valid opaque FFI handle; returned global outlives self
+            // SAFETY: returned global is non-null and outlives `self` (the
+            // plugin holds a strong ref to its global).
             unsafe { &*JSBundlerPlugin__globalObject(self) }
         }
 
         fn append_defer_promise(&mut self) -> JSValue {
-            // SAFETY: self is valid opaque FFI handle
-            unsafe { JSBundlerPlugin__appendDeferPromise(self) }
+            JSBundlerPlugin__appendDeferPromise(self)
         }
 
         fn add_plugin(
@@ -1667,8 +1668,7 @@ pub mod js_bundler {
 
         fn set_config(&mut self, config: *mut c_void) {
             jsc::mark_binding();
-            // SAFETY: self is valid opaque FFI handle
-            unsafe { JSBundlerPlugin__setConfig(self, config) };
+            JSBundlerPlugin__setConfig(self, config);
         }
 
         fn load_and_resolve_plugins_for_serve(
@@ -1677,9 +1677,7 @@ pub mod js_bundler {
             bunfig_folder: JSValue,
         ) -> JSValue {
             jsc::mark_binding();
-            // SAFETY: self is a valid opaque FFI handle; arguments are valid
-            // JSValues. Exception handling is the caller's responsibility.
-            unsafe { JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder) }
+            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder)
         }
     }
 

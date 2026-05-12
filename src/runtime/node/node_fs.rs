@@ -5757,12 +5757,13 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm {
+                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
-                            // see note on `pipe_read_buffer` above.
-                            let global = unsafe { vm.as_ref() }.global();
+                            // `self.vm` is the live owning `VirtualMachine`
+                            // (per-thread singleton; see `pipe_read_buffer`
+                            // above) — `BackRef` invariant holds.
+                            let global = vm.global();
                             let array_buffer = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
                                 temporary_read_buffer_before_stat_call,

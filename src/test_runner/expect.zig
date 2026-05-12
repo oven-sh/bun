@@ -170,6 +170,29 @@ pub const Expect = struct {
         return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
     }
 
+    /// Some Promise subclasses are lazy — they only start their underlying
+    /// work when `.then()` is called (e.g. Bun Shell's `ShellPromise`).
+    /// `waitForPromise()` watches the internal promise state directly without
+    /// going through `.then()`, so such promises would never settle and
+    /// `expect()` would hang forever. This helper calls the user-visible
+    /// `.then()` method (with no handlers) to trigger any lazy initialization,
+    /// matching the observable behavior of `await value`.
+    fn triggerLazyPromise(globalThis: *JSGlobalObject, value: JSValue, promise: jsc.AnyPromise) bun.JSError!void {
+        if (promise.status() != .pending) return;
+        if (!value.isObject()) return;
+        const then_fn = try value.get(globalThis, "then") orelse return;
+        if (!then_fn.isCallable()) return;
+
+        const then_result = try then_fn.call(globalThis, value, &.{});
+        // `.then()` with no handlers returns a promise that follows the
+        // original. Mark it as handled so a rejection doesn't surface as an
+        // unhandled rejection warning — the original promise is what we
+        // actually observe below.
+        if (then_result.asAnyPromise()) |returned_promise| {
+            returned_promise.setHandled(globalThis.vm());
+        }
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -179,6 +202,8 @@ pub const Expect = struct {
                 if (value.asAnyPromise()) |promise| {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
+
+                    try triggerLazyPromise(globalThis, value, promise);
 
                     globalThis.bunVM().waitForPromise(promise);
 
@@ -576,6 +601,7 @@ pub const Expect = struct {
         }
 
         if (return_value.asAnyPromise()) |promise| {
+            try triggerLazyPromise(globalThis, return_value, promise);
             vm.waitForPromise(promise);
             scope.apply(vm);
             switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
@@ -1049,6 +1075,8 @@ pub const Expect = struct {
         if (result.asAnyPromise()) |promise| {
             const vm = globalThis.vm();
             promise.setHandled(vm);
+
+            try triggerLazyPromise(globalThis, result, promise);
 
             globalThis.bunVM().waitForPromise(promise);
 

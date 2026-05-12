@@ -745,6 +745,37 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   if (!(cfg.linux && cfg.release)) return;
 
   const out = startupOrderResolvedPath(cfg);
+  const { src, script, nm, map, q } = startupOrderPieces(cfg);
+
+  n.rule("startup_order", {
+    command: `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --map=${q(map)} --out=$out $in`,
+    description: "gen startup.order.resolved",
+    // rewrite-startup-order.ts uses writeIfChanged → output mtime stays put
+    // when no hash moved → ninja prunes the (30s+) relink.
+    restat: true,
+  });
+  n.build({
+    outputs: [out],
+    rule: "startup_order",
+    inputs: rustLibs,
+    implicitInputs: [src, script],
+  });
+  n.blank();
+}
+
+/** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */
+export function linkerMapPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
+}
+
+/** Shared path/tool derivation for the two startup-order steps. */
+function startupOrderPieces(cfg: Config): {
+  src: string;
+  script: string;
+  nm: string;
+  map: string;
+  q: (p: string) => string;
+} {
   const src = resolve(cfg.cwd, "src/startup.order");
   const script = resolve(cfg.cwd, "scripts/build/rewrite-startup-order.ts");
   // The staticlib contains LLVM bitcode when cross-language LTO is on, so the
@@ -773,29 +804,96 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   // resolver also reads the *previous* link's `-Wl,-Map=` output. Both are
   // content-hash-derived and stable across rebuilds while CGU partitioning
   // and class layout are unchanged, so last build's map is a valid oracle
-  // for this build's order file. NOT a ninja input: it's a self-edge
-  // (link → map → order → link) and is legitimately absent on the first
-  // build in a clean dir — the script tolerates that and degrades to
-  // staticlib-only resolution.
-  const map = join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
-
+  // for this build's order file. NOT a ninja input to the *first* pass: it's
+  // a self-edge (link → map → order → link) and is legitimately absent on
+  // the first build in a clean dir — the script tolerates that and degrades
+  // to staticlib-only resolution. The *second* pass (emitStartupOrderVerify)
+  // closes the loop against the fresh map.
+  const map = linkerMapPath(cfg);
   // Host is linux here (linux release never cross-builds from non-linux),
   // so no cmd.exe wrapping. Already-quoted jsRuntime is spliced directly.
-  const q = (p: string) => quote(p, false);
-  n.rule("startup_order", {
-    command: `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --map=${q(map)} --out=$out $in`,
-    description: "gen startup.order.resolved",
-    // rewrite-startup-order.ts uses writeIfChanged → output mtime stays put
-    // when no hash moved → ninja prunes the (30s+) relink.
+  return { src, script, nm, map, q: (p: string) => quote(p, false) };
+}
+
+/**
+ * Second-pass resolve + conditional relink. Runs *after* the link, reading
+ * the *fresh* `-Wl,-Map=` output that link just wrote, and re-resolves
+ * `startup.order.resolved` against it. If `writeIfChanged` actually moved
+ * the resolved file's mtime (i.e. CGU partitioning shifted a `.llvm.<N>`
+ * suffix or ICF picked a different representative since the previous build),
+ * the link is re-issued once with the freshened ordering. Otherwise — the
+ * common case on incremental rebuilds — this is a ~100 ms re-resolve +
+ * `touch` and no extra link.
+ *
+ * The relink command is the literal expansion of `compile.ts`'s `link` rule
+ * (Linux branch); ninja deletes the link rule's own response file on
+ * success, so this edge writes its *own* `$out.rsp` from the same input
+ * list. Downstream consumers (`strip`, `smoke_test`) take the returned
+ * sentinel as an order-only input so they wait for the possible relink
+ * before reading `exe`.
+ *
+ * Linux release only — matches `emitStartupOrder`. Returns `undefined`
+ * elsewhere so callers can splice unconditionally.
+ */
+export function emitStartupOrderVerify(
+  n: Ninja,
+  cfg: Config,
+  rustLibs: string[],
+  exe: string,
+  linkInputs: string[],
+  ldflags: string[],
+): string | undefined {
+  // Same gate as the `-Wl,-Map=` flag in flags.ts (asan/valgrind drop ICF
+  // and the map with it). Without a fresh map there is nothing to verify.
+  if (!(cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind)) return undefined;
+
+  const resolved = startupOrderResolvedPath(cfg);
+  const sentinel = resolve(cfg.buildDir, "startup.order.verified");
+  const { src, script, nm, map, q } = startupOrderPieces(cfg);
+
+  // Literal expansion of compile.ts's `link` rule, Linux branch:
+  //   `${wrap} ${cxx} @$out.rsp $ldflags -o $out`
+  // with $out → exe and $out.rsp → this edge's own rspfile (same payload —
+  // `$in_newline` over the same object+archive list the link edge used).
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
+  const relink = `${wrap} ${q(cfg.cxx)} @$out.rsp ${ldflags.join(" ")} -o ${q(exe)}`;
+
+  // rustLibs are passed as literal args (not via $in — $in here is the full
+  // link input list so $in_newline can populate the relink rsp). One or two
+  // archive paths; well under ARG_MAX.
+  const rewrite =
+    `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --map=${q(map)} ` +
+    `--out=${q(resolved)} ${rustLibs.map(q).join(" ")}`;
+
+  n.rule("startup_order_verify", {
+    // `[ resolved -nt exe ]` is true only when writeIfChanged actually wrote
+    // (pass-1 ran *before* link, so an unchanged resolved predates exe). The
+    // relink rewrites exe in place; ninja never re-stats it (exe isn't this
+    // edge's declared output), but every consumer is gated on the sentinel
+    // via order-only deps, so they read the post-relink bytes.
+    command:
+      `${rewrite} && ` +
+      `if [ ${q(resolved)} -nt ${q(exe)} ]; then ` +
+      `echo 'startup.order: CGU partitioning shifted; relinking with fresh map' >&2 && ${relink}; ` +
+      `fi && touch $out`,
+    description: "verify startup.order.resolved (fresh linker-map)",
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
+    // Relink streams lld progress; the no-op path is silent.
+    pool: "console",
     restat: true,
   });
   n.build({
-    outputs: [out],
-    rule: "startup_order",
-    inputs: rustLibs,
-    implicitInputs: [src, script],
+    outputs: [sentinel],
+    rule: "startup_order_verify",
+    // Full link input list — only so `$in_newline` can repopulate the rsp.
+    // Staleness is driven by `map` (link's implicit output) below; the
+    // objects are already transitively upstream of that.
+    inputs: linkInputs,
+    implicitInputs: [map, src, script],
   });
   n.blank();
+  return sentinel;
 }
 
 /**

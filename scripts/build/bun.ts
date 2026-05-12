@@ -35,7 +35,7 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { emitRust, emitStartupOrder, rustLibPath } from "./rust.ts";
+import { emitRust, emitStartupOrder, emitStartupOrderVerify, linkerMapPath, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -471,11 +471,22 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // before lld reads it. Linux release only; no-op elsewhere. The resolved
   // file is already in linkImplicitInputs() via linkDepends().
   emitStartupOrder(n, cfg, rustObjects);
-  const exe = link(n, cfg, exeName, [...allObjects, ...rustObjects, ...windowsRes], {
+  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    // Declare the `-Wl,-Map=` side-product so the verify step below can
+    // depend on it (orders verify after link). Linux release only — the
+    // map flag itself is gated identically in flags.ts.
+    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
+  // Second pass: re-resolve against the *fresh* map link just wrote and, if
+  // CGU partitioning shifted any `.llvm.<N>` suffix, relink once with the
+  // freshened ordering. No-op (~100 ms) on incremental rebuilds. Returns a
+  // sentinel that strip/smoke-test wait on so they read the post-relink exe.
+  const orderVerified = emitStartupOrderVerify(n, cfg, rustObjects, exe, [...linkObjects, ...depLibs], ldflags);
 
   // ─── Step 8: post-link (strip + dsymutil) ───
   // Plain release only: produce stripped `bun` alongside `bun-profile`.
@@ -483,7 +494,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   let strippedExe: string | undefined;
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
-    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
+    strippedExe = emitStrip(n, cfg, exe, flags.stripflags, orderVerified);
     // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
     // bundle. dsymutil reads DWARF from bun-profile, writes bun-profile.dSYM.
     // Must run BEFORE stripping could discard sections it needs (we don't
@@ -497,7 +508,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // literal file named `bun` (which would collide with the phony). When
   // strip runs, `ninja bun` builds the actual stripped file; no phony needed.
   if (strippedExe === undefined) {
-    n.phony("bun", [exe]);
+    n.phony("bun", orderVerified !== undefined ? [exe, orderVerified] : [exe]);
   }
 
   // ─── Step 9: smoke test ───
@@ -510,7 +521,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, orderVerified);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -615,21 +626,27 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // came from a different agent/rustc, so the checked-in hashes are even
   // less likely to match. Linux release only; no-op elsewhere.
   emitStartupOrder(n, cfg, rustObjects);
-  const exe = link(n, cfg, exeName, [archive, ...rustObjects, ...windowsRes], {
+  const linkObjects = [archive, ...rustObjects, ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
+  // Second-pass resolve against the fresh map (link-only is the CI path —
+  // there *is* no previous map here, so the first pass is always degraded).
+  const orderVerified = emitStartupOrderVerify(n, cfg, rustObjects, exe, [...linkObjects, ...depLibs], ldflags);
 
   // Strip + smoke test — same as full mode.
   let strippedExe: string | undefined;
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
-    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
+    strippedExe = emitStrip(n, cfg, exe, flags.stripflags, orderVerified);
     if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
   }
-  if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  if (strippedExe === undefined) n.phony("bun", orderVerified !== undefined ? [exe, orderVerified] : [exe]);
+  emitSmokeTest(n, cfg, exe, exeName, orderVerified);
 
   return {
     exe,
@@ -647,11 +664,11 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, orderVerified?: string): void {
   // Cross-compiled binaries can't run on the build host. Skip the smoke
   // test entirely — `ninja check` becomes a no-op alias for the exe.
   if (cfg.crossTarget !== undefined) {
-    n.phony("check", [exe]);
+    n.phony("check", orderVerified !== undefined ? [exe, orderVerified] : [exe]);
     return;
   }
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
@@ -692,6 +709,8 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    // See emitStrip — wait for the possible second-pass relink.
+    ...(orderVerified !== undefined ? { orderOnlyInputs: [orderVerified] } : {}),
   });
 
   // Phony target — `ninja check` runs the smoke test.
@@ -705,7 +724,13 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
  * Input (bun-profile) is NOT modified — strip writes a new file via `-o`.
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
-function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
+function emitStrip(
+  n: Ninja,
+  cfg: Config,
+  inputExe: string,
+  stripflags: string[],
+  orderVerified?: string,
+): string {
   const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
@@ -727,6 +752,11 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     outputs: [out],
     rule: "strip",
     inputs: [inputExe],
+    // Gate on the startup-order verify sentinel (Linux release): the verify
+    // step may relink `inputExe` in place after the link edge already
+    // satisfied ninja, so strip must wait for it. Order-only — the sentinel
+    // is `touch`ed unconditionally and carries no content.
+    ...(orderVerified !== undefined ? { orderOnlyInputs: [orderVerified] } : {}),
     vars: cfg.windows ? {} : { stripflags: stripflags.join(" ") },
   });
 

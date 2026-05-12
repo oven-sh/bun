@@ -180,6 +180,18 @@ impl JSMySQLConnection {
         unsafe { &mut *self.vm.as_ptr() }
     }
 
+    /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe
+    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
+    /// the loop is a disjoint heap allocation owned by the JS-thread VM
+    /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
+    #[inline]
+    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
+        // the owned event loop lives for the VM's lifetime. Single-JS-thread
+        // invariant ⇒ callers never overlap `&mut`.
+        self.vm_mut().event_loop_mut()
+    }
+
     /// `bun_io::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
     /// is a singleton; route through the global hook (same target as
     /// `self.vm`).
@@ -440,7 +452,7 @@ impl JSMySQLConnection {
         // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
         // reference is live across the potential free.
         let _ref = self.ref_guard();
-        let _loop_guard = unsafe { self.vm().event_loop_mut() }.entered();
+        let _loop_guard = self.event_loop().entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection_mut().flush_queue() {
             self.fail(b"Authentication failed", AnyMySQLErrorT::AuthenticationFailed);
@@ -914,7 +926,7 @@ impl JSMySQLConnection {
             return;
         };
         on_close.ensure_still_alive();
-        let loop_ = unsafe { self.vm().event_loop_mut() };
+        let loop_ = self.event_loop();
         // loop.enter();
         // defer loop.exit();
         self.ensure_js_value_is_alive();
@@ -1182,7 +1194,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // last — matches Zig.
         let p: *mut JSMySQLConnection = this.as_ctx_ptr();
         let _ref = this.ref_guard();
-        let vm = this.vm();
 
         scopeguard::defer! {
             // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
@@ -1198,7 +1209,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return;
         }
 
-        let _loop_guard = unsafe { vm.event_loop_mut() }.entered();
+        let _loop_guard = this.event_loop().entered();
         this.ensure_js_value_is_alive();
 
         if let Err(e) = this.connection_mut().read_and_process_data(data) {

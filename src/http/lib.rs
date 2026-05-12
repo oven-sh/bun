@@ -1282,27 +1282,21 @@ impl<'a> HTTPClient<'a> {
     #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
         let raw = self.proxy_tunnel.as_ref().map(|p| p.as_ptr())?;
-        // SAFETY: proxy_tunnel is intrusive-refcounted (we hold a strong ref);
-        // this borrow does not outlive `self` and the tunnel is not dropped
-        // while borrowed.
-        Some(unsafe { &mut *raw })
+        Some(proxy_tunnel::raw_as_mut(raw))
     }
     /// Detach and release the proxy tunnel if one is attached. Replaces the
     /// open-coded `take → as_mut → shutdown → detach_and_deref` sequence.
     #[inline]
     fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
-            // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel; the
-            // raw `&mut` does not escape this block. `detach_socket` (formerly
-            // the first half of `detach_and_deref`) must run before the strong
-            // ref is released so a refcount>1 tunnel keeps no dangling socket.
-            unsafe {
-                let tunnel = &mut *t.as_ptr();
-                if shutdown {
-                    tunnel.shutdown();
-                }
-                tunnel.detach_socket();
+            // `detach_socket` (formerly the first half of `detach_and_deref`)
+            // must run before the strong ref is released so a refcount>1
+            // tunnel keeps no dangling socket.
+            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
+            if shutdown {
+                tunnel.shutdown();
             }
+            tunnel.detach_socket();
             // Release the strong ref this client held (formerly the `deref`
             // half of `detach_and_deref`).
             t.deref();
@@ -2743,10 +2737,10 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    // (this client holds a strong ref); the raw deref is needed
-                    // because `&mut self` is reborrowed below.
-                    let proxy = unsafe { &mut *proxy_ptr };
+                    // Detached upgrade so `&mut self` can be reborrowed below;
+                    // the tunnel is a disjoint heap allocation (see
+                    // `proxy_tunnel::raw_as_mut` INVARIANT).
+                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
                             self.set_timeout(socket);
@@ -2776,10 +2770,10 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    // (this client holds a strong ref); the raw deref is needed
-                    // because `&mut self` is reborrowed below.
-                    let proxy = unsafe { &mut *proxy_ptr };
+                    // Detached upgrade so `&mut self` can be reborrowed below;
+                    // the tunnel is a disjoint heap allocation (see
+                    // `proxy_tunnel::raw_as_mut` INVARIANT).
+                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(socket);
                     // PERF(port): was stack-fallback alloc (16KB) — profile in Phase B
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
@@ -3414,8 +3408,7 @@ impl<'a> HTTPClient<'a> {
                 // dereffs it if pooling fails.
                 let tunnel = self.proxy_tunnel.take();
                 if let Some(t) = &tunnel {
-                    // SAFETY: t is a live intrusive-refcounted ProxyTunnel
-                    unsafe { (*t.as_ptr()).detach_owner(&*self) };
+                    proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
                 }
                 let had_tunnel = tunnel.is_some();
                 // target_hostname = url.hostname (the CONNECT TCP target at

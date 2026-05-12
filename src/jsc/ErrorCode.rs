@@ -1431,12 +1431,13 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
     #[inline]
     pub fn reject(self) -> JSValue {
         let v = self.code.fmt(self.global, self.args);
-        // SAFETY: `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
+        // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
         // handles (see `GlobalObjectRef` doc); both name the same C++ object,
         // so reinterpreting the pointer for `JSPromise::rejected_promise`
-        // (which is still typed against the lib.rs stub) is sound.
+        // (which is still typed against the lib.rs stub) is sound. `opaque_ref`
+        // is the safe ZST-handle deref (panics on null).
         let global: &JSGlobalObject =
-            unsafe { &*(self.global.as_global_ptr() as *const JSGlobalObject) };
+            JSGlobalObject::opaque_ref(self.global.as_global_ptr().cast::<JSGlobalObject>());
         JSPromise::rejected_promise(global, v).to_js()
     }
 }

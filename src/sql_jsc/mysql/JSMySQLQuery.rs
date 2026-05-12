@@ -62,6 +62,17 @@ impl JSMySQLQuery {
         (self as *const Self).cast_mut()
     }
 
+    /// RAII `ref()`/`deref()` bracket around `self`. One audited
+    /// `ScopedRef::new` here replaces N per-site
+    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
+    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
+    /// (live, non-null) is always satisfied.
+    #[inline]
+    pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+        // SAFETY: `&self` ⇒ the allocation is live and non-null.
+        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    }
+
     pub fn estimated_size(&self) -> usize {
         core::mem::size_of::<Self>()
     }
@@ -175,9 +186,7 @@ impl JSMySQLQuery {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         debug!("doRun");
-        // SAFETY: `this` points to the live m_ctx payload; `ScopedRef` bumps the
-        // intrusive count and derefs on every exit path.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
+        let _guard = this.ref_guard();
 
         let arguments = callframe.arguments();
         if arguments.len() < 2 {
@@ -273,10 +282,9 @@ impl JSMySQLQuery {
     }
 
     pub fn resolve(&self, queries_array: JSValue, result: MySQLQueryResult) {
-        // SAFETY: `self` is the live m_ctx payload; `ScopedRef` bumps the
-        // intrusive count and derefs on every exit path (drops *after*
-        // `_downgrade`, so the allocation outlives the closure body).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
+        // allocation outlives the closure body.
+        let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
@@ -313,7 +321,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        let event_loop = unsafe { self.vm().event_loop_mut() };
+        let event_loop = self.event_loop();
 
         event_loop.run_callback(
             function,
@@ -335,9 +343,7 @@ impl JSMySQLQuery {
     pub fn mark_as_failed(&self) {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
-        // SAFETY: `self` is the live m_ctx payload; `ScopedRef` bumps the
-        // intrusive count and derefs on every exit path.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
@@ -363,10 +369,9 @@ impl JSMySQLQuery {
     }
 
     pub fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
-        // SAFETY: `self` is the live m_ctx payload; `ScopedRef` bumps the
-        // intrusive count and derefs on every exit path (drops *after*
-        // `_downgrade`, so the allocation outlives the closure body).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
+        // allocation outlives the closure body.
+        let _guard = self.ref_guard();
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, |s| {
@@ -398,7 +403,7 @@ impl JSMySQLQuery {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        let event_loop = unsafe { self.vm().event_loop_mut() };
+        let event_loop = self.event_loop();
         let js_array = if queries_array.is_empty() { JSValue::UNDEFINED } else { queries_array };
         js_array.ensure_still_alive();
         let Some(this_value) = self.this_value.get().try_get() else { return };
@@ -598,6 +603,16 @@ impl JSMySQLQuery {
         // carries write provenance from `bun_vm_ptr()` so projecting `&mut`
         // here mirrors the Zig spec's `*jsc.VirtualMachine`.
         unsafe { &mut *self.vm.as_ptr() }
+    }
+    /// `&mut EventLoop` for `run_callback`. One audited unsafe here replaces
+    /// the per-site `unsafe { self.vm().event_loop_mut() }` — the loop is a
+    /// disjoint heap allocation owned by the JS-thread VM singleton stored in
+    /// `self.vm`; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
+    #[inline]
+    fn event_loop(&self) -> &mut crate::jsc::EventLoop {
+        // SAFETY: `self.vm` is the process-lifetime VM `BackRef` (see
+        // `vm_mut`); the owned event loop lives for the VM's lifetime.
+        unsafe { self.vm().event_loop_mut() }
     }
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {

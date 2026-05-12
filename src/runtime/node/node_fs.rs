@@ -4967,11 +4967,12 @@ impl NodeFS {
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         debug_assert!(args.position.is_none());
-        // SAFETY: the ArrayBuffer's backing store is JS-owned heap memory that
-        // `read(2)` writes into; `&args` only borrows the *handle* immutably,
-        // not the bytes (matches Zig's `args.buffer.slice()` returning `[]u8`).
-        let s = args.buffer.slice();
-        let mut buf = unsafe { core::slice::from_raw_parts_mut(s.as_ptr().cast_mut(), s.len()) };
+        // `ArrayBuffer` is a `Copy` descriptor over JSC-owned heap bytes; copy the
+        // descriptor locally and use the existing safe `byte_slice_mut` accessor
+        // instead of rebuilding a `&mut [u8]` from a `&[u8]` borrow by hand
+        // (matches Zig's `args.buffer.slice()` returning `[]u8`).
+        let mut view = args.buffer.buffer;
+        let mut buf = view.byte_slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());
@@ -4983,9 +4984,9 @@ impl NodeFS {
     }
 
     fn pread_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
-        // SAFETY: see `read_inner` — JS ArrayBuffer storage is mutable heap.
-        let s = args.buffer.slice();
-        let mut buf = unsafe { core::slice::from_raw_parts_mut(s.as_ptr().cast_mut(), s.len()) };
+        // See `read_inner` — copy the `ArrayBuffer` descriptor and use its safe accessor.
+        let mut view = args.buffer.buffer;
+        let mut buf = view.byte_slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());

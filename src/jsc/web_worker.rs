@@ -1597,8 +1597,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
     let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,
         Err(_) => {
-            // SAFETY: `global` valid for VM lifetime.
-            let global = unsafe { &*global };
+            // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
+            let global = JSGlobalObject::opaque_ref(global);
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, "Error resolving Worker entry point")?;
                 out.to_bun_string(global)

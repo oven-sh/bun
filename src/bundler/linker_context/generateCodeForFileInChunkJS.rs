@@ -904,9 +904,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         dc.collect_from_stmts(out_stmts, &mut r, c);
     }
 
-    // PORT NOTE: split borrow — `print_code_for_file_in_chunk_js` takes `&mut self`,
-    // so grab the source pointer first.
-    let source: *const _ = c.get_source(source_index as u32);
+    // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
+    // outlives the link step), so it does not borrow `c` — no split-borrow needed
+    // across the `&mut self` call below.
+    let source: &bun_ast::Source = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(
         r,
         arena,
@@ -918,8 +919,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_common_js_ref,
         runtime_require_ref,
         part_range.source_index,
-        // SAFETY: source is borrowed from `c.parse_graph` which outlives this call.
-        unsafe { &*source },
+        source,
     )
 }
 

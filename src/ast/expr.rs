@@ -3012,9 +3012,15 @@ pub mod data {
         // const init); matches Zig `threadlocal var`.
         #[thread_local]
         pub static INSTANCE: Cell<*mut Backing> = Cell::new(core::ptr::null_mut());
+        /// Back-reference to the `ASTMemoryAllocator` installed by the
+        /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
+        /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
+        /// safe `Deref`; the back-reference invariant (pointee outlives every
+        /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
+        /// always restores the previous value before its frame returns.
         #[thread_local]
-        pub static MEMORY_ALLOCATOR: Cell<*mut ASTMemoryAllocator> =
-            Cell::new(core::ptr::null_mut());
+        pub static MEMORY_ALLOCATOR: Cell<Option<bun_ptr::BackRef<ASTMemoryAllocator>>> =
+            Cell::new(None);
         #[thread_local]
         pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
 
@@ -3035,11 +3041,11 @@ pub mod data {
         }
         #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
-            MEMORY_ALLOCATOR.get()
+            MEMORY_ALLOCATOR.get().map_or(core::ptr::null_mut(), bun_ptr::BackRef::as_ptr)
         }
         #[inline]
         pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
-            MEMORY_ALLOCATOR.set(p);
+            MEMORY_ALLOCATOR.set(core::ptr::NonNull::new(p).map(bun_ptr::BackRef::from));
         }
 
         pub fn create() {
@@ -3104,10 +3110,9 @@ pub mod data {
 
         #[inline]
         pub fn append<T>(value: T) -> crate::StoreRef<T> {
-            let ma = memory_allocator();
-            if !ma.is_null() {
-                // SAFETY: ASTMemoryAllocator is set by the owning scope and outlives this call.
-                return unsafe { &*ma }.append(value);
+            if let Some(ma) = MEMORY_ALLOCATOR.get() {
+                // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
+                return ma.append(value);
             }
             Disabler::assert();
             // assert() guarantees instance is non-null on this thread; slab

@@ -3188,34 +3188,39 @@ pub mod store_ast_alloc_heap {
     #[thread_local]
     static ARENA: Cell<*mut MimallocArena> = Cell::new(ptr::null_mut());
 
+    /// Reborrow the thread-local arena. Centralises the back-ref deref so
+    /// `enter` / `reset` / `current_heap` stay safe (mirrors
+    /// `Stmt::Data::Store::instance_mut`). `None` iff `enter()` has not run
+    /// (or `exit()` cleared it).
+    #[inline]
+    fn arena_mut<'a>() -> Option<&'a mut MimallocArena> {
+        // SAFETY: `ARENA` is thread-local; the `*mut MimallocArena` it holds is
+        // either null or a live `Box::into_raw` allocation owned by this thread
+        // and freed only by `exit()` (on this thread). No other `&`/`&mut` to
+        // the arena is reachable: this module is its sole accessor.
+        unsafe { ARENA.get().as_mut() }
+    }
+
     pub fn enter() {
         if std::env::var_os("BUN_DISABLE_STORE_AST_HEAP").is_some() {
             return;
         }
-        let arena = {
-            let p = ARENA.get();
-            if !p.is_null() {
-                p
-            } else {
+        let arena = match arena_mut() {
+            Some(a) => a,
+            None => {
                 let p = Box::into_raw(Box::new(MimallocArena::new()));
                 ARENA.set(p);
-                p
+                arena_mut().expect("just set")
             }
         };
-        // SAFETY: `arena` is a live `Box::into_raw` allocation owned by this
-        // thread; only `exit()` (on this thread) frees it.
-        bun_alloc::ast_alloc::set_thread_heap(unsafe { (*arena).heap_ptr() });
+        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
     }
 
     pub fn reset() {
-        let arena = ARENA.get();
-        if arena.is_null() {
+        let Some(arena) = arena_mut() else {
             enter();
             return;
-        }
-        // SAFETY: `arena` is the live `Box::into_raw` allocation from
-        // `enter()`; this thread is its only mutator.
-        //
+        };
         // This is the `AstAlloc` side-heap holding `Ast.named_exports`,
         // `AstVec` buffers, etc. — data that is intentionally NEVER `Drop`'d
         // (the whole point of routing through `AstAlloc` is bulk-free here).
@@ -3232,20 +3237,13 @@ pub mod store_ast_alloc_heap {
         // where reset always rewinds the cursor (= bulk-free); only the
         // backing buffer is retained. `MimallocArena` is not a bump
         // allocator, so the only correct mapping is destroy+new.
-        unsafe {
-            (*arena).reset();
-            bun_alloc::ast_alloc::set_thread_heap((*arena).heap_ptr());
-        }
+        arena.reset();
+        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
     }
 
     #[inline]
     pub fn current_heap() -> *mut bun_alloc::mimalloc::Heap {
-        let arena = ARENA.get();
-        if arena.is_null() {
-            return ptr::null_mut();
-        }
-        // SAFETY: live `Box::into_raw` allocation; read-only accessor.
-        unsafe { (*arena).heap_ptr() }
+        arena_mut().map_or(ptr::null_mut(), |a| a.heap_ptr())
     }
 
     pub fn exit() {

@@ -645,12 +645,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // get a slice to where the CLI arguments are
     // the slice will have a leading space ' arg arg2' or be empty ''
-    let user_arguments_u8: &[u8] = if !IS_STANDALONE {
+    //
+    // We compute both the `[u16]` and `[u8]` views together so the DBG dump
+    // below can use the u16 view directly instead of reconstructing it via
+    // `from_raw_parts` from the byte view.
+    let (user_arguments_u16, user_arguments_u8): (&[u16], &[u8]) = if !IS_STANDALONE {
+        let a = bun_ctx.arguments();
         // SAFETY: arguments slice is valid; reinterpreting [u16] as [u8] is safe (alignment 1).
-        unsafe {
-            let a = bun_ctx.arguments();
-            bun_core::ffi::slice(a.as_ptr().cast::<u8>(), a.len() * 2)
-        }
+        let bytes = unsafe { bun_core::ffi::slice(a.as_ptr().cast::<u8>(), a.len() * 2) };
+        (a, bytes)
     } else {
         'find_args: {
             // Windows command line quotes are really silly. This post explains it better than I can:
@@ -680,33 +683,28 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     }
                     if i == cmd_line_u16.len() {
                         // only trailing spaces, no real args
-                        break 'find_args &cmd_line_u8[0..0];
+                        break 'find_args (&cmd_line_u16[0..0], &cmd_line_u8[0..0]);
                     }
-                    break 'find_args &cmd_line_u8[i * 2 - 2 * 1 /* " ".len */..];
+                    break 'find_args (
+                        &cmd_line_u16[i - 1 /* " ".len */..],
+                        &cmd_line_u8[i * 2 - 2 * 1 /* " ".len */..],
+                    );
                 }
                 i += 1;
             }
             // no args
-            break 'find_args &cmd_line_u8[0..0];
+            break 'find_args (&cmd_line_u16[0..0], &cmd_line_u8[0..0]);
         }
     };
+    let _ = user_arguments_u16; // only read under DBG
 
     if DBG {
         // Zig spec: `debug("UserArgs: '{s}' ({d} bytes)", .{ user_arguments_u8, ... })`
         // — raw byte dump of the UTF-16-LE arg tail. Display via `fmt16` on the
-        // u16 view to keep this `core`-only (no `bstr`); bytes view is always
-        // 2-aligned (subslice of `cmd_line_u8`, itself a `[u16]` reinterpret).
+        // u16 view to keep this `core`-only (no `bstr`).
         debug!(
             "UserArgs: '{}' ({} bytes)",
-            // SAFETY: `user_arguments_u8` is a subslice of `cmd_line_u8`, which
-            // is the byte view of `cmd_line_u16: &[u16]` (see above). Length is
-            // asserted even just below; alignment is inherited from the u16 base.
-            fmt16(unsafe {
-                core::slice::from_raw_parts(
-                    user_arguments_u8.as_ptr().cast::<u16>(),
-                    user_arguments_u8.len() / 2,
-                )
-            }),
+            fmt16(user_arguments_u16),
             user_arguments_u8.len()
         );
     }

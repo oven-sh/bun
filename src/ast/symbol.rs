@@ -606,11 +606,24 @@ impl Map {
         Map { symbols_for_source: list }
     }
 
+    /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors
+    /// [`get_const`] but returns a unique borrow tied to `&mut self`, so callers
+    /// that only need to flip a flag (e.g. `must_not_be_renamed`) don't need the
+    /// raw `*mut Symbol` from [`get`] + an open-coded `(*ptr).field = ...`.
+    pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
+        if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
+            return None;
+        }
+        let src = ref_.source_index() as usize;
+        let idx = ref_.inner_index() as usize;
+        self.symbols_for_source.get_mut(src)?.get_mut(idx)
+    }
+
     pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
         let symbol_ptr = self.get(ref_)?;
-        // SAFETY: ptr from get() is a valid in-bounds element while storage is
-        // not reallocated. Shared-ref deref only — link is read via `Cell`.
-        let symbol = unsafe { &*symbol_ptr };
+        // Read `link` through the safe shared accessor (same indices as `get`);
+        // the raw `*mut` is only forwarded to the caller, never derefed here.
+        let symbol = self.get_const(ref_)?;
         if symbol.has_link() {
             return Some(self.get(symbol.link.get()).unwrap_or(symbol_ptr));
         }

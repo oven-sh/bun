@@ -284,11 +284,14 @@ impl<'a> Subprocess<'a> {
         self.process.get()
     }
 
-    /// # Safety
-    /// Caller must be on the owning JS thread with no other live `&mut Process`.
+    /// Mutably borrow the owned [`Process`].
+    ///
+    /// Centralises the `BackRef<Process> → &mut Process` projection so callers
+    /// (including `js_bun_spawn_bindings`) stay safe. Caller must be on the
+    /// owning JS thread with no other live `&mut Process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn process_mut(&self) -> &mut Process {
+    pub(super) fn process_mut(&self) -> &mut Process {
         // SAFETY: see `process()` — Zig `*Process` semantics. R-2: `&self`
         // (interior-mutability) so callers don't need `&mut Subprocess`;
         // `Process` lives in a separate allocation (BackRef) so the returned

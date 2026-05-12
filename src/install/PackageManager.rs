@@ -2169,11 +2169,13 @@ pub fn init(
         }
     }
 
+    // SAFETY: singleton fully initialized; main thread, no workers yet. Wrapped
+    // once as `ParentRef` so the two read-only `options` projections below go
+    // through safe `Deref` instead of per-site raw deref.
+    let mgr_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(manager_ptr) };
     let mut ca: Vec<ZBox> = Vec::new();
     {
-        // SAFETY: singleton fully initialized; main thread, no workers yet. Shared
-        // borrow suffices — `options.ca` is only read here.
-        let options = unsafe { &(*manager_ptr).options };
+        let options = &mgr_ref.options;
         if !options.ca.is_empty() {
             ca = Vec::with_capacity(options.ca.len());
             debug_assert_eq!(ca.capacity(), options.ca.len());
@@ -2185,8 +2187,7 @@ pub fn init(
 
     let mut abs_ca_file_name: ZBox = ZBox::from_bytes(b"");
     {
-        // SAFETY: as above; shared read of `options.ca_file_name`.
-        let options = unsafe { &(*manager_ptr).options };
+        let options = &mgr_ref.options;
         if !options.ca_file_name.is_empty() {
             // resolve with original cwd
             if bun_paths::is_absolute(&options.ca_file_name) {

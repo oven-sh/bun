@@ -124,8 +124,9 @@ pub fn uint64_to_jsvalue(global_object: *mut c_void, val: u64) -> EncodedJSValue
     if val < 9007199254740991 as c_ulonglong {
         return double_to_jsvalue(val as f64);
     }
-    // SAFETY: caller passed a non-null *JSGlobalObject erased as anyopaque (matches Zig `.?` unwrap).
-    let global = unsafe { &*global_object.cast::<JSGlobalObject>() };
+    // Caller passed a non-null *JSGlobalObject erased as anyopaque (matches
+    // Zig `.?` unwrap). `opaque_ref` is the safe ZST-handle deref (panics on null).
+    let global = JSGlobalObject::opaque_ref(global_object.cast::<JSGlobalObject>());
     uint64_to_jsvalue_slow(global, val).as_encoded()
 }
 
@@ -137,8 +138,9 @@ pub fn int64_to_jsvalue(global_object: *mut c_void, val: i64) -> EncodedJSValue 
     if val >= -(9007199254740991 as c_longlong) && val <= 9007199254740991 as c_longlong {
         return double_to_jsvalue(val as f64);
     }
-    // SAFETY: caller passed a non-null *JSGlobalObject erased as anyopaque.
-    let global = unsafe { &*global_object.cast::<JSGlobalObject>() };
+    // Caller passed a non-null *JSGlobalObject erased as anyopaque.
+    // `opaque_ref` is the safe ZST-handle deref (panics on null).
+    let global = JSGlobalObject::opaque_ref(global_object.cast::<JSGlobalObject>());
     int64_to_jsvalue_slow(global, val).as_encoded()
 }
 

@@ -15,6 +15,7 @@ use bun_threading::Guarded;
 use bun_uws as uws;
 use bun_uws::quic;
 
+use super::client_session::session_mut;
 use super::ClientSession;
 
 pub struct PendingConnect {
@@ -69,8 +70,9 @@ impl PendingConnect {
         let this = unsafe { bun_core::heap::take(this) };
         let session = this.session;
 
-        // SAFETY: session is kept alive by the ref `this` holds for the duration of this fn.
-        let s = unsafe { &mut *session };
+        // session is kept alive by the ref `this` holds for the duration of this
+        // fn — `session_mut` centralises the backref upgrade.
+        let s = session_mut(session);
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
             // connection nobody will use.
@@ -120,8 +122,9 @@ impl PendingConnect {
     /// Tear down a session that never reached `on_conn_close` (DNS failure or
     /// every waiter aborted while DNS was in flight).
     pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
-        // SAFETY: caller guarantees `session` is live (held by an intrusive ref).
-        let s = unsafe { &mut *session };
+        // Caller guarantees `session` is live (held by an intrusive ref) —
+        // `session_mut` centralises the backref upgrade.
+        let s = session_mut(session);
         s.closed = true;
         if let Some(ctx) = super::client_context::ClientContext::get() {
             super::client_context::ClientContext::as_mut(ctx).unregister(s);

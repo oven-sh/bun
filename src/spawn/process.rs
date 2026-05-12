@@ -1264,6 +1264,21 @@ pub mod waiter_thread_posix {
         INSTANCE.0.get()
     }
 
+    /// Shared borrow of the singleton — sole deref site for the set-once
+    /// `INSTANCE` cell. All fields are either atomic (`started`),
+    /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
+    /// lock-free), or write-once-before-spawn (`eventfd`, set in `init()` under
+    /// the `started` fetch_max guard before any reader thread exists), so a
+    /// shared `&'static` is sound. The lone mutating write (`eventfd` in
+    /// `init()`) goes through the raw [`instance()`] pointer; no `&` from this
+    /// accessor is live across it.
+    #[inline]
+    fn instance_ref() -> &'static WaiterThreadPosix {
+        // SAFETY: see doc comment — process-lifetime singleton, fields are
+        // atomic / interior-mutable / write-once-before-readers.
+        unsafe { &*INSTANCE.0.get() }
+    }
+
     impl WaiterThreadPosix {
         #[inline]
         pub fn set_should_use_waiter_thread() {
@@ -1276,19 +1291,19 @@ pub mod waiter_thread_posix {
         }
 
         pub fn append(process: *mut Process) {
-            // SAFETY: `js_process.queue` is an MPSC lock-free queue; `append`
-            // is the producer half and only touches `queue`, never `active`.
-            unsafe { (*instance()).js_process.append(process) };
+            // `js_process.queue` is an MPSC lock-free queue; `append` is the
+            // producer half and only touches `queue`, never `active`.
+            instance_ref().js_process.append(process);
 
             init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
 
             #[cfg(target_os = "linux")]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: eventfd valid after init(); write(2) is async-signal-safe.
+                // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
                 let n = unsafe {
                     libc::write(
-                        (*instance()).eventfd.native(),
+                        instance_ref().eventfd.native(),
                         one.as_ptr().cast(),
                         8,
                     )
@@ -1326,8 +1341,7 @@ pub mod waiter_thread_posix {
     pub fn init() -> Result<(), std::io::Error> {
         debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
 
-        // SAFETY: `started` is atomic; raced fetch_max is fine.
-        if unsafe { (*instance()).started.fetch_max(1, Ordering::Relaxed) } > 0 {
+        if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
             return Ok(());
         }
 
@@ -1352,34 +1366,32 @@ pub mod waiter_thread_posix {
     #[cfg(target_os = "linux")]
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
-        // SAFETY: eventfd is valid; called from signal handler — write(2) is
-        // async-signal-safe.
-        let _ = bun_sys::write(unsafe { (*instance()).eventfd }, &one).unwrap_or(0);
+        // eventfd is write-once in init() before this handler is installed.
+        let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
     }
 
     pub fn loop_() {
         // SAFETY: NUL-terminated literal.
         Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
         WaiterThreadPosix::reload_handlers();
-        // Keep the singleton as a raw pointer and dereference per-use. We must
-        // NOT materialize a long-lived `&mut WaiterThreadPosix` here: the JS
-        // thread's `append()` and the SIGCHLD handler `wakeup()` concurrently
-        // form shared borrows of `js_process` / `eventfd` via the same
-        // singleton, and a live `&mut` covering those fields would be UB
-        // (aliased-&mut). The Zig spec uses a raw pointer with no noalias.
-        let this: *mut WaiterThreadPosix = instance();
+        // We must NOT materialize a long-lived `&mut WaiterThreadPosix` here:
+        // the JS thread's `append()` and the SIGCHLD handler `wakeup()`
+        // concurrently form shared borrows of `js_process` / `eventfd` via the
+        // same singleton, and a live `&mut` covering those fields would be UB
+        // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
+        let this: &'static WaiterThreadPosix = instance_ref();
 
         #[allow(unused_labels)]
         'outer: loop {
-            // SAFETY: raw-place field projection then auto-ref to `&NewQueue`;
-            // coexists soundly with producer `&NewQueue` in `append()`.
-            unsafe { (*this).js_process.loop_() };
+            // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
+            // in `append()` (interior mutability via `active: UnsafeCell`).
+            this.js_process.loop_();
 
             #[cfg(target_os = "linux")]
             {
-                // SAFETY: `eventfd` is written once in `init()` before this
-                // thread is spawned; read-only thereafter.
-                let efd = unsafe { (*this).eventfd };
+                // `eventfd` is written once in `init()` before this thread is
+                // spawned; read-only thereafter.
+                let efd = this.eventfd;
                 let mut polls = [libc::pollfd {
                     fd: efd.native(),
                     events: (libc::POLLIN | libc::POLLERR) as _,

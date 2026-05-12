@@ -21,6 +21,21 @@ bun_core::declare_scope!(http_proxy_tunnel, visible);
 // + dealloc via IntrusiveRc).
 pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
 
+/// Upgrade a `*mut ProxyTunnel` (obtained from [`RefPtr::as_ptr`]) to
+/// `&'a mut ProxyTunnel`.
+///
+/// INVARIANT: callers hold a strong intrusive ref on the tunnel for the
+/// duration of the returned borrow, the tunnel is a heap allocation disjoint
+/// from the caller's `self`, and no other `&mut ProxyTunnel` to it is live.
+/// HTTP-thread-only (single-thread refcount). Centralises the SAFETY argument
+/// formerly open-coded at five `&mut *t.as_ptr()` sites in `lib.rs`.
+#[inline]
+pub(crate) fn raw_as_mut<'a>(ptr: *mut ProxyTunnel) -> &'a mut ProxyTunnel {
+    debug_assert!(!ptr.is_null());
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *ptr }
+}
+
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
@@ -387,14 +402,13 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
         // write_encrypted, which reborrows the tunnel via raw ptr. Read the
         // socket out first, then let `this` (NLL) end before the call so the
         // reentrant `&mut *ctx` inside write_encrypted does not alias.
+        // `client_from_ctx` re-derives the fresh sole `&mut HTTPClient`.
         match ProxyTunnel::socket_of(proxy_nn) {
             &Socket::Ssl(socket) => {
-                // SAFETY: `this` dead (NLL); fresh sole `&mut *ctx`.
-                unsafe { (*ctx).on_writable::<true, true>(socket) };
+                client_from_ctx(ctx).on_writable::<true, true>(socket);
             }
             &Socket::Tcp(socket) => {
-                // SAFETY: see Ssl arm.
-                unsafe { (*ctx).on_writable::<true, false>(socket) };
+                client_from_ctx(ctx).on_writable::<true, false>(socket);
             }
             Socket::None => {}
         }

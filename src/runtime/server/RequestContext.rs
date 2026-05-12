@@ -538,6 +538,25 @@ where
         self.request_body.map(|mut p| unsafe { p.as_mut() })
     }
 
+    /// Exclusive borrow of the heap [`ResponseStreamJSSink`] this context owns.
+    ///
+    /// Returns an unbounded `&'r mut` because the sink is a separate heap
+    /// allocation (`heap::alloc` in [`do_render_stream`]), **not** a sub-field
+    /// of `*self`, so callers may hold it across disjoint `&self`/`&mut self`
+    /// reborrows (same pattern as [`request_body_mut`]). Replaces the per-site
+    /// raw `NonNull` deref.
+    ///
+    /// # Safety (encapsulated)
+    /// While `Some`, `sink` points to the JSSink allocated by
+    /// `do_render_stream`; this `RequestContext` is its sole owner until
+    /// [`destroy_sink`] consumes it. Single-threaded — no other `&mut` alias.
+    #[inline]
+    fn sink_mut<'r>(&mut self) -> Option<&'r mut ResponseStreamJSSink<SSL_ENABLED, HTTP3>> {
+        // SAFETY: see fn doc — heap JSSink owned by this ctx, sole live
+        // mutable view, single-threaded.
+        self.sink.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     /// Take the pooled request-body slot out of `self` and release the
     /// intrusive ref this context held on it (returns it to the hive when
     /// last). Mirrors the Zig `body.unref()` on `deinit` / final body chunk.
@@ -1309,10 +1328,8 @@ where
         }
 
         // if have sink, call onAborted on sink
-        if let Some(wrapper) = this.sink {
-            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
-            // sole live mutable view in this scope.
-            unsafe { (*wrapper.as_ptr()).sink.abort() };
+        if let Some(wrapper) = this.sink_mut() {
+            wrapper.sink.abort();
             return;
         }
 
@@ -2506,10 +2523,8 @@ where
         stream_log!("handleResolveStream");
 
         let mut wrote_anything = false;
-        if let Some(wrapper_ptr) = req.sink.take() {
-            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
-            // sole live mutable view in this scope.
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+        if let Some(wrapper) = req.sink_mut() {
+            let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
@@ -2578,10 +2593,8 @@ where
     pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
-        if let Some(wrapper_ptr) = req.sink.take() {
-            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
-            // sole live mutable view in this scope.
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+        if let Some(wrapper) = req.sink_mut() {
+            let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before

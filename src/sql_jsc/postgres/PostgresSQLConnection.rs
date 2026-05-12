@@ -12,7 +12,8 @@ use crate::jsc::{
 };
 use bun_uws as uws;
 use bun_io::KeepAlive;
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, ParentRef};
+use core::ptr::NonNull;
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
 use crate::jsc::EventLoopTimer;
@@ -259,6 +260,19 @@ impl PostgresSQLConnection {
         unsafe { &mut *self.vm.as_ptr() }
     }
 
+    /// `&mut EventLoop` for `enter`/`exit`/`run_callback`. One audited unsafe
+    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
+    /// the loop is a disjoint heap allocation owned by the JS-thread VM
+    /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
+    /// `&mut EventLoop` ever coexist.
+    #[inline]
+    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
+        // the event loop it owns lives for the VM's lifetime. Single-JS-thread
+        // invariant ⇒ callers never hold two `&mut EventLoop` at once.
+        self.vm_mut().event_loop_mut()
+    }
+
     /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
     /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
@@ -342,10 +356,11 @@ impl PostgresSQLConnection {
 
 impl HasAutoFlush for PostgresSQLConnection {
     fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` is the live `PostgresSQLConnection` registered with
-        // the deferred-task queue; the queue runs on the JS thread. R-2: deref
-        // as shared (`&*const`) — body takes `&self`.
-        let this = unsafe { &*this.cast_const() };
+        // `this` is the live `PostgresSQLConnection` registered with the
+        // deferred-task queue (via `register_auto_flusher`, which passes
+        // `self.as_ctx_ptr()` — never null); the queue runs on the JS thread.
+        // R-2: `ParentRef` yields `&T` only — body takes `&self`.
+        let this = ParentRef::from(NonNull::new(this).expect("auto-flush ctx non-null"));
         this.on_auto_flush_impl()
     }
 }
@@ -736,7 +751,7 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = unsafe { self.vm().event_loop_mut() };
+            let event_loop = self.event_loop();
             event_loop.enter();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
@@ -791,7 +806,7 @@ impl PostgresSQLConnection {
             self.clean_up_requests(None);
             self.update_has_pending_activity();
         } else {
-            let event_loop = unsafe { self.vm().event_loop_mut() };
+            let event_loop = self.event_loop();
             event_loop.enter();
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
 
@@ -915,7 +930,7 @@ impl PostgresSQLConnection {
             return self.close();
         }
 
-        let event_loop = unsafe { self.vm().event_loop_mut() };
+        let event_loop = self.event_loop();
         event_loop.enter();
 
         self.flush_data();
@@ -936,7 +951,7 @@ impl PostgresSQLConnection {
         self.disable_connection_timeout();
         // PORT NOTE: Zig `defer { ... }` block expanded after the body below.
 
-        let event_loop = unsafe { self.vm().event_loop_mut() };
+        let event_loop = self.event_loop();
         event_loop.enter();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes
@@ -1483,10 +1498,11 @@ impl PostgresSQLConnection {
         // bracket for the duration of this loop, so re-entry never frees `*self`.
         while self.requests.get().readable_length() > 0 {
             let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
-            // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
-            // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-            // Raw `*mut` retained for `PostgresSQLQuery::deref(request_ptr)` below.
-            let request = unsafe { &*request_ptr };
+            // Queue invariant: every stored pointer is non-null and live
+            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
+            // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
+            // retained for `PostgresSQLQuery::deref(request_ptr)` below.
+            let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
@@ -1514,7 +1530,7 @@ impl PostgresSQLConnection {
                 QueryStatus::Binding
                 | QueryStatus::Running
                 | QueryStatus::PartialResponse => {
-                    self.finish_request(request);
+                    self.finish_request(&request);
                     if !self.vm().is_shutting_down() {
                         let global = self.global();
                         if let Some(reason) = js_reason {
@@ -1781,9 +1797,10 @@ impl PostgresSQLConnection {
             ($self:ident) => {{
                 while $self.requests.get().readable_length() > 0 {
                     let result_ptr = $self.requests.get().peek_item(0);
-                    // SAFETY: result is a valid *mut PostgresSQLQuery owned by the queue.
-                    // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                    let result = unsafe { &*result_ptr };
+                    // Queue invariant: every stored pointer is non-null and
+                    // live (refcount ≥ 1 held by the queue). R-2: `ParentRef`
+                    // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+                    let result = ParentRef::from(NonNull::new(result_ptr).expect("queue item non-null"));
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
                     match result.status.get() {
@@ -1811,9 +1828,10 @@ impl PostgresSQLConnection {
             }
 
             let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
-            // SAFETY: req is a valid *mut PostgresSQLQuery owned by the queue.
-            // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-            let req = unsafe { &*req_ptr };
+            // Queue invariant: every stored pointer is non-null and live
+            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
+            // only — `PostgresSQLQuery` is Cell/JsCell-backed.
+            let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
             match req.status.get() {
                 QueryStatus::Pending => {
                     if req.flags.get().simple {

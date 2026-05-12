@@ -243,6 +243,22 @@ pub struct InstallCtx<'a> {
     pub installer: *mut Installer<'a>,
 }
 
+impl<'a> InstallCtx<'a> {
+    /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
+    /// pointer so call sites in `on_process_exit` are safe.
+    ///
+    /// SAFETY (encapsulated): `installer` is non-null and outlives every
+    /// `LifecycleScriptSubprocess` (the `Installer` owns the script-spawn
+    /// loop). Exit-handler callbacks run single-threaded on the main install
+    /// loop, so no other `&`/`&mut Installer` overlaps the returned borrow.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn installer_mut(&self) -> &mut Installer<'a> {
+        // SAFETY: see fn doc.
+        unsafe { &mut *self.installer }
+    }
+}
+
 // PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
 // fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
 // `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
@@ -828,15 +844,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if exit.code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
-                            // SAFETY: `installer` outlives every subprocess and is
-                            // single-threaded across the lifecycle-script callbacks.
-                            unsafe {
-                                (*ctx.installer).store.entries.items_step()
-                                    [ctx.entry_id.get() as usize]
-                                    .store(Step::Done as u32, Ordering::Release);
-                                (*ctx.installer)
-                                    .on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                            }
+                            let installer = ctx.installer_mut();
+                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
+                                .store(Step::Done as u32, Ordering::Release);
+                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
                         }
                         self.decrement_pending_script_tasks();
                         self.deinit_and_delete_package();
@@ -893,14 +904,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            // SAFETY: see above (`installer` outlives every subprocess).
-                            unsafe {
-                                let previous_step = (*ctx.installer).store.entries.items_step()
-                                    [ctx.entry_id.get() as usize]
-                                    .swap(Step::Binaries as u32, Ordering::Release);
-                                debug_assert!(previous_step == Step::RunPreinstall as u32);
-                                (*ctx.installer).start_task(ctx.entry_id);
-                            }
+                            let installer = ctx.installer_mut();
+                            let previous_step = installer.store.entries.items_step()
+                                [ctx.entry_id.get() as usize]
+                                .swap(Step::Binaries as u32, Ordering::Release);
+                            debug_assert!(previous_step == Step::RunPreinstall as u32);
+                            installer.start_task(ctx.entry_id);
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
@@ -946,21 +955,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if let Some(ctx) = &self.ctx {
-                    // SAFETY: see above (`installer` outlives every subprocess).
-                    unsafe {
-                        let previous_step = (*ctx.installer).store.entries.items_step()
-                            [ctx.entry_id.get() as usize]
-                            .swap(Step::Done as u32, Ordering::Release);
-                        if bun_core::Environment::CI_ASSERT {
-                            debug_assert!(self.current_script_index != 0);
-                            debug_assert!(
-                                previous_step == Step::RunPostInstallAndPrePostPrepare as u32
-                            );
-                        }
-                        let _ = previous_step;
-                        (*ctx.installer)
-                            .on_task_complete(ctx.entry_id, CompleteState::Success);
+                    let installer = ctx.installer_mut();
+                    let previous_step = installer.store.entries.items_step()
+                        [ctx.entry_id.get() as usize]
+                        .swap(Step::Done as u32, Ordering::Release);
+                    if bun_core::Environment::CI_ASSERT {
+                        debug_assert!(self.current_script_index != 0);
+                        debug_assert!(
+                            previous_step == Step::RunPostInstallAndPrePostPrepare as u32
+                        );
                     }
+                    let _ = previous_step;
+                    installer.on_task_complete(ctx.entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
@@ -992,14 +998,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Err(err) => {
                 if self.optional {
                     if let Some(ctx) = &self.ctx {
-                        // SAFETY: see above (`installer` outlives every subprocess).
-                        unsafe {
-                            (*ctx.installer).store.entries.items_step()
-                                [ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            (*ctx.installer)
-                                .on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
+                        let installer = ctx.installer_mut();
+                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
+                            .store(Step::Done as u32, Ordering::Release);
+                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
                     }
                     self.decrement_pending_script_tasks();
                     self.deinit_and_delete_package();

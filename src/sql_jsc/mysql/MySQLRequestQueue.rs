@@ -1,5 +1,7 @@
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
+use core::ptr::NonNull;
 use crate::jsc::JSValue;
 
 use crate::mysql::js_mysql_query::JSMySQLQuery;
@@ -234,10 +236,11 @@ impl MySQLRequestQueue {
         // SAFETY: caller contract; fresh short-lived `(*this)` borrow per access.
         while unsafe { (*this).requests.readable_length() } > 0 {
             let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(0) };
-            // SAFETY: queue holds a ref on every request; pointer is live.
-            // Separate heap allocation — never aliases `*this`. R-2: shared
-            // deref — every method body is `&self` (interior mutability).
-            let req = unsafe { &*request };
+            // Queue holds a ref on every request (taken in `add()`), so the
+            // pointer is non-null and live. Separate heap allocation — never
+            // aliases `*this`. R-2: `ParentRef` yields `&T` only; every method
+            // body reached below is `&self` (interior mutability).
+            let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
             // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             if req.is_completed() {
@@ -267,9 +270,10 @@ impl MySQLRequestQueue {
 
     pub fn add(&mut self, request: *mut JSMySQLQuery) {
         debug!("add");
-        // SAFETY: caller passes a live JSMySQLQuery; we ref() it before storing.
-        // R-2: shared deref — every method body is `&self` (interior mutability).
-        let req = unsafe { &*request };
+        // Caller passes a live JSMySQLQuery; we ref() it before storing.
+        // R-2: `ParentRef` yields `&T` only — every method body reached below
+        // is `&self` (interior mutability).
+        let req = ParentRef::from(NonNull::new(request).expect("add: request non-null"));
         if req.is_being_prepared() {
             self.is_ready_for_query = false;
             self.waiting_to_prepare = true;
@@ -323,9 +327,10 @@ impl MySQLRequestQueue {
         // `requests` drops at scope exit (Zig: defer requests.deinit()).
 
         while let Some(request) = requests.read_item() {
-            // SAFETY: queue held a ref on every request; pointer is live until deref().
-            // R-2: shared deref — every method body is `&self`.
-            let req = unsafe { &*request };
+            // Queue held a ref on every request; pointer is non-null and live
+            // until `deref()`. R-2: `ParentRef` yields `&T` only — every method
+            // body reached below is `&self`.
+            let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
             // Zig: defer request.deref() — moved to end of loop body; no early
             // exits between here and there.
             if !req.is_completed() {
@@ -347,9 +352,9 @@ impl Drop for MySQLRequestQueue {
         // discard(1)'ing, which in Rust would overlap & / &mut borrows on
         // self.requests. read_item() peeks+discards in one &mut call.
         while let Some(request) = self.requests.read_item() {
-            // SAFETY: queue held a ref on every request; pointer is live until deref().
-            // R-2: shared deref — every method body is `&self`.
-            let req = unsafe { &*request };
+            // Queue held a ref on every request; pointer is non-null and live
+            // until `deref()`. R-2: `ParentRef` yields `&T` only.
+            let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
             // We cannot touch JS here
             req.mark_as_failed();
             // SAFETY: queue held one ref; pointer is live until this deref.

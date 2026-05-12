@@ -29,6 +29,7 @@ use bun_jsc::{
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::BackRef;
 use bun_str::{ZigString, ZigStringSlice};
 use bun_ast as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
@@ -102,15 +103,17 @@ bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 // either.
 #[bun_jsc::JsClass]
 pub struct FileSystemRouter {
-    pub origin: Option<*mut RefString>,
-    pub base_dir: Option<*mut RefString>,
+    // BACKREF — interned `RefString`s live in the VM cache and outlive this
+    // router (we hold +1 via `claim` in `constructor`, released in `finalize`).
+    pub origin: Option<BackRef<RefString>>,
+    pub base_dir: Option<BackRef<RefString>>,
     // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: JsCell<Router::Router<'static>>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
     pub arena: JsCell<Box<ArenaAllocator>>,
     // PORT NOTE: dropped `std.mem.Allocator param` field — it was always `arena.arena()`.
-    pub asset_prefix: Option<*mut RefString>,
+    pub asset_prefix: Option<BackRef<RefString>>,
 }
 
 impl FileSystemRouter {
@@ -327,10 +330,12 @@ impl FileSystemRouter {
         // sharing one interned RefString → N finalizers deref a single +1 → UAF on the
         // second deref. Claim an explicit +1 here so each `FileSystemRouter` owns its
         // hold; `finalize` releases it. (Mirrors Zig's `fs_router.base_dir.?.ref()`.)
-        let claim = |p: *mut RefString| -> *mut RefString {
-            // SAFETY: `ref_counted_string` returns a live interned `*mut RefString`.
-            unsafe { (*p).ref_() };
-            p
+        let claim = |p: *mut RefString| -> BackRef<RefString> {
+            // `ref_counted_string` returns a live interned `*mut RefString`; wrap as
+            // `BackRef` (owner-outlives-holder: VM intern cache + our +1).
+            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
+            r.ref_();
+            r
         };
         let fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
@@ -351,9 +356,9 @@ impl FileSystemRouter {
         // PORT NOTE: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
         // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
         // `Box<[u8]>`, so copy the bytes; the `claim` above already took our +1.
-        // SAFETY: `base_dir` was just set to Some above.
-        let base_dir_bytes = unsafe { (*fs_router.base_dir.unwrap()).leak() };
-        fs_router.router.with_mut(|r| r.config.dir = Box::from(base_dir_bytes));
+        // `base_dir` was just set to Some above.
+        let base_dir = fs_router.base_dir.unwrap();
+        fs_router.router.with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
 
         Ok(fs_router)
     }
@@ -635,9 +640,8 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(origin) = this.origin {
-            // SAFETY: `origin` is a live `*mut RefString` (set in constructor, freed in finalize).
-            return Ok(zs_to_js(unsafe { (*origin).leak() }, global_this));
+        if let Some(ref origin) = this.origin {
+            return Ok(zs_to_js(origin.leak(), global_this));
         }
 
         Ok(JSValue::NULL)
@@ -670,27 +674,24 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(asset_prefix) = this.asset_prefix {
-            // SAFETY: `asset_prefix` is a live `*mut RefString`.
-            return Ok(zs_to_js(unsafe { (*asset_prefix).leak() }, global_this));
+        if let Some(ref asset_prefix) = this.asset_prefix {
+            return Ok(zs_to_js(asset_prefix.leak(), global_this));
         }
 
         Ok(JSValue::NULL)
     }
 
     pub fn finalize(mut self: Box<Self>) {
-        // PORT NOTE: RefString deref()s — Zig `?.deref()` on each.
+        // PORT NOTE: RefString deref()s — Zig `?.deref()` on each. `BackRef` Derefs
+        // to `&RefString`; use `.get()` to avoid resolving to `<BackRef as Deref>::deref`.
         if let Some(p) = self.asset_prefix.take() {
-            // SAFETY: `p` is live until this deref.
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
         if let Some(p) = self.origin.take() {
-            // SAFETY: `p` is live until this deref.
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
         if let Some(p) = self.base_dir.take() {
-            // SAFETY: `p` is live until this deref.
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
     }
 }
@@ -717,10 +718,12 @@ pub struct MatchedRoute {
     /// `params_list_holder` borrow. Replaces the Zig leak-then-`mi_free(pathname.ptr)`
     /// pattern with proper ownership; freed by Drop on finalize.
     pub pathname_backing: ZigStringSlice,
-    pub origin: Option<*mut RefString>,
-    pub asset_prefix: Option<*mut RefString>,
+    // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
+    // `deinit`). The interned allocation outlives every `MatchedRoute`.
+    pub origin: Option<BackRef<RefString>>,
+    pub asset_prefix: Option<BackRef<RefString>>,
     pub needs_deinit: bool,
-    pub base_dir: Option<*mut RefString>,
+    pub base_dir: Option<BackRef<RefString>>,
 }
 
 impl MatchedRoute {
@@ -750,9 +753,9 @@ impl MatchedRoute {
     pub fn init(
         match_: RouterMatch<'_>,
         pathname_backing: ZigStringSlice,
-        origin: Option<*mut RefString>,
-        asset_prefix: Option<*mut RefString>,
-        base_dir: *mut RefString,
+        origin: Option<BackRef<RefString>>,
+        asset_prefix: Option<BackRef<RefString>>,
+        base_dir: BackRef<RefString>,
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
         // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
         // live for this call. Clone its contents into our own holder before re-pointing.
@@ -795,13 +798,13 @@ impl MatchedRoute {
             needs_deinit: true,
         });
         // PORT NOTE: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
-        // SAFETY: each pointer is a live `*mut RefString` (caller-provided).
-        unsafe { (*base_dir).ref_() };
+        // Each is a live interned `RefString` (caller-provided BackRef).
+        base_dir.ref_();
         if let Some(o) = origin {
-            unsafe { (*o).ref_() };
+            o.ref_();
         }
         if let Some(p) = asset_prefix {
-            unsafe { (*p).ref_() };
+            p.ref_();
         }
         // Self-referential wiring: `route` → `route_holder`; `route_holder.params` →
         // `params_list_holder`. Both targets are `UnsafeCell` so the raw pointers stay
@@ -830,13 +833,13 @@ impl MatchedRoute {
         }
 
         if let Some(p) = this_ref.origin.take() {
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
         if let Some(p) = this_ref.asset_prefix.take() {
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
         if let Some(p) = this_ref.base_dir.take() {
-            unsafe { (*p).deref() };
+            p.get().deref();
         }
 
         // SAFETY: `this` was heap-allocated by codegen at construction.
@@ -952,24 +955,21 @@ impl MatchedRoute {
         // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
         // into a `String` (path components are UTF-8 in practice).
         let mut writer = String::with_capacity(MAX_PATH_BYTES);
-        let origin_url = if let Some(origin) = this.origin {
-            // SAFETY: `origin` is a live `*mut RefString`.
-            URL::parse(unsafe { (*origin).leak() })
+        let origin_url = if let Some(ref origin) = this.origin {
+            URL::parse(origin.leak())
         } else {
             URL::default()
         };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,
-            if let Some(base_dir) = this.base_dir {
-                // SAFETY: `base_dir` is a live `*mut RefString`.
-                unsafe { (*base_dir).leak() }
+            if let Some(ref base_dir) = this.base_dir {
+                base_dir.leak()
             } else {
                 Fs::FileSystem::get().top_level_dir
             },
             &origin_url,
-            if let Some(prefix) = this.asset_prefix {
-                // SAFETY: `prefix` is a live `*mut RefString`.
-                unsafe { (*prefix).leak() }
+            if let Some(ref prefix) = this.asset_prefix {
+                prefix.leak()
             } else {
                 b""
             },

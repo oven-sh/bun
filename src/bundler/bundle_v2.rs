@@ -6249,7 +6249,11 @@ pub enum ImportTrackerStatus {
 pub struct ImportTrackerIterator {
     pub status: ImportTrackerStatus,
     pub value: crate::ImportTracker,
-    pub import_data: *const [crate::ImportData],
+    /// Backref into the link-graph SoA (`graph.meta[..].resolved_exports[..].
+    /// potentially_ambiguous_export_star_refs`). `BackRef` (not `*const [T]`)
+    /// so the single read site in `match_import_with_export` is a safe `Deref`;
+    /// the pointee slab is never reallocated while the iterator is live.
+    pub import_data: bun_ptr::BackRef<[crate::ImportData]>,
 }
 
 impl Default for ImportTrackerIterator {
@@ -6257,7 +6261,7 @@ impl Default for ImportTrackerIterator {
         Self {
             status: ImportTrackerStatus::default(),
             value: crate::ImportTracker::default(),
-            import_data: std::ptr::from_ref::<[crate::ImportData]>(&[]),
+            import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
         }
     }
 }

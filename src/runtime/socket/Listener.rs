@@ -153,7 +153,7 @@ impl Listener {
 
         if args.len < 1
             || (matches!(this.listener.get(), ListenerType::None)
-                && this.handlers.get().active_connections == 0)
+                && this.handlers.get().active_connections.get() == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
@@ -175,9 +175,9 @@ impl Listener {
         // counter (panic in safe builds, wrap in release).
         // PORT NOTE: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
         this.handlers.with_mut(|h| {
-            let active_connections = h.active_connections;
+            let active_connections = h.active_connections.get();
             *h = handlers;
-            h.active_connections = active_connections;
+            h.active_connections.set(active_connections);
         });
 
         Ok(JSValue::UNDEFINED)
@@ -731,7 +731,7 @@ impl Listener {
 
         // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
 
-        if this.handlers.get().active_connections == 0 {
+        if this.handlers.get().active_connections.get() == 0 {
             this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
             this.strong_self.with_mut(|s| s.clear_without_deallocation());
             this.strong_data.with_mut(|s| s.clear_without_deallocation());
@@ -804,7 +804,7 @@ impl Listener {
         // Any still-open accepted sockets hold a `&listener.handlers` pointer, so
         // we cannot free `this` while they're alive. Force-close them; their
         // onClose paths will markInactive against handlers we drop right after.
-        if this_ref.handlers.get().active_connections > 0 {
+        if this_ref.handlers.get().active_connections.get() > 0 {
             this_ref.group.with_mut(|g| g.close_all());
         }
         bun_core::asan::unregister_root_region(
@@ -826,7 +826,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.get().active_connections as f64)
+        JSValue::js_number(this.handlers.get().active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -893,7 +893,7 @@ impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(vm_event_loop_ctx()));
-        if this.handlers.get().active_connections == 0 {
+        if this.handlers.get().active_connections.get() == 0 {
             this.strong_self.with_mut(|s| s.clear_without_deallocation());
         }
         Ok(JSValue::UNDEFINED)
@@ -1041,7 +1041,7 @@ impl Listener {
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
                 // SAFETY: handlers_ptr was just heap-allocated; exclusive access.
-                unsafe { (*handlers_ptr).promise.set(global, promise_value) };
+                unsafe { &*handlers_ptr }.promise.with_mut(|p| p.set(global, promise_value));
 
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
@@ -1239,7 +1239,7 @@ impl Listener {
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
         // SAFETY: handlers_ptr was just heap-allocated above; exclusive access
-        unsafe { (*handlers_ptr).promise.set(global, promise_value) };
+        unsafe { &*handlers_ptr }.promise.with_mut(|p| p.set(global, promise_value));
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
         let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);

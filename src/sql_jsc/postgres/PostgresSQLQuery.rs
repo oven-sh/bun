@@ -160,6 +160,17 @@ impl PostgresSQLQuery {
         (self as *const Self).cast_mut()
     }
 
+    /// RAII `ref()`/`deref()` bracket around `self`. One audited
+    /// `ScopedRef::new` here replaces N per-site
+    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
+    /// `heap::alloc` payload (held by the connection's request FIFO), so the
+    /// [`ScopedRef::new`] precondition (live, non-null) is always satisfied.
+    #[inline]
+    pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+        // SAFETY: `&self` ⇒ the allocation is live and non-null.
+        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    }
+
     /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
     /// [`MySQLQuery::get_statement`]: one unchecked deref here replaces N inline
     /// raw-pointer derefs at every protocol dispatch site in
@@ -209,10 +220,7 @@ impl PostgresSQLQuery {
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
         // `*self` mid-body.
-        // SAFETY: `self` is a live `heap::alloc` payload (held by the
-        // connection's request FIFO); `ScopedRef` only ref/deref's the
-        // intrusive `Cell<u32>`.
-        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _deref = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else { return };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
@@ -232,8 +240,7 @@ impl PostgresSQLQuery {
 
     pub fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
-        // SAFETY: see `on_write_fail`.
-        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _deref = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else { return };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
@@ -273,8 +280,7 @@ impl PostgresSQLQuery {
 
     pub fn on_result(&self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
-        // SAFETY: see `on_write_fail`.
-        let _deref = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _deref = self.ref_guard();
         self.status.set(if is_last { Status::Success } else { Status::PartialResponse });
         let tag = CommandTag::init(command_tag_str);
         let js_tag: JSValue = match tag.to_js_tag(global_object) {

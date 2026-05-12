@@ -317,9 +317,10 @@ impl JSPromise {
         where
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
-            // SAFETY: `this` is `&mut Wrapper<F>` passed below; `g` is a live JSGlobalObject.
+            // SAFETY: `this` is `&mut Wrapper<F>` passed below.
             let this = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
-            let g = unsafe { &*g };
+            // `g` is a live JSGlobalObject; safe ZST-handle deref (panics on null).
+            let g = JSGlobalObject::opaque_ref(g);
             let f = this.f.take().unwrap();
             // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to
             // `Location::caller()` (resolves to this trampoline's call site).

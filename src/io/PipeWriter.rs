@@ -1324,19 +1324,22 @@ pub trait BaseWindowsPipeWriter {
 
 #[cfg(windows)]
 extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
-    // SAFETY: handle.data was set to the boxed Pipe ptr in close().
-    let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
-    drop(unsafe { bun_core::heap::take(this) });
+    // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
+    // libuv passes the same pointer back, so `handle` *is* the boxed Pipe ptr
+    // — no need to round-trip through `.data`.
+    // SAFETY: `handle` is the Box<Pipe> leaked via into_raw in close().
+    drop(unsafe { bun_core::heap::take(handle) });
 }
 
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-    // SAFETY: handle.data was set to the tty ptr in close().
-    let this = unsafe { (*handle).data.cast::<uv::uv_tty_t>() };
+    // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
+    // libuv passes the same pointer back, so `handle` *is* the tty ptr.
     // The stdin tty (fd 0) lives in static storage; never free it. Mirrors
     // Zig PipeWriter onTtyClose's `is_stdin_tty()` gate.
-    if !crate::source::stdin_tty::is_stdin_tty(this) {
-        drop(unsafe { bun_core::heap::take(this) });
+    if !crate::source::stdin_tty::is_stdin_tty(handle) {
+        // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
+        drop(unsafe { bun_core::heap::take(handle) });
     }
 }
 

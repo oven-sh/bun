@@ -1236,9 +1236,9 @@ impl FlushPendingTask {
     pub fn run_from_js_thread(flush_pending: *mut FlushPendingTask) {
         // SAFETY: `flush_pending` points to `FileSink.run_pending_later` of a
         // live FileSink (the task was enqueued from `run_pending_later()` which
-        // took a ref on the parent).
-        let had = unsafe { (*flush_pending).has.get() };
-        unsafe { (*flush_pending).has.set(false) };
+        // took a ref on the parent). `Cell::replace` reads-then-clears in one
+        // step so only a single raw deref is needed.
+        let had = unsafe { (*flush_pending).has.replace(false) };
         // SAFETY: `flush_pending` is the `run_pending_later` field of a `FileSink`.
         let this: *mut FileSink = unsafe {
             bun_core::from_field_ptr!(FileSink, run_pending_later, flush_pending)

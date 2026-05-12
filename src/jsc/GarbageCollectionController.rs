@@ -232,6 +232,7 @@ impl GarbageCollectionController {
         }
     }
 
+    #[inline]
     pub fn process_gc_timer(&mut self) {
         if self.disabled {
             return;

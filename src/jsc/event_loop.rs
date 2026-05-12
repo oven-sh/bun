@@ -383,9 +383,17 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         jsc_vm: *mut jsc::VM,
     ) -> Result<(), JsTerminated> {
+        // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
+        // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
+        // `deferred_tasks.run`), so each `self.vm_ref()` re-loaded
+        // `self.virtual_machine` from memory (5× per call, ~2×/request).
+        // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
+        // owning per-thread singleton; non-null and outlives `self`.
+        let vm = unsafe { self.virtual_machine.unwrap_unchecked().as_ref() };
+
         // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
         // Draining microtasks would execute user JavaScript, which must not happen.
-        if self.vm_ref().suppress_microtask_drain.get() {
+        if vm.suppress_microtask_drain.get() {
             return Ok(());
         }
 
@@ -400,16 +408,16 @@ impl EventLoop {
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        self.vm_ref().is_inside_deferred_task_queue.set(true);
+        vm.is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
-        self.vm_ref().is_inside_deferred_task_queue.set(false);
+        vm.is_inside_deferred_task_queue.set(false);
 
         // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
         // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
         // On Windows `uwsLoop()` returns `uws.Loop.get()` (NOT `event_loop_handle`,
         // which is the libuv loop). Mirror that here.
-        if self.vm_ref().event_loop_handle.is_some() {
-            self.vm_ref().uws_loop_mut().drain_quic_if_necessary();
+        if vm.event_loop_handle.is_some() {
+            vm.uws_loop_mut().drain_quic_if_necessary();
         }
 
         #[cfg(debug_assertions)]
@@ -423,9 +431,10 @@ impl EventLoop {
 
     #[inline(always)]
     pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
-        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
-        // global borrow detaches from `&self` and survives the `&mut self` call.
-        let global = self.vm_ref().global();
+        // Zig spec (event_loop.zig:153) reads `this.global` directly — match
+        // it via `global_ref()` instead of round-tripping through
+        // `virtual_machine` (saves a dependent load on the hot path).
+        let global = self.global_ref();
         let jsc_vm = self.vm_ref().jsc_vm;
         self.drain_microtasks_with_global(global, jsc_vm)
     }
@@ -657,6 +666,7 @@ impl EventLoop {
         }
     }
 
+    #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
     }
@@ -959,10 +969,10 @@ impl EventLoop {
     /// lifetime. Prefer this over `unsafe { &*self.vm() }` for read-only field
     /// access; whole-struct mutation goes through [`VirtualMachine::as_mut`].
     ///
-    /// Called 5× in `drain_microtasks_with_global` alone; node:http perf shows
-    /// the `Option::unwrap` (vs Zig's bare `vm.*` field load) is one of ~200
-    /// diffuse ~15-insn idiom-tax sites contributing the residual +3.3k
-    /// insn/req. Force-inline so the unwrap collapses to one load+test.
+    /// node:http perf showed the `Option::unwrap` (vs Zig's bare `vm.*` field
+    /// load) was one of ~200 diffuse ~15-insn idiom-tax sites contributing the
+    /// residual +3.3k insn/req. Force-inline so the unwrap collapses to one
+    /// load+test; hot loops that straddle FFI calls hoist it to a local.
     #[inline(always)]
     fn vm_ref(&self) -> &'static VirtualMachine {
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
@@ -970,12 +980,17 @@ impl EventLoop {
         unsafe { self.virtual_machine.unwrap_unchecked().as_ref() }
     }
     #[inline(always)]
-    pub fn global_ref(&self) -> &JSGlobalObject {
-        // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so go
-        // through the existing safe `vm_ref().global()` accessor instead of a
-        // second `unsafe { NonNull::as_ref }`.
-        self.vm_ref().global()
+    pub fn global_ref(&self) -> &'static JSGlobalObject {
+        // Zig spec reads `this.global` (direct EventLoop field). `self.global`
+        // is always assigned `vm.global` at every write site
+        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so
+        // read it directly instead of the vm→global dependent-load chain.
+        // `'static` so callers can hold it across `&mut self` (see
+        // `drain_microtasks`), matching `vm_ref()`.
+        // SAFETY: set alongside `virtual_machine` in `VirtualMachine::init()`
+        // before any microtask runs; the JSGlobalObject is GC-rooted and
+        // outlives the EventLoop.
+        unsafe { self.global.unwrap_unchecked().as_ref() }
     }
 }
 

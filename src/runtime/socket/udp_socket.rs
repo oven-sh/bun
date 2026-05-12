@@ -54,9 +54,7 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
         // rc == 0 → fall through to `sys.getErrno(rc)` in Zig, which on
         // Windows reads CRT `_errno()`. Zig then matches `.SUCCESS => null`,
         // so a zero errno must still yield `None`.
-        // SAFETY: `errno_location()` (`_errno()` on Windows) returns a valid
-        // pointer to thread-local errno.
-        let errno_val = unsafe { *bun_sys::c::errno_location() };
+        let errno_val = bun_sys::last_errno();
         if errno_val == 0 {
             return None;
         }
@@ -1633,16 +1631,16 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
             // → `E` for us, so `e` is `bun_sys::E` here.
             if let Some(e) = bun_sys::windows::WSAGetLastError() {
                 if e != bun_sys::E::SUCCESS {
-                    // SAFETY: WSASetLastError is a thread-local errno write.
-                    unsafe { bun_sys::windows::ws2_32::WSASetLastError(0) };
+                    // `WSASetLastError` is declared `safe fn` in
+                    // `bun_windows_sys::ws2_32` (thread-local Winsock error
+                    // slot write — no preconditions).
+                    bun_sys::windows::ws2_32::WSASetLastError(0);
                     return Some(bun_sys::Error::from_code(e, tag));
                 }
             }
         }
 
-        // SAFETY: `errno_location()` (`_errno()` on Windows) returns a valid
-        // pointer to thread-local errno.
-        let errno_val = unsafe { *bun_sys::c::errno_location() };
+        let errno_val = bun_sys::last_errno();
         return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]

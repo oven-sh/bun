@@ -328,6 +328,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unsafe { &mut (*self.owner()).bundling_failures }
     }
 
+    /// Safe sibling-projection: borrow the owning [`DevServer`]'s `dump_dir`
+    /// while holding `&mut self` (same disjoint-field rationale as
+    /// [`dev_incremental_result`](Self::dev_incremental_result)).
+    #[cfg(feature = "bake_debugging_features")]
+    #[inline]
+    fn dev_dump_dir(&mut self) -> Option<&mut bun_sys::Dir> {
+        // SAFETY: `owner()` recovers the heap-allocated `DevServer`; `dump_dir`
+        // is field-disjoint from both `client_graph` and `server_graph`, so the
+        // returned borrow and `&mut self` cover non-overlapping memory.
+        unsafe { (*self.owner()).dump_dir.as_mut() }
+    }
+
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
     #[inline]
     pub fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
@@ -1714,8 +1726,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         list.extend_from_slice(&end_list);
 
         #[cfg(feature = "bake_debugging_features")]
-        // SAFETY: sibling-field access via `owner()`; `dump_dir` is disjoint.
-        if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_mut() } {
+        if let Some(dump_dir) = self.dev_dump_dir() {
             let rel_path_escaped: &[u8] = match kind {
                 ChunkKind::InitialResponse => b"latest_chunk.js",
                 ChunkKind::HmrChunk => b"latest_hmr.js",
@@ -1760,8 +1771,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         list.extend_from_slice(end);
 
         #[cfg(feature = "bake_debugging_features")]
-        // SAFETY: sibling-field access via `owner()`; `dump_dir` is disjoint.
-        if let Some(dump_dir) = unsafe { (*self.owner()).dump_dir.as_mut() } {
+        if let Some(dump_dir) = self.dev_dump_dir() {
             let rel_path_escaped: &[u8] = match options.kind {
                 ChunkKind::InitialResponse => b"latest_chunk.js",
                 ChunkKind::HmrChunk => b"latest_hmr.js",

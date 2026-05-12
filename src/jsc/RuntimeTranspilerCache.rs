@@ -439,13 +439,11 @@ impl Entry {
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
-                    let mut utf8 =
-                        vec![0u8; self.metadata.output_byte_length as usize].into_boxed_slice();
-                    let read_bytes =
-                        file.pread_all(&mut utf8, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
-                    }
+                    let utf8 = pread_box(
+                        file,
+                        self.metadata.output_byte_length as usize,
+                        self.metadata.output_byte_offset,
+                    )?;
                     OutputCode::Utf8(utf8)
                 }
                 Encoding::LATIN1 => {
@@ -517,25 +515,19 @@ impl Entry {
             scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
-            let mut sourcemap =
-                vec![0u8; self.metadata.sourcemap_byte_length as usize].into_boxed_slice();
-            let read_bytes =
-                file.pread_all(&mut sourcemap, self.metadata.sourcemap_byte_offset)?;
-            if read_bytes as u64 != self.metadata.sourcemap_byte_length {
-                return Err(bun_core::err!(MissingData));
-            }
-
-            self.sourcemap = sourcemap;
+            self.sourcemap = pread_box(
+                file,
+                self.metadata.sourcemap_byte_length as usize,
+                self.metadata.sourcemap_byte_offset,
+            )?;
         }
 
         if self.metadata.esm_record_byte_length > 0 {
-            let mut esm_record =
-                vec![0u8; self.metadata.esm_record_byte_length as usize].into_boxed_slice();
-            let read_bytes =
-                file.pread_all(&mut esm_record, self.metadata.esm_record_byte_offset)?;
-            if read_bytes as u64 != self.metadata.esm_record_byte_length {
-                return Err(bun_core::err!(MissingData));
-            }
+            let esm_record = pread_box(
+                file,
+                self.metadata.esm_record_byte_length as usize,
+                self.metadata.esm_record_byte_offset,
+            )?;
 
             if self.metadata.esm_record_hash != 0 {
                 if hash(&esm_record) != self.metadata.esm_record_hash {
@@ -578,6 +570,29 @@ impl Default for RuntimeTranspilerCache {
 
 pub fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+/// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
+/// `MissingData` on a short read.
+///
+/// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
+/// path (lint/create-next benches) skips the redundant zero-memset — the kernel
+/// is about to overwrite every byte anyway.
+fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun_core::Error> {
+    let mut buf = Box::<[u8]>::new_uninit_slice(len);
+    // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
+    // `pread_all` only ever *writes* into the slice (the syscall fills it) —
+    // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
+    // pattern; the slice is not exposed past this point until proven full.
+    let dst: &mut [u8] =
+        unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
+    let read = file.pread_all(dst, offset)?;
+    if read != len {
+        return Err(bun_core::err!(MissingData));
+    }
+    // SAFETY: `pread_all` reported `len` bytes written, so every element is
+    // initialized.
+    Ok(unsafe { buf.assume_init() })
 }
 
 impl RuntimeTranspilerCache {

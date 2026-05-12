@@ -156,7 +156,9 @@ impl Method {
         {
             return Self::macos()[self];
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        // PORT NOTE: Zig `Environment.isLinux` (os.tag == .linux) includes the Android ABI,
+        // whereas Rust's `target_os = "linux"` does not — list `android` explicitly.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             return Self::linux()[self];
         }

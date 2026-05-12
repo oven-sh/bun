@@ -81,12 +81,15 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
 use darwin_impl as imp;
 #[cfg(target_os = "freebsd")]
 use freebsd_impl as imp;
-#[cfg(target_os = "linux")]
+// PORT NOTE: Zig's `builtin.os.tag == .linux` covers Android (Android uses the .linux OS tag with
+// the android ABI). Rust splits these into distinct target_os values, so we must list both.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use linux_impl as imp;
 #[cfg(not(any(
     windows,
     target_vendor = "apple",
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_arch = "wasm32",
 )))]
@@ -292,7 +295,7 @@ mod darwin_impl {
 }
 
 // https://man7.org/linux/man-pages/man2/futex.2.html
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux_impl {
     use super::*;
 

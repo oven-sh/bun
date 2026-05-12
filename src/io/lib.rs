@@ -1687,7 +1687,8 @@ impl Poll {
         self.flags.insert(match flag {
             Flags::PollReadable => Flags::PollReadable,
             Flags::PollProcess => {
-                if cfg!(target_os = "linux") {
+                // PORT NOTE: Zig's `Environment.isLinux` is true on Android too.
+                if cfg!(any(target_os = "linux", target_os = "android")) {
                     Flags::PollReadable
                 } else {
                     Flags::PollProcess

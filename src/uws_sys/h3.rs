@@ -122,8 +122,7 @@ impl Request {
                 thunk::zst::<H>()(ctx, thunk::c_slice(n, nl), thunk::c_slice(v, vl));
             }
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx forwarded opaquely
-        unsafe { c::uws_h3_req_for_each_header(self, each::<Ctx, H>, ctx.cast()) }
+        c::uws_h3_req_for_each_header(self, each::<Ctx, H>, ctx.cast())
     }
 }
 
@@ -262,8 +261,7 @@ impl Response {
                 thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
             }
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast()) }
+        c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
     pub fn clear_on_writable(&mut self) {
         c::uws_h3_res_clear_on_writable(self)
@@ -284,12 +282,10 @@ impl Response {
                 thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast()) }
+        c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
     pub fn clear_aborted(&mut self) {
-        // SAFETY: self is a live FFI handle; None clears the callback
-        unsafe { c::uws_h3_res_on_aborted(self, None, ptr::null_mut()) }
+        c::uws_h3_res_on_aborted(self, None, ptr::null_mut())
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
@@ -307,12 +303,10 @@ impl Response {
                 thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast()) }
+        c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
     pub fn clear_timeout(&mut self) {
-        // SAFETY: self is a live FFI handle; None clears the callback
-        unsafe { c::uws_h3_res_on_timeout(self, None, ptr::null_mut()) }
+        c::uws_h3_res_on_timeout(self, None, ptr::null_mut())
     }
     pub fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
@@ -336,12 +330,10 @@ impl Response {
                 thunk::zst::<H>()(ud, thunk::handle_mut(r), thunk::c_slice(chunk_ptr, len), last);
             }
         }
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast()) }
+        c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast())
     }
     pub fn clear_on_data(&mut self) {
-        // SAFETY: self is a live FFI handle; None clears the callback
-        unsafe { c::uws_h3_res_on_data(self, None, ptr::null_mut()) }
+        c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
     pub fn corked(&mut self, handler: impl FnOnce()) {
         // H3 has no corking; the Zig version just calls the handler immediately.
@@ -362,9 +354,7 @@ impl Response {
             (ctx.0)(ctx.1);
         }
         let mut ctx: Ctx<UD> = (handler, ud);
-        // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx outlives the
-        // synchronous FFI call.
-        unsafe { c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>) }
+        c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
 
@@ -664,29 +654,35 @@ mod c {
         pub safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);
         pub safe fn uws_h3_res_end_sendfile(res: &mut Response, off: u64, close: bool);
         pub safe fn uws_h3_res_get_socket_data(res: &mut Response) -> *mut c_void;
-        pub fn uws_h3_res_on_writable(
-            res: *mut Response,
+        // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
+        // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim
+        // itself) — no preconditions on this call. Mirrors `uws_res_on_*`.
+        pub safe fn uws_h3_res_on_writable(
+            res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, u64, *mut c_void) -> bool>,
             ud: *mut c_void,
         );
         pub safe fn uws_h3_res_clear_on_writable(res: &mut Response);
-        pub fn uws_h3_res_on_aborted(
-            res: *mut Response,
+        pub safe fn uws_h3_res_on_aborted(
+            res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
-        pub fn uws_h3_res_on_timeout(
-            res: *mut Response,
+        pub safe fn uws_h3_res_on_timeout(
+            res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
-        pub fn uws_h3_res_on_data(
-            res: *mut Response,
+        pub safe fn uws_h3_res_on_data(
+            res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *const u8, usize, bool, *mut c_void)>,
             ud: *mut c_void,
         );
-        pub fn uws_h3_res_cork(
-            res: *mut Response,
+        // safe: cork is synchronous — `ud` is passed straight back to `cb`
+        // without being dereferenced by the C++ shim itself, so the call has
+        // no preconditions beyond the live opaque handle.
+        pub safe fn uws_h3_res_cork(
+            res: &mut Response,
             ud: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void),
         );
@@ -719,7 +715,10 @@ mod c {
             out: *mut *const u8,
         ) -> usize;
         pub safe fn uws_h3_req_get_parameter(req: &mut Request, idx: u16, out: &mut *const u8) -> usize;
-        pub fn uws_h3_req_for_each_header(req: *mut Request, cb: HeaderCb, ud: *mut c_void);
+        // safe: synchronous header iteration — `ud` is forwarded opaquely to
+        // `cb` without being dereferenced by the C++ shim itself; `cb` is a
+        // by-value fn pointer. No preconditions beyond the live opaque handle.
+        pub safe fn uws_h3_req_for_each_header(req: &mut Request, cb: HeaderCb, ud: *mut c_void);
     }
 }
 

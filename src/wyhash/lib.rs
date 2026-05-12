@@ -91,7 +91,7 @@ impl WyhashStateless {
         );
     }
 
-    #[inline]
+    #[inline(always)] // Zig: `@call(bun.callmod_inline, c.update, ...)`
     pub(crate) fn update(&mut self, b: &[u8]) {
         debug_assert!(b.len() % 32 == 0);
 
@@ -158,7 +158,13 @@ impl WyhashStateless {
         mum(self.seed ^ (self.msg_len as u64), PRIMES[4])
     }
 
-    #[inline]
+    // perf on build/create-next showed `WyhashStateless::hash` out-lined as a
+    // standalone symbol (91 self-samples) and `call`ed from
+    // `find_symbol_with_record_usage` and every `StringHashMap`/hashbrown probe
+    // — `#[inline]` (hint) was being declined across the bun_wyhash →
+    // bun_js_parser/bun_collections crate boundary. Zig force-inlines the whole
+    // hash into the caller via `@call(bun.callmod_inline, ...)`; match that.
+    #[inline(always)]
     pub(crate) fn hash(seed: u64, input: &[u8]) -> u64 {
         let aligned_len = input.len() - (input.len() % 32);
 
@@ -216,7 +222,7 @@ impl Wyhash11 {
         self.state.final_(rem_key)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         WyhashStateless::hash(seed, input)
     }
@@ -392,16 +398,31 @@ impl Wyhash {
         self.state[2] = Self::mix(a2 ^ Self::SECRET[3], b2 ^ self.state[2]);
     }
 
-    #[inline]
+    // Zig: `inline fn read(comptime T, data) { mem.readInt(T, data[0..@sizeOf(T)], .little) }`
+    // — a single unaligned load. The previous per-byte `[data[0], data[1], ...]`
+    // spelling left a cmp/je-to-panic ladder per byte in the `small_key` disasm
+    // (8 bounds checks for the 4× `read4` at len∈[4,16]). All call sites slice
+    // from a buffer whose length is already proven ≥4/≥8 by the enclosing
+    // branch (`small_key`: `len >= 4`; `round`: `&[u8; 48]`; `final1`:
+    // `i + 16 < len` / `len - 16` / `len - 8`), so match Zig's codegen exactly.
+    #[inline(always)]
     fn read4(data: &[u8]) -> u64 {
-        u64::from(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+        debug_assert!(data.len() >= 4);
+        // SAFETY: every caller passes a slice with ≥4 bytes (see comment above);
+        // `read_unaligned` imposes no alignment requirement.
+        u64::from(u32::from_le(unsafe {
+            core::ptr::read_unaligned(data.as_ptr() as *const u32)
+        }))
     }
 
-    #[inline]
+    #[inline(always)]
     fn read8(data: &[u8]) -> u64 {
-        u64::from_le_bytes([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-        ])
+        debug_assert!(data.len() >= 8);
+        // SAFETY: every caller passes a slice with ≥8 bytes (see comment above);
+        // `read_unaligned` imposes no alignment requirement.
+        u64::from_le(unsafe {
+            core::ptr::read_unaligned(data.as_ptr() as *const u64)
+        })
     }
 
     #[inline]
@@ -457,7 +478,11 @@ impl Wyhash {
         )
     }
 
-    #[inline]
+    // perf on build/create-next showed `Wyhash::hash` out-lined and `call`ed
+    // from every wyhash-backed hashbrown probe; Zig's `std.hash.Wyhash.hash`
+    // inlines fully into its caller. `#[inline]` (hint) is declined across the
+    // crate boundary for this body size — force it.
+    #[inline(always)]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         let mut this = Wyhash::init(seed);
 
@@ -565,7 +590,12 @@ pub struct OneShotHasher {
 }
 
 impl core::hash::Hasher for OneShotHasher {
-    #[inline]
+    // perf on build/create-next: `OneShotHasher::write` showed up as a
+    // standalone 58-self-sample symbol `call`ed from hashbrown's probe loop —
+    // `#[inline]` was being declined across the bun_wyhash → bun_collections
+    // crate boundary. Force-inline so the whole hash collapses into the caller
+    // (matches Zig's `getAutoHashFn`, which is fully comptime-inlined).
+    #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
         // Each chunk re-seeds from the previous output, so multi-`write` keys
         // (e.g. `(&[u8], u32)`) still mix without buffering. For the
@@ -573,21 +603,21 @@ impl core::hash::Hasher for OneShotHasher {
         // wyhash over the slice.
         self.hash = Wyhash11::hash(self.hash, bytes);
     }
-    #[inline]
+    #[inline(always)]
     fn write_u8(&mut self, n: u8) { self.write_u64(u64::from(n)); }
-    #[inline]
+    #[inline(always)]
     fn write_u16(&mut self, n: u16) { self.write_u64(u64::from(n)); }
-    #[inline]
+    #[inline(always)]
     fn write_u32(&mut self, n: u32) { self.write_u64(u64::from(n)); }
-    #[inline]
+    #[inline(always)]
     fn write_u64(&mut self, n: u64) {
         // Cheap diffusion for integer keys / length prefixes — one 128-bit
         // multiply, same primitive wyhash uses internally (`mum`).
         self.hash = mum(self.hash ^ n, PRIMES[4]);
     }
-    #[inline]
+    #[inline(always)]
     fn write_usize(&mut self, n: usize) { self.write_u64(n as u64); }
-    #[inline]
+    #[inline(always)]
     fn finish(&self) -> u64 {
         self.hash
     }

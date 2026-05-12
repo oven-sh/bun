@@ -605,16 +605,17 @@ impl ThreadPool {
             if !try_current {
                 break 'blk ptr::null_mut();
             }
-            let current = Thread::current();
-            if current.is_null() {
+            let Some(current) = NonNull::new(Thread::current()) else {
                 break 'blk ptr::null_mut();
-            }
+            };
             // Make sure thread is part of this thread pool, not a different one.
-            // SAFETY: current is a live thread-local Thread for this OS thread.
-            if unsafe { (*current).thread_pool }.as_ptr().cast_const()
+            // `current` is the calling worker's own stack-local `Thread` (set in
+            // `ThreadRegistration::new`); BackRef invariant — pointee outlives
+            // this read — holds for the `thread_pool` field load.
+            if bun_ptr::BackRef::from(current).thread_pool.as_ptr().cast_const()
                 == std::ptr::from_ref::<ThreadPool>(self)
             {
-                current
+                current.as_ptr()
             } else {
                 ptr::null_mut()
             }
@@ -891,10 +892,11 @@ impl ThreadPool {
                     }
                 };
             } else {
-                let current = Thread::current();
-                if !current.is_null() {
-                    // SAFETY: thread-local Thread for this OS thread.
-                    unsafe { (*current).drain_idle_events() };
+                if let Some(current) = NonNull::new(Thread::current()) {
+                    // `current` is the calling worker's own stack-local
+                    // `Thread`; BackRef invariant (pointee outlives holder)
+                    // holds for the `&self` `drain_idle_events` call.
+                    bun_ptr::BackRef::from(current).drain_idle_events();
                 }
 
                 if stats_enabled() {
@@ -979,14 +981,15 @@ impl ThreadPool {
         // ── `*pool` may be invalid past this point. ──
 
         // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
-        if maybe_thread.is_null() {
+        let Some(thread) = NonNull::new(maybe_thread) else {
             return;
-        }
-        // SAFETY: `maybe_thread` is the calling worker's own stack-local
-        // `Thread` (set in `ThreadRegistration::new`); it lives on this OS
-        // thread's stack and outlives the entire `unregister` call. Single
-        // shared deref serves both the `join_event.wait()` and `.next` reads.
-        let thread = unsafe { &*maybe_thread };
+        };
+        // `maybe_thread` is the calling worker's own stack-local `Thread`
+        // (set in `ThreadRegistration::new`); it lives on this OS thread's
+        // stack and outlives the entire `unregister` call. BackRef invariant
+        // — pointee outlives holder — covers the `join_event.wait()` and
+        // `.next` reads below.
+        let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait();
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.

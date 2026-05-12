@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -51,15 +51,8 @@ impl Dirname {
     }
 
     fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = State::Err;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, msg, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
-        Builtin::done(interp, cmd, 1)
+        Self::state_mut(interp, cmd).state = State::Err;
+        Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
     pub fn on_io_writer_chunk(
@@ -78,14 +71,6 @@ impl Dirname {
             State::Idle => unreachable!("Dirname.onIOWriterChunk: idle"),
         };
         Builtin::done(interp, cmd, exit)
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Dirname {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Dirname(d) => d,
-            _ => unreachable!(),
-        }
     }
 }
 

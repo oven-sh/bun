@@ -40,12 +40,6 @@ static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 const TARGET_NEXTJS_VERSION: &[u8] = b"12.2.3";
-pub fn initialize_store() {
-    bun_core::run_once! {{
-        js_ast::expr::data::Store::create();
-        js_ast::stmt::data::Store::create();
-    }}
-}
 
 // PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
 // `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
@@ -713,7 +707,7 @@ impl CreateCommand {
                         // The printer doesn't truncate, so we must do so manually
                         let _ = bun_sys::ftruncate(pkg.handle(), 0);
 
-                        initialize_store();
+                        bun_ast::initialize_store();
                     }
                 }
             }
@@ -756,7 +750,7 @@ impl CreateCommand {
             }
 
             if package_json_file.is_some() {
-                initialize_store();
+                bun_ast::initialize_store();
 
                 let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
 
@@ -1929,26 +1923,16 @@ struct Analyzer<'a> {
     progress: &'a mut Progress,
 }
 
-impl<'a> Analyzer<'a> {
-    pub fn on_analyze(
-        this: &mut Self,
-        result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
+impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
+    fn on_analyze(
+        &mut self,
+        result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
     ) -> Result<(), bun_core::Error> {
+        let this = self;
         this.node.end();
 
         SourceFileProjectGenerator::generate(this.ctx, this.example_tag, this.entry_point, result)
     }
-}
-
-// Type-erased trampoline matching `DependenciesScanner.on_fetch`; see PORT NOTE at use site.
-fn analyzer_on_fetch_trampoline(
-    ctx: *mut (),
-    result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
-) -> Result<(), bun_core::Error> {
-    // SAFETY: `ctx` is `&mut analyzer as *mut _ as *mut ()` set by the caller in
-    // `run_on_entry_point`; lives for the duration of the scan call.
-    let analyzer = unsafe { bun_ptr::callback_ctx::<Analyzer<'_>>(ctx.cast()) };
-    Analyzer::on_analyze(analyzer, result)
 }
 
 fn run_on_entry_point(
@@ -1966,14 +1950,10 @@ fn run_on_entry_point(
         node,
     };
 
-    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner {
-        ctx: (&raw mut analyzer).cast::<()>(),
-        entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
-        // PORT NOTE: Zig used `@ptrCast` on the fn pointer; in Rust the HRTB lifetime
-        // on `Analyzer<'_>` prevents a direct cast, so route through a thin
-        // type-erased trampoline matching DependenciesScanner.on_fetch's exact signature.
-        on_fetch: analyzer_on_fetch_trampoline,
-    };
+    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
+        &mut analyzer,
+        vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
+    );
     crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&mut fetcher))
 }
 
@@ -2386,7 +2366,7 @@ impl Example {
 
         progress.name = b"Parsing package.json";
         refresher.refresh();
-        initialize_store();
+        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
@@ -2545,7 +2525,7 @@ impl Example {
             Global::exit(1);
         }
 
-        initialize_store();
+        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator
         // field (global mimalloc) — use the process-lifetime CLI arena (examples

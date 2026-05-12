@@ -319,7 +319,7 @@ pub fn list_objects(
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     let proxy = proxy_url.unwrap_or(b"");
     task.proxy_url = if !proxy.is_empty() {
@@ -522,7 +522,7 @@ pub fn writable_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -885,7 +885,7 @@ pub fn upload_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     let ctx_ptr: *mut S3UploadStreamWrapper = bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
         ref_count: core::cell::Cell::new(2), // +1 for the stream sink (only deinit after both sink and task ended)
@@ -1024,7 +1024,7 @@ pub fn download_stream(
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
     // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
     let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.

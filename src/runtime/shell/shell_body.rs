@@ -234,10 +234,7 @@ fn set_env(name: *const c_char, value: *const c_char) {
 /// `[0]` => read end, `[1]` => write end
 pub type Pipe = [Fd; 2];
 
-bun_core::declare_scope!(SHELL, hidden);
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(SHELL, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, SHELL, hidden);
 
 // ───────────────────────────── GlobalJS ─────────────────────────────
 

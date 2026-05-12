@@ -259,14 +259,9 @@ impl FileRoute {
             AnyResponse::TCP(r) => write_status::<false>(r, status),
             AnyResponse::H3(r) => {
                 let mut b = [0u8; 16];
-                let written = {
-                    use std::io::Write;
-                    let mut w = &mut b[..];
-                    write!(w, "{}", status).expect("unreachable");
-                    16 - w.len()
-                };
+                let s = bun_core::fmt::int_as_bytes(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(&b[..written]);
+                bun_opaque::opaque_deref_mut(r).write_status(s);
             }
         }
     }
@@ -485,26 +480,20 @@ impl FileRoute {
 
         let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { start, end } => {
-                let mut crbuf = [0u8; 96];
-                let written = {
-                    use std::io::Write;
-                    let mut w = &mut crbuf[..];
-                    write!(w, "bytes {}-{}/{}", start, end, size).expect("unreachable");
-                    96 - w.len()
-                };
-                resp.write_header(b"content-range", &crbuf[..written]);
+                let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+                resp.write_header(
+                    b"content-range",
+                    RangeRequest::format_content_range(&mut crbuf, range, Some(size)),
+                );
                 resp.write_header(b"accept-ranges", b"bytes");
                 (this.blob.offset.get() + start, Some(end - start + 1))
             }
             RangeRequest::Result::Unsatisfiable => {
-                let mut crbuf = [0u8; 64];
-                let written = {
-                    use std::io::Write;
-                    let mut w = &mut crbuf[..];
-                    write!(w, "bytes */{}", size).expect("unreachable");
-                    64 - w.len()
-                };
-                resp.write_header(b"content-range", &crbuf[..written]);
+                let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+                resp.write_header(
+                    b"content-range",
+                    RangeRequest::format_content_range(&mut crbuf, range, Some(size)),
+                );
                 resp.write_header(b"accept-ranges", b"bytes");
                 resp.end(b"", resp.should_close_connection());
                 return;

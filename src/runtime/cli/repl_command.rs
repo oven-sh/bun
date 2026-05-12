@@ -59,8 +59,7 @@ impl ReplCommand {
         // Initialize JSC
         jsc::initialize(true); // true for eval mode
 
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
+        bun_ast::initialize_store();
         // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
         // crate would normally drop MimallocArena, but VM init protocol requires it. Note
         // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`

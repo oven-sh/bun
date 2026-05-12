@@ -1,10 +1,9 @@
 use core::ffi::CStr;
 use std::sync::Arc;
 
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, shell_openat, unsupported_flag, FlagParser, Interpreter, NodeId, ParseError,
-    ParseFlagResult,
+    parse_flags, shell_openat, unsupported_flag, FlagParser, Interpreter, NodeId, ParseFlagResult,
 };
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -61,7 +60,11 @@ impl Cat {
             match parse_flags(&mut opts, args) {
                 Ok(Some(rest)) => Some(args.len() - rest.len()),
                 Ok(None) => None,
-                Err(e) => return Self::fail_parse(interp, cmd, e),
+                Err(e) => {
+                    return Builtin::fail_parse(interp, cmd, Kind::Cat, e, || {
+                        Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
+                    })
+                }
             }
         };
         Self::state_mut(interp, cmd).opts = opts;
@@ -90,32 +93,6 @@ impl Cat {
         };
 
         Self::next(interp, cmd)
-    }
-
-    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Cat),
-                // SAFETY: payload borrows argv or is 'static.
-                format_args!("illegal option -- {}\n", bstr::BStr::new(unsafe { &*s })),
-            )
-            .to_vec(),
-            ParseError::ShowUsage => Kind::Cat.usage_string().to_vec(),
-            ParseError::Unsupported(s) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Cat),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    // SAFETY: see above.
-                    bstr::BStr::new(unsafe { &*s })
-                ),
-            )
-            .to_vec(),
-        };
-        Self::write_failing_error(interp, cmd, &buf, 1)
     }
 
     /// Spec: cat.zig `writeFailingError`.
@@ -418,14 +395,6 @@ impl Cat {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
             Step::Next => Self::next(interp, cmd),
-        }
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cat {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Cat(c) => &mut **c,
-            _ => unreachable!(),
         }
     }
 }

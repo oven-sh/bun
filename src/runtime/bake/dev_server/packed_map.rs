@@ -5,12 +5,7 @@
 use std::rc::Rc;
 
 /// Line count newtype (Zig: `bun.GenericIndex(u32, u8)`).
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct LineCount(pub u32);
-impl LineCount {
-    #[inline] pub const fn get(self) -> u32 { self.0 }
-}
+pub type LineCount = bun_core::GenericIndex<u32, u8>;
 
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread
 /// between chunks (generated_column is always 0 because minification is off,

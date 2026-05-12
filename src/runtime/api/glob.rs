@@ -358,10 +358,6 @@ impl Glob {
         }))
     }
 
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     /// Called on the GC thread concurrently with the mutator. Reads only the
     /// atomic counter; never allocates, locks, or touches JS. The codegen shim
     /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes

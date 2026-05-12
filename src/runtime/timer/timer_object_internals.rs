@@ -85,68 +85,71 @@ unsafe extern "C" {
     ) -> bool;
 }
 
+/// Typed result of `@fieldParentPtr("internals", self)` discriminated by
+/// `flags.kind()`. Raw `*mut` (NOT `&mut`) so callers may hold it across
+/// re-entrant JS calls without minting an aliased `&mut` (PORTING.md
+/// §Forbidden — the callback can reach the same field via `cancel()`/
+/// `refresh()`). Provenance is `&self`-derived (read-only); the `*mut` is a
+/// type-only cast — writes must go through `Cell`/`UnsafeCell` fields.
+enum TimerParent {
+    Immediate(*mut ImmediateObject),
+    Timeout(*mut TimeoutObject),
+}
+
 impl TimerObjectInternals {
+    /// `@fieldParentPtr("internals", self)` — the single `container_of` site.
+    /// Every other helper (`event_loop_timer`, `ref_`, `deref`, `init`,
+    /// `event_loop_timer_state`) routes through this so the `from_field_ptr!`
+    /// invariant — `flags.kind()` ⇔ container type, established in `init()` —
+    /// lives in exactly one place.
+    #[inline]
+    fn parent_ptr(&self) -> TimerParent {
+        let this = std::ptr::from_ref::<Self>(self).cast_mut();
+        match self.flags.get().kind() {
+            // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
+            // of a live `ImmediateObject` (set in `init()`).
+            Kind::SetImmediate => TimerParent::Immediate(unsafe {
+                bun_core::from_field_ptr!(ImmediateObject, internals, this)
+            }),
+            // SAFETY: `kind ∈ {SetTimeout, SetInterval}` ⇒ `self` is the
+            // `internals` field of a live `TimeoutObject`.
+            Kind::SetTimeout | Kind::SetInterval => TimerParent::Timeout(unsafe {
+                bun_core::from_field_ptr!(TimeoutObject, internals, this)
+            }),
+        }
+    }
+
     /// `@fieldParentPtr("internals", self).event_loop_timer`. Returns a raw
     /// pointer (NOT `&mut`) so callers can hold it across re-entrant JS calls
     /// without minting aliased `&mut` (PORTING.md §Forbidden — the callback
     /// may reach this same field via `cancel()`/`refresh()`).
     fn event_loop_timer(&self) -> *mut EventLoopTimer {
-        match self.flags.get().kind() {
-            Kind::SetImmediate => {
-                // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals`
-                // field of a live `ImmediateObject` (set in `init()`).
-                let parent = unsafe {
-                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self).cast_mut())
-                };
-                // SAFETY: `parent` derived from a live container per above.
-                unsafe { core::ptr::addr_of_mut!((*parent).event_loop_timer) }
-            }
-            Kind::SetTimeout | Kind::SetInterval => {
-                // SAFETY: `kind ∈ {SetTimeout, SetInterval}` ⇒ `self` is the
-                // `internals` field of a live `TimeoutObject`.
-                let parent = unsafe {
-                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_ref::<Self>(self).cast_mut())
-                };
-                // SAFETY: `parent` derived from a live container per above.
-                unsafe { core::ptr::addr_of_mut!((*parent).event_loop_timer) }
-            }
+        match self.parent_ptr() {
+            // SAFETY: `p` points into a live container per `parent_ptr()`.
+            TimerParent::Immediate(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
+            // SAFETY: as above.
+            TimerParent::Timeout(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
         }
     }
 
     /// Increment the parent container's intrusive refcount.
     fn ref_(&self) {
-        match self.flags.get().kind() {
-            // SAFETY: see `event_loop_timer` — same `container_of` invariant.
-            Kind::SetImmediate => unsafe {
-                ImmediateObject::ref_(
-                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self).cast_mut()),
-                )
-            },
-            // SAFETY: see `event_loop_timer`.
-            Kind::SetTimeout | Kind::SetInterval => unsafe {
-                TimeoutObject::ref_(
-                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_ref::<Self>(self).cast_mut()),
-                )
-            },
+        match self.parent_ptr() {
+            // SAFETY: `p` is a live container per `parent_ptr()`.
+            TimerParent::Immediate(p) => unsafe { ImmediateObject::ref_(p) },
+            // SAFETY: as above.
+            TimerParent::Timeout(p) => unsafe { TimeoutObject::ref_(p) },
         }
     }
 
     /// Decrement the parent container's intrusive refcount; frees on 0.
     /// After this returns, `self` may be dangling — do not touch.
     fn deref(&self) {
-        match self.flags.get().kind() {
-            // SAFETY: see `event_loop_timer`.
-            Kind::SetImmediate => unsafe {
-                ImmediateObject::deref(
-                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self).cast_mut()),
-                )
-            },
-            // SAFETY: see `event_loop_timer`.
-            Kind::SetTimeout | Kind::SetInterval => unsafe {
-                TimeoutObject::deref(
-                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_ref::<Self>(self).cast_mut()),
-                )
-            },
+        match self.parent_ptr() {
+            // SAFETY: `p` is a live container per `parent_ptr()`.
+            TimerParent::Immediate(p) => unsafe { ImmediateObject::deref(p) },
+            // SAFETY: as above.
+            TimerParent::Timeout(p) => unsafe { TimeoutObject::deref(p) },
         }
     }
 
@@ -297,12 +300,8 @@ impl TimerObjectInternals {
         if kind == Kind::SetImmediate {
             JSImmediate::arguments_set_cached(timer, global, arguments);
             JSImmediate::callback_set_cached(timer, global, callback);
-            // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
-            // of a live `ImmediateObject` (caller contract — see
-            // `ImmediateObject::init`).
-            let parent = unsafe {
-                bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self).cast_mut())
-            };
+            // `flags.kind` was just set to `SetImmediate` above.
+            let TimerParent::Immediate(parent) = self.parent_ptr() else { unreachable!() };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
             // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
             // to `*mut ImmediateObject`.
@@ -859,23 +858,9 @@ impl TimerObjectInternals {
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {
     /// Read-only `container_of` to the owning `EventLoopTimer.state`.
-    /// Mirror of [`Self::event_loop_timer`] for `&self` callers (`get_destroyed`).
     fn event_loop_timer_state(&self) -> EventLoopTimerState {
-        match self.flags.get().kind() {
-            // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
-            // of a live `ImmediateObject` (set in `init()`); read-only deref.
-            Kind::SetImmediate => unsafe {
-                (*bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self)))
-                .event_loop_timer
-                .state
-            },
-            // SAFETY: as above for `TimeoutObject`.
-            Kind::SetTimeout | Kind::SetInterval => unsafe {
-                (*bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_ref::<Self>(self)))
-                .event_loop_timer
-                .state
-            },
-        }
+        // SAFETY: ptr into the live parent per `parent_ptr()`; read-only deref.
+        unsafe { (*self.event_loop_timer()).state }
     }
 
     /// Spec TimerObjectInternals.zig `doRef`.

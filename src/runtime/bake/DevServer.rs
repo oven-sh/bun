@@ -629,7 +629,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 promise: DeferredPromise::default(),
             }
         );
-        w!(inspector_server_id, DebuggerId::new(0)); // TODO paper clover:
+        w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
         w!(
             assets,
             Assets {
@@ -960,7 +960,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     if let Some(rfr) = &dev.framework.react_fast_refresh {
         debug_assert!(
             dev.client_graph.insert_stale(&rfr.import_source, false)?
-                == incremental_graph::FileIndex::<{ bake::Side::Client }>(0) // Zig: react_refresh_index = .init(0)
+                == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0) // Zig: react_refresh_index = .init(0)
         );
     }
 
@@ -1021,11 +1021,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
-                    to_opaque_file_id::<{ bake::Side::Client }>(
+                    Some(to_opaque_file_id::<{ bake::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
                         unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
-                    )
-                    .to_optional()
+                    ))
                 } else {
                     None
                 },
@@ -2598,7 +2597,7 @@ impl DevServer {
         // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
         debug_assert!(unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
-        let script_injection_offset = html.script_injection_offset.unwrap().0 as usize;
+        let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
         let bundled_html = html.bundled_html_text.as_ref().unwrap();
 
         // The bundler records an offsets in development mode, splitting the HTML
@@ -3817,7 +3816,7 @@ pub fn finalize_bundle(
         }
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset =
-            Some(route_bundle::ByteOffset(*compile_result_offset));
+            Some(route_bundle::ByteOffset::init(*compile_result_offset));
 
         chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
     }
@@ -4905,7 +4904,7 @@ impl DevServer {
             active_viewers: 0,
         });
         // SAFETY: index_location still valid (route_bundles is a separate field)
-        unsafe { *index_location = bundle_index.to_optional() };
+        unsafe { *index_location = Some(bundle_index) };
         Ok(bundle_index)
     }
 
@@ -5558,16 +5557,14 @@ impl DevServer {
     /// JS-thread only.
     pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
-            #[cold]
-            fn cold() {}
-            cold();
+            bun_core::hint::cold();
             // SAFETY: `frontend_dev_server_agent` is `UnsafeCell`-wrapped for
             // interior mutability (Zig spec returns `*Agent` from `*const
             // DevServer`). JS-thread only; caller upholds the no-alias
             // contract documented above.
             let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
             if agent.is_enabled() {
-                cold();
+                bun_core::hint::cold();
                 return Some(agent);
             }
         }

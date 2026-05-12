@@ -271,7 +271,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let long_text = if before.len() > after.len() { before } else { after };
         let short_text = if before.len() > after.len() { after } else { before };
 
-        if let Some(index) = index_of(long_text, short_text) {
+        if let Some(index) = bun_str::strings::index_of_t(long_text, short_text) {
             let mut diffs: DiffList<Unit> = Vec::with_capacity(3);
             // Shorter text is inside the longer text (speedup).
             let op: Operation = if before.len() > after.len() {
@@ -420,7 +420,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let mut best_short_text_b: &[Unit] = &[];
 
         while (j as i128) < i128::try_from(short_text.len()).unwrap() && {
-            match index_of(&short_text[usize::try_from(j + 1).unwrap()..], seed) {
+            match bun_str::strings::index_of_t(&short_text[usize::try_from(j + 1).unwrap()..], seed) {
                 Some(found) => {
                     j = isize::try_from(found).unwrap() + j + 1;
                     true
@@ -878,7 +878,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     // TODO this can be handled with a Reader, avoiding all the manual splitting
     while line_end < isize::try_from(text.len()).unwrap() - 1 {
         line_end = 'b: {
-            match index_of(&text_u8[usize::try_from(line_start).unwrap()..], b"\n") {
+            match bun_str::strings::index_of_t(&text_u8[usize::try_from(line_start).unwrap()..], b"\n") {
                 Some(idx) => break 'b isize::try_from(idx).unwrap() + line_start,
                 None => break 'b isize::try_from(text.len()).unwrap() - 1,
             }
@@ -1059,7 +1059,7 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
             && diffs[pointer + 1].operation == Operation::Equal
         {
             // This is a single edit surrounded by equalities.
-            if ends_with(&diffs[pointer].text, &diffs[pointer - 1].text) {
+            if diffs[pointer].text.ends_with(&diffs[pointer - 1].text) {
                 let prev_len = diffs[pointer - 1].text.len();
                 let pt = concat(&[
                     &diffs[pointer - 1].text,
@@ -1071,7 +1071,7 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                 // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer - 1);
                 changes = true;
-            } else if starts_with(&diffs[pointer].text, &diffs[pointer + 1].text) {
+            } else if diffs[pointer].text.starts_with(&diffs[pointer + 1].text) {
                 let pm1t = concat(&[&diffs[pointer - 1].text, &diffs[pointer + 1].text]);
                 diffs[pointer - 1].text = pm1t;
                 let next_len = diffs[pointer + 1].text.len();
@@ -1432,7 +1432,7 @@ fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> 
     let mut length: usize = 1;
     loop {
         let pattern = &text1[text_length - length..];
-        let found = match index_of(text2, pattern) {
+        let found = match bun_str::strings::index_of_t(text2, pattern) {
             Some(f) => f,
             None => return best,
         };
@@ -1488,27 +1488,6 @@ fn diff_common_suffix<Unit: DiffUnit>(before: &[Unit], after: &[Unit]) -> usize 
     }
 
     n
-}
-
-/// Generic substring search (Zig `std.mem.indexOf(Unit, ...)`).
-fn index_of<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    if needle.len() > haystack.len() {
-        return None;
-    }
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-#[inline]
-fn starts_with<T: Eq>(s: &[T], prefix: &[T]) -> bool {
-    s.len() >= prefix.len() && &s[..prefix.len()] == prefix
-}
-
-#[inline]
-fn ends_with<T: Eq>(s: &[T], suffix: &[T]) -> bool {
-    s.len() >= suffix.len() && &s[s.len() - suffix.len()..] == suffix
 }
 
 // TODO(port): replace with bun_core time source. `std::time` not on the I/O ban list.

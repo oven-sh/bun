@@ -248,7 +248,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::Source::Blob(blob),
+                        super::source_from_blob(blob),
                     )));
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
@@ -256,7 +256,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::Source::ArrayBuffer(core::mem::take(array_buffer)),
+                        super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -356,14 +356,14 @@ impl<'a> Writable<'a> {
                     evtloop,
                     std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                     result,
-                    super::Source::Blob(blob),
+                    super::source_from_blob(blob),
                 )))
             }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 evtloop,
                 std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                 result,
-                super::Source::ArrayBuffer(core::mem::take(array_buffer)),
+                super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: Zig's `Writable.init` never calls

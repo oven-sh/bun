@@ -33,15 +33,6 @@ type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{d2i_X509, X509_free};
 
-/// Local `EventLoopCtx` accessor for `KeepAlive::ref_/unref` (mirrors
-/// `node_zlib_binding::vm_ctx`). Zig passed `*VirtualMachine` directly via
-/// anytype dispatch; the Rust split routes through the aio hook registered
-/// by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
 impl Taskable for FetchTasklet {
@@ -721,7 +712,7 @@ impl FetchTasklet {
             if is_done {
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
                 let _ = vm;
-                poll_ref.unref(vm_ctx());
+                poll_ref.unref(bun_io::js_vm_ctx());
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
         };
@@ -932,17 +923,12 @@ impl FetchTasklet {
             }
         }
 
-        // PORT NOTE: Zig `AnyTask.New(Holder, cb)` monomorphized a `*anyopaque -> void` shim
-        // per (Type, Callback). Rust `AnyTask` stores `fn(*mut c_void) -> bun_event_loop::JsResult<()>`
-        // (low-tier `ErasedJsError` discriminant); write the type-erased shims by hand and
-        // map `JsTerminated` to the `Terminated` tag so the dispatcher unwinds correctly.
-        fn resolve_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::resolve(p.cast::<Holder>())
-                .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
+        // Map `JsTerminated` to the low-tier `Terminated` tag so the dispatcher unwinds correctly.
+        fn resolve_erased(p: *mut Holder) -> ElJsResult<()> {
+            Holder::resolve(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
-        fn reject_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::reject(p.cast::<Holder>())
-                .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
+        fn reject_erased(p: *mut Holder) -> ElJsResult<()> {
+            Holder::reject(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
 
         let holder = bun_core::heap::into_raw(Box::new(Holder {
@@ -954,10 +940,8 @@ impl FetchTasklet {
         }));
         // SAFETY: holder is valid until consumed by resolve/reject
         unsafe {
-            (*holder).task = AnyTask {
-                ctx: core::ptr::NonNull::new(holder.cast::<c_void>()),
-                callback: if success { resolve_erased } else { reject_erased },
-            };
+            (*holder).task =
+                AnyTask::from_typed(holder, if success { resolve_erased } else { reject_erased });
             (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
         }
 
@@ -1381,7 +1365,7 @@ impl FetchTasklet {
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
-        self.poll_ref.unref(vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
         self.clear_stream_cancel_handler();
         self.readable_stream_ref.deinit();
@@ -1835,7 +1819,7 @@ impl FetchTasklet {
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
-        node_ref.poll_ref.ref_(vm_ctx());
+        node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();

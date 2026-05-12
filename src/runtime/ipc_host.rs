@@ -18,11 +18,7 @@ use bun_string::String as BunString;
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
 
-bun_core::declare_scope!(IPC, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(IPC, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, IPC, visible);
 
 // `jsc.VirtualMachine.Process__emitErrorEvent` — implemented in C++
 // (`BunProcess.cpp`); declared here per the same convention as

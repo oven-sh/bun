@@ -929,26 +929,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 }
 
-/// `bun_io::Write` → `core::fmt::Write` bridge for the `write_format` hooks
-/// on `Response`/`Request`/`Blob`/`BuildArtifact`. Those hooks (and the
-/// `ConsoleFormatter` trait they round-trip through) are typed against
-/// `core::fmt::Write`; this file's `Formatter` is byte-oriented. Route
-/// `write_str` through `write_all` so the same underlying sink is used end to
-/// end with no intermediate `String` buffer.
-///
-/// Non-generic by design — a generic `IoFmt<W: bun_io::Write>` together with
-/// `bun_io::FmtAdapter<F: fmt::Write>: bun_io::Write` forms two mutually-
-/// recursive blanket impls (`IoFmt<FmtAdapter<IoFmt<…>>>`), which is E0275 at
-/// monomorphization. Erasing to `dyn bun_io::Write` keeps a single concrete
-/// `fmt::Write` impl with no blanket cycle. The 3 callers below already pass
-/// `&mut dyn` so this costs nothing.
-struct IoFmt<'a>(&'a mut dyn bun_io::Write);
-impl core::fmt::Write for IoFmt<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
-    }
-}
+use bun_io::AsFmt;
 
 impl<'a> Formatter<'a> {
     pub fn write_indent<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
@@ -1772,14 +1753,14 @@ impl<'a> Formatter<'a> {
                     // .zig:1190-1278 — per-type `writeFormat` dispatch for Bun-native cells.
                     // Downcast via the `JsClass`/FFI hooks on each type; the `write_format`
                     // bodies re-enter this formatter through the `ConsoleFormatter` impl
-                    // below for nested values, so the byte sink is wrapped in `IoFmt` (a
+                    // below for nested values, so the byte sink is wrapped in `AsFmt` (a
                     // `core::fmt::Write` view of the same writer).
                     if let Some(response) = value.as_::<crate::webcore::Response>() {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan). `write_format` does not
                         // re-enter `as_` for the same cell, so the `&mut` is unique here.
                         let response = unsafe { &mut *response };
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1797,7 +1778,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(request) = value.as_::<crate::webcore::Request>() {
                         // SAFETY: see Response branch above.
                         let request = unsafe { &mut *request };
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
                             .is_err()
@@ -1817,7 +1798,7 @@ impl<'a> Formatter<'a> {
                         // SAFETY: see Response branch above. `write_format` is
                         // `&self` post-R-2, so a shared borrow is sufficient.
                         let build = unsafe { &*build };
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1835,7 +1816,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
                         // SAFETY: see Response branch above.
                         let blob = unsafe { &mut *blob };
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1930,11 +1911,11 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>() {
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         let _ = build_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if let Some(resolve_log) = value.as_class_ref::<crate::api::ResolveMessage>() {
-                        let mut bridge = IoFmt(&mut *writer.ctx);
+                        let mut bridge = AsFmt::new(&mut *writer.ctx);
                         let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
@@ -2999,9 +2980,9 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
         cell: JSType,
     ) -> JsResult<()> {
         // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
-        // mapping + `format` dispatch). `IoFmt` adapts `dyn bun_io::Write` →
+        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_io::Write` →
         // `core::fmt::Write` for the trait method's signature.
-        let mut bridge = IoFmt(w);
+        let mut bridge = AsFmt::new(w);
         <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
     }
 }

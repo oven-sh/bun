@@ -10,7 +10,6 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_io::Closer;
 use bun_io::{BufferedReader, FileType, ReadState};
@@ -227,21 +226,14 @@ impl FileResponseStream {
                 if state_ != ReadState::Eof && *max == 0 {
                     #[cfg(not(unix))]
                     self.reader.pause();
-                    // Zig: `jsc.AnyTask.New(FileResponseStream, onReaderDone).init(this)`
-                    // — hand-fill the (ctx, callback) pair (option (b) in
-                    // event_loop/AnyTask.rs) since Rust cannot take a fn value as
-                    // a const generic.
-                    self.eof_task = Some(AnyTask::AnyTask {
-                        ctx: NonNull::new(this.cast::<c_void>()),
-                        callback: |ctx| {
-                            // SAFETY: `ctx` is the `*mut FileResponseStream`
-                            // stored just above; the eof_task lives inside `*ctx`
-                            // and the ref taken for the in-flight read keeps the
-                            // allocation alive until `on_reader_done` releases it.
-                            unsafe { (*ctx.cast::<FileResponseStream>()).on_reader_done() };
-                            Ok(())
-                        },
-                    });
+                    self.eof_task = Some(AnyTask::AnyTask::from_typed(this, |p| {
+                        // SAFETY: `p` is the `*mut FileResponseStream` stored just
+                        // above; the eof_task lives inside `*p` and the ref taken
+                        // for the in-flight read keeps the allocation alive until
+                        // `on_reader_done` releases it.
+                        unsafe { (*p).on_reader_done() };
+                        Ok(())
+                    }));
                     // SAFETY: `vm.event_loop()` returns the live JS loop;
                     // `eof_task` was just set and lives inside `*this` which
                     // outlives the task (refcount held until `on_reader_done`).

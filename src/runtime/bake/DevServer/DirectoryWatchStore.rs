@@ -314,7 +314,7 @@ impl DirectoryWatchStore {
                 specifier: specifier_cloned,
             };
             if let Some(index) = self.dependencies_free_list.pop() {
-                self.dependencies[index.get()] = d;
+                self.dependencies[index.get_usize()] = d;
                 index
             } else {
                 let index = DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
@@ -343,9 +343,9 @@ impl DirectoryWatchStore {
         // Zero out the slot so that DevServer.deinit and memoryCost, which
         // iterate `dependencies` without consulting the free list, do
         // not touch the freed allocation or stale borrowed pointers.
-        self.dependencies[index.get()] = Dep::default();
+        self.dependencies[index.get_usize()] = Dep::default();
 
-        if index.get() == self.dependencies.len() - 1 {
+        if index.get_usize() == self.dependencies.len() - 1 {
             self.dependencies.truncate(self.dependencies.len() - 1);
         } else {
             self.dependencies_free_list.push(index);
@@ -409,15 +409,15 @@ impl DirectoryWatchStore {
             let mut new_chain: Option<DepIndex> = None;
             let mut it: Option<DepIndex> = Some(self.watches.values()[watch_index].first_dep);
             while let Some(index) = it {
-                let dep_next = self.dependencies[index.get()].next;
-                let dep_path = self.dependencies[index.get()].source_file_path;
+                let dep_next = self.dependencies[index.get_usize()].next;
+                let dep_path = self.dependencies[index.get_usize()].source_file_path;
                 it = dep_next;
                 // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
                 if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     // Zig: bun.handleOom(store.freeDependencyIndex(...))
                     self.free_dependency_index(index).expect("OOM");
                 } else {
-                    self.dependencies[index.get()].next = new_chain;
+                    self.dependencies[index.get_usize()].next = new_chain;
                     new_chain = Some(index);
                 }
             }
@@ -431,7 +431,7 @@ impl DirectoryWatchStore {
 
     fn append_dep_assume_capacity(&mut self, dep: Dep) -> DepIndex {
         if let Some(index) = self.dependencies_free_list.pop() {
-            self.dependencies[index.get()] = dep;
+            self.dependencies[index.get_usize()] = dep;
             return index;
         }
 
@@ -490,18 +490,7 @@ impl Default for Dep {
 }
 
 // Zig: `pub const Index = bun.GenericIndex(u32, Dep);`
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct DepIndex(u32);
-
-impl DepIndex {
-    #[inline]
-    pub const fn init(v: u32) -> Self {
-        Self(v)
-    }
-    #[inline]
-    pub const fn get(self) -> usize {
-        self.0 as usize
-    }
-}
+pub enum DepMarker {}
+pub type DepIndex = bun_core::GenericIndex<u32, DepMarker>;
 
 // ported from: src/bake/DevServer/DirectoryWatchStore.zig

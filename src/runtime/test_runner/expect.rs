@@ -1855,10 +1855,6 @@ pub struct ExpectStatic {
 }
 
 impl ExpectStatic {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     pub fn create(global_this: &JSGlobalObject, flags: Flags) -> JsResult<JSValue> {
         let value = ExpectStatic { flags }.to_js(global_this);
         value.ensure_still_alive();
@@ -2111,10 +2107,6 @@ pub struct ExpectAnything {
 }
 
 impl ExpectAnything {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
@@ -2134,10 +2126,6 @@ pub struct ExpectStringMatching {
 }
 
 impl ExpectStringMatching {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
@@ -2165,10 +2153,6 @@ pub struct ExpectCloseTo {
 }
 
 impl ExpectCloseTo {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<2>();
@@ -2210,10 +2194,6 @@ pub struct ExpectObjectContaining {
 }
 
 impl ExpectObjectContaining {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
@@ -2242,10 +2222,6 @@ pub struct ExpectStringContaining {
 }
 
 impl ExpectStringContaining {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
@@ -2274,10 +2250,6 @@ pub struct ExpectAny {
 }
 
 impl ExpectAny {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _arguments = call_frame.arguments_old::<1>();
@@ -2326,10 +2298,6 @@ pub struct ExpectArrayContaining {
 }
 
 impl ExpectArrayContaining {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
@@ -2369,10 +2337,6 @@ pub struct ExpectCustomAsymmetricMatcher {
 }
 
 impl ExpectCustomAsymmetricMatcher {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
@@ -2573,10 +2537,6 @@ pub struct ExpectMatcherContext {
 }
 
 impl ExpectMatcherContext {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     #[bun_jsc::host_fn(getter)]
     pub fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call with valid &JSGlobalObject
@@ -2625,10 +2585,6 @@ impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         ExpectMatcherUtils {}.to_js(global_this)
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
     }
 
     fn print_value(
@@ -2780,10 +2736,6 @@ impl ExpectMatcherUtils {
 pub struct ExpectTypeOf {}
 
 impl ExpectTypeOf {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     pub fn create(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // `JsClass::to_js` takes `self` by value; the codegen-side boxes it.
         let value = ExpectTypeOf {}.to_js(global_this);

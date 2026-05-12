@@ -338,6 +338,49 @@ pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
 pub use self::timeout_object::TimeoutObject;
 pub use self::immediate_object::ImmediateObject;
 
+/// Spec EventLoopTimer.zig:145 `jsTimerInternalsFlags` — recover the
+/// [`TimerFlags`] slot for the three JS-timer container tags
+/// (`TimeoutObject` / `ImmediateObject` / `AbortSignalTimeout`), else `None`.
+///
+/// Returns a raw `NonNull` so the caller decides read vs. write:
+/// [`EventLoopTimer::less`] reads `.epoch()` on the heap-compare hot path;
+/// [`All::update`] writes `.set_epoch()` under the timer lock. The two
+/// `internals.flags` arms store `Cell<TimerFlags>`; `Cell<T>` is
+/// `#[repr(transparent)]` so the `addr_of!` → `.cast()` is layout-sound.
+///
+/// # Safety
+/// `t` points at a live [`EventLoopTimer`] whose `tag` was set at
+/// construction and never re-tagged (the JS-timer-tag invariant). When the
+/// tag matches, `t` is the `event_loop_timer` field of the named container
+/// with whole-container provenance.
+#[inline]
+pub unsafe fn js_timer_flags_ptr(
+    t: *const EventLoopTimer,
+) -> Option<core::ptr::NonNull<TimerFlags>> {
+    use core::ptr::{addr_of, NonNull};
+    // SAFETY: caller contract — `t` is live; tag invariant per fn docs.
+    unsafe {
+        let p: *const TimerFlags = match (*t).tag {
+            EventLoopTimerTag::TimeoutObject => {
+                let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, t);
+                addr_of!((*parent).internals.flags).cast()
+            }
+            EventLoopTimerTag::ImmediateObject => {
+                let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, t);
+                addr_of!((*parent).internals.flags).cast()
+            }
+            // Spec EventLoopTimer.zig:157-160 — `AbortSignal.Timeout` stores
+            // `flags` directly (not under `.internals`, not `Cell`-wrapped).
+            EventLoopTimerTag::AbortSignalTimeout => {
+                let parent = bun_core::from_field_ptr!(AbortSignalTimeout, event_loop_timer, t);
+                addr_of!((*parent).flags)
+            }
+            _ => return None,
+        };
+        Some(NonNull::new_unchecked(p as *mut TimerFlags))
+    }
+}
+
 /// A timer created by WTF code and invoked by Bun's event loop.
 #[path = "WTFTimer.rs"]
 pub mod wtf_timer;
@@ -565,35 +608,17 @@ impl All {
         timer_ref.next.sec = time.sec;
         timer_ref.next.nsec = time.nsec;
 
-        // Spec Timer.zig:117-120: bump the global epoch and write it back into
-        // the per-timer flags so equal-deadline JS timers fire in refresh
-        // order. `js_timer_epoch()` is read-only (returns `Option<u32>`), so
-        // do the `container_of` dispatch here — `TimeoutObject` /
-        // `ImmediateObject` are this-crate types.
-        // SAFETY: tag invariant — when `tag == TimeoutObject`/`ImmediateObject`,
-        // `timer` is the `event_loop_timer` field of the named container.
-        let flags_slot: Option<*mut TimerFlags> = match timer_ref.tag {
-            EventLoopTimerTag::TimeoutObject => unsafe {
-                let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, timer);
-                Some(core::ptr::addr_of_mut!((*parent).internals.flags).cast::<TimerFlags>())
-            },
-            EventLoopTimerTag::ImmediateObject => unsafe {
-                let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, timer);
-                Some(core::ptr::addr_of_mut!((*parent).internals.flags).cast::<TimerFlags>())
-            },
-            // Spec EventLoopTimer.zig:157-160 — `AbortSignal.Timeout` stores
-            // `flags` directly (not under `.internals`).
-            EventLoopTimerTag::AbortSignalTimeout => unsafe {
-                let parent = bun_core::from_field_ptr!(AbortSignalTimeout, event_loop_timer, timer);
-                Some(core::ptr::addr_of_mut!((*parent).flags))
-            },
-            _ => None,
-        };
-        if let Some(flags) = flags_slot {
+        // Spec Timer.zig:117-120: bump the global epoch and write it back
+        // into the per-timer flags so equal-deadline JS timers fire in
+        // refresh order.
+        // SAFETY: `timer` is live (caller contract); `timer_ref`'s last use
+        // is above so the raw `(*timer).tag` read inside is SB-clean.
+        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
             // Zig: `epoch: u25` with `+%= 1`.
             self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
-            // SAFETY: `flags` points into the live container computed above.
-            unsafe { (*flags).set_epoch(self.epoch) };
+            // SAFETY: exclusive under `self.lock`; `flags` points into the
+            // live container recovered above.
+            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
         }
 
         self.insert_lock_held(timer);

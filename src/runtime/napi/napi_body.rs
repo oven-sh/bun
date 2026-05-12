@@ -22,17 +22,9 @@ use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{Taskable, TaskTag, task_tag};
 use bun_threading::Mutex;
 use bun_threading::Condition as Condvar;
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
-
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
-/// through the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
 
 /// Local extension shims for `JSValue` methods that exist in Zig but are not
 /// yet surfaced on the Rust `bun_jsc::JSValue` type. Declared as a trait so the
@@ -854,13 +846,7 @@ pub extern "C" fn napi_create_string_utf16(
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
                 // Port of `bun.strings.span(c.char16_t, str, 0)` — scan to NUL u16.
-                break 'brk unsafe {
-                    let mut len = 0usize;
-                    while *str_.add(len) != 0 {
-                        len += 1;
-                    }
-                    bun_core::ffi::slice(str_, len)
-                };
+                break 'brk unsafe { bun_core::ffi::wstr_units(str_) };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -1593,6 +1579,8 @@ pub struct napi_async_work {
     pub poll_ref: KeepAlive,
 }
 
+bun_threading::intrusive_work_task!(napi_async_work, task);
+
 impl napi_async_work {
     pub fn new(
         env: &NapiEnv,
@@ -1635,15 +1623,13 @@ impl napi_async_work {
             return;
         }
         self.scheduled = true;
-        self.poll_ref.ref_(vm_ctx());
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
         WorkPool::schedule(&raw mut self.task);
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to napi_async_work.task; recover parent via offset_of.
-        let this: &mut napi_async_work = unsafe {
-            &mut *bun_core::from_field_ptr!(napi_async_work, task, task)
-        };
+        // SAFETY: task points to napi_async_work.task.
+        let this = unsafe { &mut *napi_async_work::from_task_ptr(task) };
         this.run();
     }
 
@@ -1687,7 +1673,7 @@ impl napi_async_work {
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
-        scopeguard::defer! { poll_ref.unref(vm_ctx()); }
+        scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
@@ -2461,12 +2447,12 @@ impl ThreadSafeFunction {
     }
 
     pub fn ref_(&mut self) {
-        self.poll_ref.ref_concurrently_from_event_loop(vm_ctx());
+        self.poll_ref.ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
     }
 
     pub fn unref(&mut self) {
         self.poll_ref
-            .unref_concurrently_from_event_loop(vm_ctx());
+            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
     }
 
     pub fn acquire(&mut self) -> napi_status {

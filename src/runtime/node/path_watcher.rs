@@ -44,10 +44,7 @@ use crate::node::node_fs_watcher::{Event, EventPathString, FSWatcher};
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
 
-bun_output::declare_scope!(fs_watch, hidden);
-macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(fs_watch, $($arg)*) };
-}
+bun_output::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).

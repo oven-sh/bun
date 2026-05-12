@@ -810,7 +810,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                    crate::shell::escape_8bit(part, &mut copy_script, true)?;
+                    crate::shell::escape_8bit::<true>(part, &mut copy_script)?;
                 } else {
                     copy_script.extend_from_slice(part);
                 }

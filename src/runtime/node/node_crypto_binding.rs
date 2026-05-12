@@ -2,31 +2,15 @@
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
 use core::ffi::{c_char, c_void};
-use core::mem::offset_of;
 
-use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional,
-    VirtualMachineRef as VirtualMachine,
+    self as jsc, AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSValue,
+    JsResult, StrongOptional,
 };
-// `bun_jsc::{AnyTask, ConcurrentTask}` are *modules*; import the structs.
-use bun_jsc::AnyTask::AnyTask;
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::node::StringOrBuffer;
-
-// ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
-
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -91,165 +75,79 @@ macro_rules! extern_crypto_job {
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
             bun_opaque::opaque_ffi! { pub struct Ctx; }
 
-            #[repr(C)]
-            pub struct Job {
-                vm: *mut VirtualMachine,
-                task: WorkPoolTask,
-                any_task: AnyTask,
-                poll: KeepAlive,
-                callback: StrongOptional, // Strong.Optional
-                ctx: *mut Ctx,
+            unsafe extern "C" {
+                #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
+                fn ctx_run_task(ctx: *mut Ctx, global: *mut JSGlobalObject);
+                #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
+                fn ctx_run_from_js(ctx: *mut Ctx, global: *mut JSGlobalObject, callback: JSValue);
+                #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
+                fn ctx_deinit(ctx: *mut Ctx);
             }
 
-            const _: () = {
-                unsafe extern "C" {
-                    #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
-                    fn ctx_run_task(ctx: *mut Ctx, global: *mut JSGlobalObject);
-                    #[link_name = concat!("Bun__", $name_str, "Ctx__runFromJS")]
-                    fn ctx_run_from_js(ctx: *mut Ctx, global: *mut JSGlobalObject, callback: JSValue);
-                    #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
-                    fn ctx_deinit(ctx: *mut Ctx);
+            pub struct ExternCtx {
+                ctx: *mut Ctx,
+                callback: StrongOptional,
+            }
+
+            impl AnyTaskJobCtx for ExternCtx {
+                fn run(&mut self, global: *mut JSGlobalObject) {
+                    // SAFETY: `ctx` is the FFI-owned opaque handle; `global` is the
+                    // creating VM's `*mut JSGlobalObject` (mut provenance).
+                    unsafe { ctx_run_task(self.ctx, global) };
                 }
-
-                impl Job {
-                    pub extern "C" fn create(
-                        global: &JSGlobalObject,
-                        ctx: *mut Ctx,
-                        callback: JSValue,
-                    ) -> *mut Job {
-                        let vm = global.bun_vm_ptr();
-                        let job = bun_core::heap::into_raw(Box::new(Job {
-                            vm,
-                            task: WorkPoolTask {
-                                node: Default::default(),
-                                callback: Self::run_task,
-                            },
-                            // Overwritten immediately below before any use; `Default`
-                            // provides a non-null sentinel callback (zeroed() is UB
-                            // for the `fn` field).
-                            any_task: AnyTask::default(),
-                            poll: KeepAlive::default(),
-                            ctx,
-                            callback: StrongOptional::create(callback, global),
-                        }));
-                        // SAFETY: `job` was just allocated and is exclusively owned here.
-                        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>`
-                        // cannot carry a comptime callback (see event_loop/AnyTask.rs), so build
-                        // the erased AnyTask directly with a non-capturing shim.
-                        unsafe {
-                            (*job).any_task = AnyTask {
-                                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
-                                callback: |ctx: *mut c_void| {
-                                    Job::run_from_js(ctx.cast::<Job>());
-                                    Ok(())
-                                },
-                            };
-                        }
-                        job
+                fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+                    let Some(callback) = self.callback.try_swap() else { return Ok(()) };
+                    let ctx = self.ctx;
+                    if let Err(err) = jsc::from_js_host_call_generic(global, || {
+                        // SAFETY: `ctx` is live until Drop; `global` is the VM's global.
+                        unsafe { ctx_run_from_js(ctx, global as *const _ as *mut _, callback) };
+                    }) {
+                        global.report_active_exception_as_unhandled(err);
                     }
-
-                    pub extern "C" fn create_and_schedule(
-                        global: &JSGlobalObject,
-                        ctx: *mut Ctx,
-                        callback: JSValue,
-                    ) {
-                        let job = Self::create(global, ctx, callback.with_async_context_if_needed(global));
-                        // SAFETY: `job` is a freshly-boxed live pointer.
-                        unsafe { Self::schedule(&mut *job) };
-                    }
-
-                    pub unsafe fn run_task(task: *mut WorkPoolTask) {
-                        // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
-                        let job: *mut Job = unsafe {
-                            bun_core::from_field_ptr!(Job, task, task)
-                        };
-                        // SAFETY: job is live for the duration of the work-pool task.
-                        let job = unsafe { &mut *job };
-                        let vm = job.vm;
-                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`;
-                        // `vm.global` is the VM's `*mut JSGlobalObject` field (mut provenance,
-                        // live for the VM lifetime) — no const→mut cast needed.
-                        unsafe { ctx_run_task(job.ctx, (*vm).global) };
-                        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-                        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
-                        unsafe {
-                            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-                        }
-                    }
-
-                    pub fn run_from_js(this: *mut Job) {
-                        // Guard captures the raw pointer (Copy) so the `&mut *this` reborrow
-                        // below doesn't conflict with the deferred `deinit` closure.
-                        let _guard = scopeguard::guard(this, |this| {
-                            // SAFETY: only call site; runs once.
-                            unsafe { Self::deinit(this) };
-                        });
-                        // SAFETY: `this` was boxed in `create`; we are on the JS thread.
-                        let this = unsafe { &mut *this };
-                        let vm = this.vm;
-                        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
-                        let global: &JSGlobalObject = unsafe { &*(*vm).global };
-
-                        // SAFETY: see above.
-                        if unsafe { (*vm).is_shutting_down() } {
-                            return;
-                        }
-
-                        let Some(callback) = this.callback.try_swap() else {
-                            return;
-                        };
-
-                        let ctx = this.ctx;
-                        let res: JsResult<()> = jsc::from_js_host_call_generic(global, || {
-                            // SAFETY: ctx is live until `deinit` below; `vm.global` is the VM's
-                            // `*mut JSGlobalObject` field (mut provenance) — no const→mut cast needed.
-                            unsafe { ctx_run_from_js(ctx, (*vm).global, callback) };
-                        });
-                        if let Err(err) = res {
-                            global.report_active_exception_as_unhandled(err);
-                        }
-                    }
-
-                    unsafe fn deinit(this: *mut Job) {
-                        // SAFETY: caller guarantees `this` came from `heap::alloc` in `create`.
-                        let mut this = unsafe { bun_core::heap::take(this) };
-                        // SAFETY: ctx is the FFI-owned opaque handle; C++ owns its destructor.
-                        unsafe { ctx_deinit(this.ctx) };
-                        this.poll.unref(vm_ctx());
-                        this.callback.deinit(); // Strong: deallocates the handle slot.
-                        // Box drop frees `this`.
-                    }
-
-                    pub extern "C" fn schedule(this: &mut Job) {
-                        this.poll.r#ref(vm_ctx());
-                        WorkPool::schedule(&mut this.task);
-                    }
+                    Ok(())
                 }
+            }
 
-                // Zig `comptime { @export(...) }` — exported C symbols.
-                #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
-                pub extern "C" fn __create(
-                    global: &JSGlobalObject,
-                    ctx: *mut Ctx,
-                    callback: JSValue,
-                ) -> *mut Job {
-                    Job::create(global, ctx, callback)
+            impl Drop for ExternCtx {
+                fn drop(&mut self) {
+                    // SAFETY: `ctx` is the FFI-owned opaque handle; C++ owns its destructor.
+                    unsafe { ctx_deinit(self.ctx) };
+                    self.callback.deinit();
                 }
+            }
 
-                #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
-                pub extern "C" fn __schedule(this: &mut Job) {
-                    Job::schedule(this)
-                }
+            pub type Job = AnyTaskJob<ExternCtx>;
 
-                #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
-                pub extern "C" fn __create_and_schedule(
-                    global: &JSGlobalObject,
-                    ctx: *mut Ctx,
-                    callback: JSValue,
-                ) {
-                    Job::create_and_schedule(global, ctx, callback)
-                }
-            };
+            // Zig `comptime { @export(...) }` — exported C symbols.
+            #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
+            pub extern "C" fn __create(
+                global: &JSGlobalObject,
+                ctx: *mut Ctx,
+                callback: JSValue,
+            ) -> *mut Job {
+                Job::create(global, ExternCtx { ctx, callback: StrongOptional::create(callback, global) })
+                    .expect("ExternCtx::init is infallible")
+            }
+
+            #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
+            pub extern "C" fn __schedule(this: &mut Job) {
+                // SAFETY: `this` is a live pointer returned by `__create`.
+                unsafe { Job::schedule(this) };
+            }
+
+            #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
+            pub extern "C" fn __create_and_schedule(
+                global: &JSGlobalObject,
+                ctx: *mut Ctx,
+                callback: JSValue,
+            ) {
+                let callback = callback.with_async_context_if_needed(global);
+                Job::create_and_schedule(
+                    global,
+                    ExternCtx { ctx, callback: StrongOptional::create(callback, global) },
+                )
+                .expect("ExternCtx::init is infallible");
+            }
         }
     };
 }
@@ -282,128 +180,53 @@ pub trait CryptoJobCtx: Sized {
     fn deinit(&mut self);
 }
 
-// PORT NOTE: `Ctx: CryptoJobCtx` bound lives on the `impl` blocks, not the
-// struct, so the `Job`/`ScryptJob` type aliases below type-check while the
-// trait impls themselves remain gated.
-#[repr(C)]
-pub struct CryptoJob<Ctx> {
-    vm: *mut VirtualMachine,
-    task: WorkPoolTask,
-    any_task: AnyTask,
-    poll: KeepAlive,
-    callback: StrongOptional, // Strong.Optional
-    ctx: Ctx,
+/// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
+/// `Drop` runs `inner.deinit()` then releases the callback handle, mirroring
+/// the Zig `CryptoJob.deinit` order.
+pub struct CallbackCtx<C: CryptoJobCtx> {
+    callback: StrongOptional,
+    inner: C,
 }
 
-impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
-    pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<*mut Self> {
-        // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
-        // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
-        let vm = global.bun_vm_ptr();
-        let job = bun_core::heap::into_raw(Box::new(CryptoJob {
-            vm,
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::run_task,
-            },
-            // Overwritten below before any use; `Default` provides a non-null
-            // sentinel callback (zeroed() is UB for the `fn` field).
-            any_task: AnyTask::default(),
-            poll: KeepAlive::default(),
-            ctx,
-            callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),
-        }));
-        // If `ctx.init` throws, we must release the callback `Strong` and any resources the
-        // ctx already owns (e.g. `Scrypt` has already protected its password/salt buffers in
-        // `from_js`). `deinit` handles all of that; `poll.unref` is a no-op while inactive.
-        let mut guard = scopeguard::guard(job, |job| {
-            // SAFETY: job came from heap::alloc above and has not been consumed.
-            unsafe { Self::deinit(job) };
-        });
-        // SAFETY: job is exclusively owned here.
-        unsafe { (**guard).ctx.init(global)? };
-        let job = scopeguard::ScopeGuard::into_inner(guard);
-        // SAFETY: job is exclusively owned here.
-        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>` cannot carry a
-        // comptime callback, so build the erased AnyTask directly with a non-capturing shim.
-        unsafe {
-            (*job).any_task = AnyTask {
-                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
-                callback: |ctx: *mut c_void| {
-                    Self::run_from_js(ctx.cast::<Self>());
-                    Ok(())
-                },
-            };
-        }
-        Ok(job)
+impl<C: CryptoJobCtx> AnyTaskJobCtx for CallbackCtx<C> {
+    #[inline]
+    fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        self.inner.init(global)
     }
-
-    pub fn init_and_schedule(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<()> {
-        let job = Self::init(global, callback, ctx)?;
-        // SAFETY: job is a freshly-boxed live pointer.
-        unsafe { Self::schedule(&mut *job) };
+    #[inline]
+    fn run(&mut self, _global: *mut JSGlobalObject) {
+        self.inner.run_task();
+    }
+    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        let Some(callback) = self.callback.try_swap() else { return Ok(()) };
+        self.inner.run_from_js(global, callback);
         Ok(())
     }
+}
 
-    pub unsafe fn run_task(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `Self.task`; recover parent via offset_of.
-        let job: *mut Self =
-            unsafe { bun_core::from_field_ptr!(Self, task, task) };
-        // SAFETY: job is live for the duration of the work-pool task.
-        let job = unsafe { &mut *job };
-        let vm = job.vm;
-
-        job.ctx.run_task();
-
-        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — runs after the body.
-        // SAFETY: `vm` is the singleton JS VM; mutably borrowed only here.
-        unsafe {
-            (*vm).enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
-        }
+impl<C: CryptoJobCtx> Drop for CallbackCtx<C> {
+    fn drop(&mut self) {
+        self.inner.deinit();
+        self.callback.deinit();
     }
+}
 
-    pub fn run_from_js(this: *mut Self) {
-        // RAII: `this` is a `heap::alloc` pointer threaded through C callbacks as
-        // `*mut c_void`, so it cannot live as a `Box` for its whole lifetime. A `Drop`
-        // impl on `CryptoJob<Ctx>` would force a `Ctx: CryptoJobCtx` bound onto the
-        // struct (see PORT NOTE on the struct def), so defer the one-shot free here.
-        // Guard captures the raw pointer (Copy) and is declared BEFORE the `&mut *this`
-        // reborrow below so the reborrow drops first — otherwise `heap::take` in
-        // `deinit` would alias a still-live `&mut Self` (Stacked Borrows UB).
-        let _guard = scopeguard::guard(this, |this| {
-            // SAFETY: only call site; runs once.
-            unsafe { Self::deinit(this) };
-        });
-        // SAFETY: `this` was boxed in `init`; we are on the JS thread.
-        let this_ref = unsafe { &mut *this };
-        let vm = this_ref.vm;
+pub type CryptoJob<C> = AnyTaskJob<CallbackCtx<C>>;
 
-        // SAFETY: `vm` is the singleton JS VM, live for process lifetime.
-        if unsafe { (*vm).is_shutting_down() } {
-            return;
-        }
-
-        let Some(callback) = this_ref.callback.try_swap() else {
-            return;
-        };
-
-        // SAFETY: `vm.global` is non-null while the VM lives.
-        this_ref.ctx.run_from_js(unsafe { &*(*vm).global }, callback);
-    }
-
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.ctx.deinit();
-        this.poll.unref(vm_ctx());
-        this.callback.deinit();
-        // Box drop frees `this`.
-    }
-
-    pub extern "C" fn schedule(this: &mut Self) {
-        this.poll.r#ref(vm_ctx());
-        WorkPool::schedule(&raw mut this.task);
-    }
+/// Zig `CryptoJob.initAndSchedule` — kept as a free fn since `CryptoJob<C>` is
+/// now a type alias for the foreign `AnyTaskJob<_>`.
+pub fn crypto_job_init_and_schedule<C: CryptoJobCtx>(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    ctx: C,
+) -> JsResult<()> {
+    AnyTaskJob::create_and_schedule(
+        global,
+        CallbackCtx {
+            callback: StrongOptional::create(callback.with_async_context_if_needed(global), global),
+            inner: ctx,
+        },
+    )
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -684,7 +507,7 @@ pub mod random {
             length: size as usize,
             result: (),
         };
-        Job::init_and_schedule(global, callback, ctx)?;
+        crypto_job_init_and_schedule(global, callback, ctx)?;
 
         Ok(JSValue::UNDEFINED)
     }
@@ -784,7 +607,7 @@ pub mod random {
             length: size,
             result: (),
         };
-        Job::init_and_schedule(global, callback, ctx)?;
+        crypto_job_init_and_schedule(global, callback, ctx)?;
 
         Ok(JSValue::UNDEFINED)
     }
@@ -828,7 +651,7 @@ use crate::node::util::validators;
 
 // `Crypto.EVP.PBKDF2` — resolves through `crate::crypto::EVP` (module re-export
 // of `evp`) once `pbkdf2` is un-gated in `src/runtime/crypto/mod.rs`.
-use crate::crypto::pbkdf2::{PBKDF2, Job as PBKDF2Job};
+use crate::crypto::pbkdf2::{self, PBKDF2};
 use crate::crypto::create_crypto_error;
 
 impl Scrypt {
@@ -1158,11 +981,11 @@ impl CryptoJobCtx for Scrypt {
 fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let data = PBKDF2::from_js(global_this, call_frame, true)?;
 
-    // SAFETY: `VirtualMachine::get()` returns the thread-local VM, non-null on the JS thread.
-    let vm: *mut VirtualMachine = VirtualMachine::get_mut_ptr();
-    let job = PBKDF2Job::create(vm, global_this, data);
-    // SAFETY: `job` was just boxed by `create()` and is live.
-    Ok(unsafe { (*job).promise.value() })
+    let job = pbkdf2::create_job(global_this, data);
+    // SAFETY: `job` was just boxed by `create()` and is live; `ctx.promise` is
+    // not touched by the off-thread `run` body, and the JS-thread completion
+    // cannot run until this host fn returns.
+    Ok(unsafe { (*job).ctx.promise.value() })
 }
 
 #[bun_jsc::host_fn]
@@ -1301,7 +1124,7 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
 #[bun_jsc::host_fn]
 fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-    ScryptJob::init_and_schedule(global, callback, ctx)?;
+    crypto_job_init_and_schedule(global, callback, ctx)?;
     Ok(JSValue::UNDEFINED)
 }
 

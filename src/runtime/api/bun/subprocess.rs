@@ -2,7 +2,7 @@
 //! code for `Bun.spawnSync`
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 
@@ -24,8 +24,6 @@ use enumset::{EnumSet, EnumSetType};
 use crate::api::bun_process::{self as spawn_process, Process, Rusage, Status};
 #[cfg(not(windows))]
 use crate::api::bun_process::ExtraPipe;
-#[cfg(windows)]
-use crate::api::bun_process::WindowsStdioResult;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 use crate::api::bun::Terminal;
@@ -80,10 +78,7 @@ pub mod js {
 }
 
 /// Platform-dependent stdio result type.
-#[cfg(windows)]
-pub type StdioResult = WindowsStdioResult;
-#[cfg(not(windows))]
-pub type StdioResult = Option<Fd>;
+pub use bun_spawn::subprocess::StdioResult;
 
 #[cfg(windows)]
 type StdioPipeItem = StdioResult;
@@ -107,30 +102,7 @@ pub enum ObservableGetter {
     Stderr,
 }
 
-#[derive(EnumSetType, strum::IntoStaticStr)]
-pub enum StdioKind {
-    Stdin,
-    Stdout,
-    Stderr,
-}
-
-impl StdioKind {
-    pub fn to_fd(self) -> Fd {
-        match self {
-            StdioKind::Stdin => Fd::stdin(),
-            StdioKind::Stdout => Fd::stdout(),
-            StdioKind::Stderr => Fd::stderr(),
-        }
-    }
-
-    pub fn to_num(self) -> c_int {
-        match self {
-            StdioKind::Stdin => 0,
-            StdioKind::Stdout => 1,
-            StdioKind::Stderr => 2,
-        }
-    }
-}
+pub use bun_spawn::process::StdioKind;
 
 // PORT NOTE: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
@@ -143,6 +115,9 @@ impl StdioKind {
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
+// Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+// `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
+#[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
@@ -199,19 +174,6 @@ pub struct Subprocess<'a> {
 // removed — `*mut Process` has no sound placeholder anyway.
 
 
-// Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-// `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
-impl<'a> RefCounted for Subprocess<'a> {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Subprocess.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _: ()) {
-        // SAFETY: refcount hit 0; allocation came from heap::alloc in spawn_maybe_sync.
-        unsafe { drop(bun_core::heap::take(this)) };
-    }
-}
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
 
 // ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
@@ -241,21 +203,7 @@ const _: () = {
         }
     }
 
-    impl<'a> bun_jsc::JsClass for Subprocess<'a> {
-        fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = bun_core::heap::into_raw(Box::new(self));
-            // Ownership of `ptr` transfers to the C++ wrapper (freed via
-            // `SubprocessClass__finalize`).
-            js::to_js(ptr.cast(), global)
-        }
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            js::from_js(value).map(|p| p.as_ptr().cast())
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            js::from_js_direct(value).map(|p| p.as_ptr().cast())
-        }
-        // `noConstructor: true` — no `Subprocess__getConstructor` export; trait default applies.
-    }
+    bun_jsc::impl_js_class_via_generated!(for<'a> Subprocess<'a> => crate::generated_classes::js_Subprocess, no_constructor);
 
     // `SubprocessClass__finalize` / `SubprocessClass__construct` are now emitted
     // by `generateRust()` (`build/*/codegen/generated_classes.rs`); the
@@ -963,36 +911,6 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
-    fn consume_exited_promise(this_jsvalue: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
-        if let Some(promise) = js::exited_promise_get_cached(this_jsvalue) {
-            js::exited_promise_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-            return Some(promise);
-        }
-        None
-    }
-
-    fn consume_on_exit_callback(
-        this_jsvalue: JSValue,
-        global_this: &JSGlobalObject,
-    ) -> Option<JSValue> {
-        if let Some(callback) = js::on_exit_callback_get_cached(this_jsvalue) {
-            js::on_exit_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-            return Some(callback);
-        }
-        None
-    }
-
-    fn consume_on_disconnect_callback(
-        this_jsvalue: JSValue,
-        global_this: &JSGlobalObject,
-    ) -> Option<JSValue> {
-        if let Some(callback) = js::on_disconnect_callback_get_cached(this_jsvalue) {
-            js::on_disconnect_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-            return Some(callback);
-        }
-        None
-    }
-
     pub fn on_process_exit(&self, process: *mut Process, status: Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
@@ -1149,7 +1067,7 @@ impl Subprocess<'_> {
 
         if !is_sync {
             if !this_jsvalue.is_empty() {
-                if let Some(promise) = Self::consume_exited_promise(this_jsvalue, global_this) {
+                if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.
                     let _exit_guard =
                         unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
@@ -1190,7 +1108,7 @@ impl Subprocess<'_> {
                     }
                 }
 
-                if let Some(callback) = Self::consume_on_exit_callback(this_jsvalue, global_this) {
+                if let Some(callback) = js::on_exit_callback_take_cached(this_jsvalue, global_this) {
                     let waitpid_value: JSValue = if let Status::Err(err) = &status {
                         err.to_js(global_this)
                     } else {
@@ -1478,7 +1396,7 @@ impl Subprocess<'_> {
             js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
 
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
-            if let Some(callback) = Self::consume_on_disconnect_callback(this_jsvalue, global_this)
+            if let Some(callback) = js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
                 unsafe {
@@ -1506,45 +1424,30 @@ impl Subprocess<'_> {
     }
 }
 
-pub enum Source {
-    Blob(webcore::AnyBlob),
-    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
-    Detached,
+pub use bun_spawn::subprocess::{Source, SourceData};
+
+// JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
+// `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the
+// value (§Dispatch cold path).
+impl SourceData for webcore::AnyBlob {
+    fn slice(&self) -> &[u8] { webcore::AnyBlob::slice(self) }
+    fn detach(&mut self) { webcore::AnyBlob::detach(self) }
+    fn memory_cost(&self) -> usize { webcore::AnyBlob::memory_cost(self) }
 }
-
-impl Source {
-    pub fn memory_cost(&self) -> usize {
-        // Memory cost of Source and each of the particular fields is covered by size_of::<Subprocess>().
-        match self {
-            Source::Blob(blob) => blob.memory_cost(),
-            // ArrayBuffer is owned by GC.
-            Source::ArrayBuffer(_) => 0,
-            Source::Detached => 0,
-        }
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Source::Blob(blob) => blob.slice(),
-            Source::ArrayBuffer(ab) => ab.slice(),
-            _ => panic!("Invalid source"),
-        }
-    }
-
-    pub fn detach(&mut self) {
-        match self {
-            Source::Blob(blob) => {
-                blob.detach();
-            }
-            Source::ArrayBuffer(ab) => {
-                // ArrayBuffer.Strong.deinit() → drop releases the Strong handle.
-                // TODO(port): verify ArrayBuffer::Strong has explicit deinit vs Drop.
-                let _ = ab;
-            }
-            _ => {}
-        }
-        *self = Source::Detached;
-    }
+/// Local newtype so the [`SourceData`] impl satisfies coherence —
+/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
+/// implementing it directly would be an orphan.
+struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
+impl SourceData for ArrayBufferSource {
+    fn slice(&self) -> &[u8] { self.0.slice() }
+    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */ }
+    fn memory_cost(&self) -> usize { 0 }
+}
+#[inline]
+pub fn source_from_blob(b: webcore::AnyBlob) -> Source { Source::Any(Box::new(b)) }
+#[inline]
+pub fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
+    Source::Any(Box::new(ArrayBufferSource(ab)))
 }
 
 #[cfg(windows)]

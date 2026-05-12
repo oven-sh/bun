@@ -58,7 +58,6 @@ pub(crate) trait TimespecExt {
     fn now_force_real_time() -> Timespec;
     fn ms_from_now_force_real_time(interval: i64) -> Timespec;
     fn since_now_force_real_time(&self) -> u64;
-    fn min_ignore_epoch(self, other: Timespec) -> Timespec;
 }
 impl TimespecExt for Timespec {
     #[inline]
@@ -72,19 +71,6 @@ impl TimespecExt for Timespec {
     #[inline]
     fn since_now_force_real_time(&self) -> u64 {
         self.since_now(TimespecMockMode::ForceRealTime)
-    }
-    /// Port of `bun.timespec.minIgnoreEpoch` (epoch == "no timeout", treated as +∞).
-    fn min_ignore_epoch(self, other: Timespec) -> Timespec {
-        let order = if self.eql(&other) {
-            core::cmp::Ordering::Equal
-        } else if self.eql(&Timespec::EPOCH) {
-            core::cmp::Ordering::Greater
-        } else if other.eql(&Timespec::EPOCH) {
-            core::cmp::Ordering::Less
-        } else {
-            self.order(&other)
-        };
-        if order == core::cmp::Ordering::Less { self } else { other }
     }
 }
 
@@ -947,7 +933,7 @@ fn step_group_one(
                 };
                 let this_timeout = timeout;
                 final_status = AdvanceStatus::Execute {
-                    timeout: prev_timeout.min_ignore_epoch(this_timeout),
+                    timeout: Timespec::min_ignore_epoch(prev_timeout, this_timeout),
                 };
                 active_count += 1;
                 if concurrent_limit != 0 && active_count >= concurrent_limit {

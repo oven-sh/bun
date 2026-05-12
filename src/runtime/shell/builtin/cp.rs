@@ -2,10 +2,10 @@ use core::ffi::CStr;
 
 use bun_paths::resolve_path;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseError, ParseFlagResult, ShellTask,
+    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -84,7 +84,11 @@ impl Cp {
                         1,
                     );
                 }
-                Err(e) => return Self::fail_parse(interp, cmd, e),
+                Err(e) => {
+                    return Builtin::fail_parse(interp, cmd, Kind::Cp, e, || {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+                    })
+                }
             }
         };
         Self::state_mut(interp, cmd).opts = opts;
@@ -100,31 +104,6 @@ impl Cp {
             ebusy: EbusyState::default(),
         });
         Self::next(interp, cmd)
-    }
-
-    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match &e {
-            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Cp),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
-            ParseError::ShowUsage => Kind::Cp.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Cp),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
-                ),
-            )
-            .to_vec(),
-        };
-        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-        Builtin::write_failing_error(interp, cmd, &buf, 1)
     }
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -354,14 +333,6 @@ impl Cp {
         });
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())
     }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cp {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Cp(c) => &mut **c,
-            _ => unreachable!(),
-        }
-    }
 }
 
 pub type ShellCpOutputTask = OutputTask<Cp>;
@@ -564,10 +535,10 @@ impl ShellCpTask {
         // heap-allocated task; the worker thread has exclusive access until
         // the bounce-back is posted.
         unsafe {
-            let this = task
-                .cast::<u8>()
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
-                .cast::<ShellCpTask>();
+            let this = bun_ptr::container_of::<ShellCpTask, _>(
+                task,
+                <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
+            );
             if let Some(e) = (*this).run_from_thread_pool_impl() {
                 (*this).err = Some(e);
                 Self::enqueue_to_event_loop(this);

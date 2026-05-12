@@ -21,24 +21,8 @@ use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOpti
 /// Metadata for route files is specified out of line, either in DevServer where
 /// it is an IncrementalGraph(.server).FileIndex or the production build context
 /// where it is an entrypoint index.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-#[repr(transparent)]
-pub struct OpaqueFileId(u32);
-
-impl OpaqueFileId {
-    #[inline]
-    pub const fn init(v: u32) -> Self {
-        Self(v)
-    }
-    #[inline]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-    #[inline]
-    pub const fn to_optional(self) -> Option<OpaqueFileId> {
-        Some(self)
-    }
-}
+pub enum OpaqueFileIdMarker {}
+pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 // TODO(port): bun.GenericIndex.Optional is a packed sentinel (maxInt = none); using Option<T> here changes layout.
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
@@ -146,24 +130,8 @@ pub enum FileKind {
     // NotFound,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-#[repr(transparent)]
-pub struct RouteIndex(u32); // Zig: u31
-impl RouteIndex {
-    #[inline]
-    pub const fn init(v: u32) -> Self {
-        debug_assert!(v <= (i32::MAX as u32));
-        Self(v)
-    }
-    #[inline]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-    #[inline]
-    pub const fn to_optional(self) -> Option<RouteIndex> {
-        Some(self)
-    }
-}
+pub enum RouteMarker {}
+pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>; // Zig: u31 (loses u31 range debug-assert)
 
 /// Zig: `Route.Edge` — referenced only by the dead `newEdge` free-list helper in the spec.
 /// The struct body is never defined upstream; ported as an opaque unit so `new_edge` compiles
@@ -171,19 +139,8 @@ impl RouteIndex {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct RouteEdge;
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-#[repr(transparent)]
-pub struct RouteEdgeIndex(u32);
-impl RouteEdgeIndex {
-    #[inline]
-    pub const fn init(v: usize) -> Self {
-        Self(v as u32)
-    }
-    #[inline]
-    pub const fn get(self) -> usize {
-        self.0 as usize
-    }
-}
+pub enum RouteEdgeMarker {}
+pub type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
@@ -216,7 +173,7 @@ impl Default for Type {
             style: Style::NextjsPages,
             allow_layouts: false,
             client_file: None,
-            server_file: OpaqueFileId(0),
+            server_file: OpaqueFileId::init(0),
             server_file_string: StrongOptional::empty(),
         }
     }
@@ -228,21 +185,8 @@ impl Type {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-#[repr(transparent)]
-pub struct TypeIndex(u8);
-impl TypeIndex {
-    /// Zig: `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` upper bound.
-    pub const MAX: u8 = u8::MAX;
-    #[inline]
-    pub const fn init(v: u8) -> Self {
-        Self(v)
-    }
-    #[inline]
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
+pub enum TypeMarker {}
+pub type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
 
 impl FrameworkRouter {
     pub fn init_empty(root: &[u8], mut types: Box<[Type]>) -> Result<FrameworkRouter, AllocError> {
@@ -579,7 +523,8 @@ impl<'a> Iterator for StaticPatternIterator<'a> {
 }
 
 /// A part of a URL pattern
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, bun_core::EnumTag)]
+#[enum_tag(existing = PartTag)]
 pub enum Part<'a> {
     /// Does not contain slashes. One per slash.
     Text(&'a [u8]),
@@ -632,17 +577,6 @@ impl SerializedHeader {
 }
 
 impl<'a> Part<'a> {
-    #[inline]
-    fn tag(&self) -> PartTag {
-        match self {
-            Part::Text(_) => PartTag::Text,
-            Part::Param(_) => PartTag::Param,
-            Part::CatchAllOptional(_) => PartTag::CatchAllOptional,
-            Part::CatchAll(_) => PartTag::CatchAll,
-            Part::Group(_) => PartTag::Group,
-        }
-    }
-
     #[inline]
     fn payload(&self) -> &'a [u8] {
         match *self {
@@ -1206,7 +1140,7 @@ impl FrameworkRouter {
                     // `self.routes`.
                     part: unsafe { current_part.to_owned_part() },
                     r#type: ty,
-                    parent: route_index.to_optional(),
+                    parent: Some(route_index),
                     first_child: None,
                     prev_sibling: next,
                     next_sibling: None,
@@ -1216,9 +1150,9 @@ impl FrameworkRouter {
                 })?;
 
                 if let Some(attach) = next {
-                    self.route_ptr_mut(attach).next_sibling = new_route_index.to_optional();
+                    self.route_ptr_mut(attach).next_sibling = Some(new_route_index);
                 } else {
-                    self.route_ptr_mut(route_index).first_child = new_route_index.to_optional();
+                    self.route_ptr_mut(route_index).first_child = Some(new_route_index);
                 }
 
                 // Build each part out as another node in the routing graph. This makes
@@ -1230,7 +1164,7 @@ impl FrameworkRouter {
                         // outlives every `Route` stored in `self.routes`.
                         part: unsafe { next_part_val.to_owned_part() },
                         r#type: ty,
-                        parent: new_route_index.to_optional(),
+                        parent: Some(new_route_index),
                         first_child: None,
                         prev_sibling: next,
                         next_sibling: None,
@@ -1239,7 +1173,7 @@ impl FrameworkRouter {
                         bundle: RouteBundleIndexOptional::None,
                     })?;
                     self.route_ptr_mut(new_route_index).first_child =
-                        newer_route_index.to_optional();
+                        Some(newer_route_index);
                     new_route_index = newer_route_index;
                 }
 
@@ -1257,7 +1191,7 @@ impl FrameworkRouter {
             *out_colliding_file_id = existing;
             return Err(InsertError::RouteCollision);
         }
-        *new_route.file_ptr(file_kind) = file_id.to_optional();
+        *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
             match pattern {
@@ -1415,12 +1349,12 @@ impl FrameworkRouter {
     #[allow(dead_code)]
     fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
         if let Some(i) = self.freed_edges.pop() {
-            self.edges[i.get()] = edge_data;
+            self.edges[i.get_usize()] = edge_data;
             Ok(i)
         } else {
             let i = self.edges.len();
             self.edges.push(edge_data);
-            Ok(RouteEdgeIndex::init(i))
+            Ok(RouteEdgeIndex::from_usize(i))
         }
     }
 }
@@ -1786,7 +1720,7 @@ impl FrameworkRouter {
                             continue 'outer;
                         }
 
-                        let mut out_colliding_file_id = OpaqueFileId(0);
+                        let mut out_colliding_file_id = OpaqueFileId::init(0);
 
                         let file_kind: FileKind = match parsed.kind {
                             ParsedPatternKind::Page => FileKind::Page,
@@ -1952,7 +1886,7 @@ impl JSFrameworkRouter {
             allow_layouts: true,
             // Unused by JSFrameworkRouter
             client_file: None,
-            server_file: OpaqueFileId(0),
+            server_file: OpaqueFileId::init(0),
             server_file_string: StrongOptional::empty(),
             ..Default::default()
         }]);
@@ -2198,22 +2132,7 @@ pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     JSFrameworkRouter::parse_route_pattern(global, frame)
 }
 
-/// Tiny `fmt::Write` adapter over `Vec<u8>` for serializing `Part`s into a byte
-/// buffer (Zig used `std.ArrayList(u8).writer()`).
-struct ByteFmtWriter<'a>(&'a mut Vec<u8>);
-impl<'a> ByteFmtWriter<'a> {
-    #[inline]
-    fn new(v: &'a mut Vec<u8>) -> Self {
-        Self(v)
-    }
-}
-impl fmt::Write for ByteFmtWriter<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.extend_from_slice(s.as_bytes());
-        Ok(())
-    }
-}
+use bun_core::fmt::VecWriter as ByteFmtWriter;
 
 // PORT NOTE: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
 // needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.

@@ -191,17 +191,10 @@ pub fn lookup(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 /// ASCII-case-insensitive `lookup`. All keys are already lower-case, so
-/// lower the probe into a stack buffer (longest key is 11 bytes) and forward.
-/// Replaces `comptime_string_map_jsc::from_js_case_insensitive`'s linear scan.
+/// lower the probe into a stack buffer and forward to the hand-rolled
+/// length-switch `lookup()`.
 pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
-    if bytes.len() > 11 {
-        return None;
-    }
-    let mut buf = [0u8; 11];
-    for (i, b) in bytes.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    lookup(&buf[..bytes.len()])
+    strings::with_ascii_lowercase(bytes, lookup).flatten()
 }
 
 impl EVP {

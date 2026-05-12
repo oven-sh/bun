@@ -12,73 +12,7 @@ use bun_sys::{self as sys, Error as SysError};
 // resolves to the full type (with `bytes`/`signal`/`destroy`) for Body.rs.
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
-// PORT NOTE: `JsSinkAbi` impl so `JSSink<ArrayBufferSink>` /
-// `SinkSignal<ArrayBufferSink>` resolve for Body.rs. The extern symbols are the
-// codegen-emitted `ArrayBufferSink__*` C++ glue (same shape as FileSink's).
-#[allow(non_snake_case)]
-mod array_buffer_sink_abi {
-    use super::*;
-    unsafe extern "C" {
-        pub(super) safe fn ArrayBufferSink__fromJS(value: JSValue) -> usize;
-        // `&JSGlobalObject` discharges the only deref'd-param precondition;
-        // `object`/`destructor` are stored opaquely in the JS wrapper.
-        pub(super) safe fn ArrayBufferSink__createObject(
-            global: &JSGlobalObject,
-            object: *mut c_void,
-            destructor: usize,
-        ) -> JSValue;
-        pub(super) safe fn ArrayBufferSink__setDestroyCallback(value: JSValue, callback: usize);
-        // `&JSGlobalObject` discharges the only deref'd-param precondition;
-        // `ptr`/`jsvalue_ptr` are opaque sink/signal slots — module-private,
-        // sole caller (`JsSinkAbi::assign_to_stream_extern`) forwards live
-        // pointers derived from `&mut T` / `&raw mut signal.ptr`.
-        pub(super) safe fn ArrayBufferSink__assignToStream(
-            global: &JSGlobalObject,
-            stream: JSValue,
-            ptr: *mut c_void,
-            jsvalue_ptr: *mut *mut c_void,
-        ) -> JSValue;
-        pub(super) safe fn ArrayBufferSink__onClose(ptr: JSValue, reason: JSValue);
-        pub(super) safe fn ArrayBufferSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
-        pub(super) safe fn ArrayBufferSink__detachPtr(ptr: JSValue);
-    }
-}
-
-impl JsSinkAbi for ArrayBufferSink {
-    fn from_js_extern(value: JSValue) -> usize {
-        array_buffer_sink_abi::ArrayBufferSink__fromJS(value)
-    }
-    fn create_object_extern(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue {
-        array_buffer_sink_abi::ArrayBufferSink__createObject(global, object, destructor)
-    }
-    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback)
-    }
-    fn assign_to_stream_extern(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue {
-        array_buffer_sink_abi::ArrayBufferSink__assignToStream(global, stream, ptr, jsvalue_ptr)
-    }
-    fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        array_buffer_sink_abi::ArrayBufferSink__onClose(ptr, reason)
-    }
-    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset)
-    }
-    fn detach_ptr_extern(ptr: JSValue) {
-        // Spec Sink.zig:259/330 — every JSSink instantiation calls
-        // `${abi}__detachPtr` from `detach`; the trait default no-op was wrong
-        // for ArrayBufferSink (Body::ValueBufferer drop path reaches here).
-        array_buffer_sink_abi::ArrayBufferSink__detachPtr(ptr)
-    }
-}
+crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
 impl JSSink<ArrayBufferSink> {
     /// Port of Zig `JSSink.detach` (Sink.zig) for the `ArrayBufferSink`
@@ -156,6 +90,74 @@ pub trait SinkHandler {
     fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn connect(&mut self, signal: Signal) -> sys::Result<()>;
+}
+
+/// Generates the boilerplate `impl SinkHandler for $Ty` that forwards every
+/// trait method to the same-named **inherent** method on `$Ty`.
+///
+/// Mirrors Zig `Sink.VTable.wrap(comptime Wrapped)` (src/runtime/webcore/Sink.zig:105-146),
+/// which builds the vtable by comptime duck-typing on `Wrapped.{write,writeLatin1,
+/// writeUTF16,end,connect}` — no per-type forwarding shim exists in Zig. The
+/// five hand-written Rust impls were pure port artifacts of needing nominal
+/// trait impls; this macro restores the single-definition shape.
+///
+/// `connect`: the inherent fn returns `()` (and may take `&self` *or* `&mut self`
+/// — `&mut → &` coerces); the trait wants `bun_sys::Result<()>`, so the macro
+/// wraps it in `Ok(())`.
+///
+/// Method resolution: `<$Ty>::name` prefers the inherent item over the trait
+/// item being defined, so the forward never recurses.
+#[macro_export]
+macro_rules! impl_sink_handler {
+    // `[...]` arm FIRST: a leading `[` would otherwise feed into the `:ty`
+    // arm's fragment parser (which commits and hard-errors on e.g.
+    // `[const SSL: bool, …]` instead of backtracking).
+    ([$($g:tt)*] $Ty:ty) => {
+        $crate::impl_sink_handler!(@emit [$($g)*] $Ty);
+    };
+    ($Ty:ty) => {
+        $crate::impl_sink_handler!(@emit [] $Ty);
+    };
+    (@emit [$($g:tt)*] $Ty:ty) => {
+        impl<$($g)*> $crate::webcore::sink::SinkHandler for $Ty {
+            #[inline]
+            fn write(
+                &mut self,
+                data: $crate::webcore::streams::Result,
+            ) -> $crate::webcore::streams::result::Writable {
+                <$Ty>::write(self, data)
+            }
+            #[inline]
+            fn write_latin1(
+                &mut self,
+                data: $crate::webcore::streams::Result,
+            ) -> $crate::webcore::streams::result::Writable {
+                <$Ty>::write_latin1(self, data)
+            }
+            #[inline]
+            fn write_utf16(
+                &mut self,
+                data: $crate::webcore::streams::Result,
+            ) -> $crate::webcore::streams::result::Writable {
+                <$Ty>::write_utf16(self, data)
+            }
+            #[inline]
+            fn end(
+                &mut self,
+                err: ::core::option::Option<::bun_sys::Error>,
+            ) -> ::bun_sys::Result<()> {
+                <$Ty>::end(self, err)
+            }
+            #[inline]
+            fn connect(
+                &mut self,
+                signal: $crate::webcore::streams::Signal,
+            ) -> ::bun_sys::Result<()> {
+                <$Ty>::connect(self, signal);
+                ::bun_sys::Result::Ok(())
+            }
+        }
+    };
 }
 
 pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
@@ -474,6 +476,107 @@ pub struct JSSink<T> {
     pub sink: T,
 }
 
+// ─── Canonical JsSinkAbi codegen ────────────────────────────────────────────
+// Rust equivalent of Zig `Sink.JSSink(comptime SinkType, comptime abi_name)`'s
+// `@extern(.{ .name = abi_name ++ "__fn" })` block (Sink.zig:253-344). Const-
+// generic `&'static str` cannot drive `#[link_name]`, so the abi name is taken
+// as a macro literal and `concat!`-ed — exactly mirroring `abi_name ++ "__…"`.
+//
+// `decl_js_sink_externs!` emits the 7-fn extern set into a named submodule;
+// `impl_js_sink_abi!` wraps it in a 1:1-forwarding `JsSinkAbi` impl. The
+// extern-only form is exposed separately so `HTTPServerWritable<SSL,HTTP3>`
+// can declare three sets and keep its const-generic 3-way dispatch impl.
+
+/// Declare the codegen-emitted `${abi}__{fromJS,createObject,setDestroyCallback,
+/// assignToStream,onClose,onReady,detachPtr}` C externs into `pub mod $m`.
+///
+/// `safe fn`: `&JSGlobalObject` discharges the only deref'd-param precondition;
+/// `*mut c_void` args are stored opaquely in the JS wrapper — module-private,
+/// sole callers are the `JsSinkAbi` forwards which pass live pointers.
+#[macro_export]
+macro_rules! decl_js_sink_externs {
+    ($abi:literal as $m:ident) => {
+        #[allow(non_snake_case)]
+        pub mod $m {
+            use ::core::ffi::c_void;
+            use ::bun_jsc::{JSGlobalObject, JSValue};
+            unsafe extern "C" {
+                #[link_name = concat!($abi, "__fromJS")]
+                pub safe fn from_js(value: JSValue) -> usize;
+                #[link_name = concat!($abi, "__createObject")]
+                pub safe fn create_object(
+                    g: &JSGlobalObject,
+                    o: *mut c_void,
+                    d: usize,
+                ) -> JSValue;
+                #[link_name = concat!($abi, "__setDestroyCallback")]
+                pub safe fn set_destroy_callback(v: JSValue, cb: usize);
+                #[link_name = concat!($abi, "__assignToStream")]
+                pub safe fn assign_to_stream(
+                    g: &JSGlobalObject,
+                    s: JSValue,
+                    p: *mut c_void,
+                    jp: *mut *mut c_void,
+                ) -> JSValue;
+                #[link_name = concat!($abi, "__onClose")]
+                pub safe fn on_close(p: JSValue, r: JSValue);
+                #[link_name = concat!($abi, "__onReady")]
+                pub safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
+                #[link_name = concat!($abi, "__detachPtr")]
+                pub safe fn detach_ptr(p: JSValue);
+            }
+        }
+    };
+}
+
+/// Declare `${abi}__*` externs (via [`decl_js_sink_externs!`]) and emit a
+/// 1:1-forwarding `impl JsSinkAbi for $Ty`. Wrapped in an anonymous `const` so
+/// the extern submodule does not leak into the caller's namespace.
+#[macro_export]
+macro_rules! impl_js_sink_abi {
+    ($Ty:ty, $abi:literal) => {
+        const _: () = {
+            $crate::decl_js_sink_externs!($abi as __abi);
+            impl $crate::webcore::sink::JsSinkAbi for $Ty {
+                fn from_js_extern(value: ::bun_jsc::JSValue) -> usize {
+                    __abi::from_js(value)
+                }
+                fn create_object_extern(
+                    global: &::bun_jsc::JSGlobalObject,
+                    object: *mut ::core::ffi::c_void,
+                    destructor: usize,
+                ) -> ::bun_jsc::JSValue {
+                    __abi::create_object(global, object, destructor)
+                }
+                fn set_destroy_callback_extern(value: ::bun_jsc::JSValue, callback: usize) {
+                    __abi::set_destroy_callback(value, callback)
+                }
+                fn assign_to_stream_extern(
+                    global: &::bun_jsc::JSGlobalObject,
+                    stream: ::bun_jsc::JSValue,
+                    ptr: *mut ::core::ffi::c_void,
+                    jsvalue_ptr: *mut *mut ::core::ffi::c_void,
+                ) -> ::bun_jsc::JSValue {
+                    __abi::assign_to_stream(global, stream, ptr, jsvalue_ptr)
+                }
+                fn on_close_extern(ptr: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue) {
+                    __abi::on_close(ptr, reason)
+                }
+                fn on_ready_extern(
+                    ptr: ::bun_jsc::JSValue,
+                    amount: ::bun_jsc::JSValue,
+                    offset: ::bun_jsc::JSValue,
+                ) {
+                    __abi::on_ready(ptr, amount, offset)
+                }
+                fn detach_ptr_extern(ptr: ::bun_jsc::JSValue) {
+                    __abi::detach_ptr(ptr)
+                }
+            }
+        };
+    };
+}
+
 /// Per-sink C ABI surface that the `js_sink!` macro would normally emit via
 /// `#[link_name = concat!($abi_name, "__fn")]` externs. Since `&str` const-
 /// generics can't drive `#[link_name]`, each `SinkType` provides the resolved
@@ -508,10 +611,8 @@ pub trait JsSinkAbi {
         amount: crate::webcore::jsc::JSValue,
         offset: crate::webcore::jsc::JSValue,
     );
-    /// `${abi_name}__detachPtr`. Defaulted to a no-op for sinks that never
-    /// route through `JSSink::detach` (only `HTTPServerWritable` uses this
-    /// path today via `RequestContext::do_render_stream`).
-    fn detach_ptr_extern(_ptr: crate::webcore::jsc::JSValue) {}
+    /// `${abi_name}__detachPtr`.
+    fn detach_ptr_extern(ptr: crate::webcore::jsc::JSValue);
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other

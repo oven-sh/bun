@@ -1534,10 +1534,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_slice.as_ref())
     }
-
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
 }
 
 pub type MD4 = StaticCryptoHasher<hashers::MD4>;

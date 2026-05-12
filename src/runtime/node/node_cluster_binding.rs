@@ -43,14 +43,6 @@ fn child_singleton() -> *mut InternalMsgHolder {
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) as *mut _ }
 }
 
-/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
-/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
-/// the aio hook registered by `crate::init()`.
-#[inline]
-fn vm_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
 #[bun_jsc::host_fn]
 pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
@@ -301,9 +293,9 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     let vm = global.bun_vm().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
-        vm.channel_ref.ref_(vm_ctx());
+        vm.channel_ref.ref_(bun_io::js_vm_ctx());
     } else {
-        vm.channel_ref.unref(vm_ctx());
+        vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -312,7 +304,7 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(vm_ctx());
+        vm.channel_ref.ref_(bun_io::js_vm_ctx());
     }
 }
 
@@ -320,7 +312,7 @@ pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(vm_ctx());
+        vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
 }
 

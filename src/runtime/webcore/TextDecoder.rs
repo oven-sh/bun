@@ -89,10 +89,6 @@ impl TextDecoder {
         Box::new(init)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     #[bun_jsc::host_fn(getter)]
     pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_boolean(self.ignore_bom)

@@ -269,8 +269,7 @@ impl BunxCommand {
         let package_json_contents = package_json_bytes.as_slice();
         let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
+        bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
         // PORT NOTE: Zig passed `transpiler.allocator` (global mimalloc). The

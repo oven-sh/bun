@@ -51,6 +51,11 @@ use crate::server::html_bundle;
 
 /// Mirrors Zig `BundleV2.JSBundleCompletionTask`. See module doc for the
 /// layering rationale.
+// `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
+// NOTE: comment says ThreadSafeRefCount but field is `RefCount<Self>` — pre-
+// existing port discrepancy, not addressed by the dedup.
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
@@ -75,18 +80,13 @@ pub struct JSBundleCompletionTask {
     pub started_at_ns: u64,
 }
 
-// `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-impl RefCounted for JSBundleCompletionTask {
-    type DestructorCtx = ();
-    fn debug_name() -> &'static str {
-        "JSBundleCompletionTask"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; allocation came from `heap::alloc`.
+impl JSBundleCompletionTask {
+    /// `RefCounted` destructor — last ref dropped.
+    ///
+    /// # Safety
+    /// `this` must be the sole owner of a `heap::alloc`'d allocation.
+    unsafe fn deinit(this: *mut Self) {
+        // SAFETY: caller contract.
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
@@ -132,10 +132,7 @@ pub fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        (*completion).task = AnyTask {
-            ctx: NonNull::new(completion.cast()),
-            callback: JSBundleCompletionTask::on_complete_anytask,
-        };
+        (*completion).task = AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
         if let Some(plugin) = (*completion).plugins {
             (*plugin.as_ptr()).set_config(completion.cast());
         }
@@ -544,8 +541,7 @@ impl JSBundleCompletionTask {
 
     /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
     /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
-        let ctx = ctx.cast::<Self>();
+    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -760,17 +756,7 @@ impl JSBundleCompletionTask {
 // here — codegen already provides it (and a safe `sourcemap_set_cached`
 // wrapper) in `crate::generated_classes::js_BuildArtifact`; redeclaring would
 // trip `clashing_extern_declarations` once the param types drift.
-#[cfg(all(windows, target_arch = "x86_64"))]
-unsafe extern "sysv64" {
-    safe fn Bun__setupLazyMetafile(
-        global_this: &JSGlobalObject,
-        build_output: JSValue,
-        metafile_json_string: JSValue,
-        metafile_markdown_string: JSValue,
-    );
-}
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-unsafe extern "C" {
+bun_jsc::jsc_abi_extern! {
     safe fn Bun__setupLazyMetafile(
         global_this: &JSGlobalObject,
         build_output: JSValue,

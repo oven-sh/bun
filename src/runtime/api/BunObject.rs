@@ -98,9 +98,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, String as BunString, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_io::{self as Async, KeepAlive};
-use bun_threading::work_pool::WorkPool;
-
 use bun_shell_parser::braces as Braces;
 use bun_zlib as zlib;
 use crate::cli::open::Editor;
@@ -2482,49 +2479,30 @@ pub mod JSZlib {
                 let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| unsafe {
                     bun_libdeflate::Decompressor::destroy(p)
                 });
-                loop {
-                    // Zig passes list.allocatedSlice() (= [0..capacity]) every iteration;
-                    // libdeflate restarts decompression from scratch on each call.
-                    // Reset len to 0 so spare_capacity_mut() spans the full [0..capacity)
-                    // window (cheap: u8 has no Drop, this just zeroes `len`).
-                    list.clear();
-                    let result = decompressor.decompress_into(
-                        compressed,
-                        list.spare_capacity_mut(),
-                        if is_gzip {
-                            bun_libdeflate::Encoding::Gzip
-                        } else {
-                            bun_libdeflate::Encoding::Deflate
-                        },
-                    );
-
-                    // SAFETY: result.written ≤ list.capacity() and libdeflate has
-                    // initialized output[..result.written].
-                    unsafe { list.set_len(result.written) };
-
-                    if result.status == bun_libdeflate::Status::InsufficientSpace {
-                        if list.capacity() > 1024 * 1024 * 1024 {
-                            drop(list);
-                            return Err(global_this.throw_out_of_memory());
-                        }
-
-                        let new_cap = list.capacity() * 2;
-                        list.reserve(new_cap.saturating_sub(list.len()));
-                        continue;
+                let encoding = if is_gzip {
+                    bun_libdeflate::Encoding::Gzip
+                } else {
+                    bun_libdeflate::Encoding::Deflate
+                };
+                let result = decompressor.decompress_to_vec_grow(
+                    compressed,
+                    &mut list,
+                    encoding,
+                    1024 * 1024 * 1024,
+                );
+                match result.status {
+                    bun_libdeflate::Status::Success => {}
+                    bun_libdeflate::Status::InsufficientSpace => {
+                        drop(list);
+                        return Err(global_this.throw_out_of_memory());
                     }
-
-                    if result.status == bun_libdeflate::Status::Success {
-                        // SAFETY: result.written ≤ list.capacity() and bytes [0..written] were
-                        // initialized by libdeflate above.
-                        unsafe { list.set_len(result.written) };
-                        break;
+                    _ => {
+                        drop(list);
+                        return Err(global_this.throw(format_args!(
+                            "libdeflate returned an error: {}",
+                            libdeflate_status_str(result.status),
+                        )));
                     }
-
-                    drop(list);
-                    return Err(global_this.throw(format_args!(
-                        "libdeflate returned an error: {}",
-                        libdeflate_status_str(result.status),
-                    )));
                 }
 
                 // Ownership of the allocation transfers to JSC; freed via
@@ -2659,24 +2637,8 @@ pub mod JSZlib {
                     compressor.max_bytes_needed(compressed, encoding),
                 );
 
-                loop {
-                    // list.len() == 0 here (no retry path), so spare == [0..capacity] == allocatedSlice().
-                    let result = compressor.compress_into(
-                        compressed,
-                        list.spare_capacity_mut(),
-                        encoding,
-                    );
-
-                    // SAFETY: result.written ≤ list.capacity() and bytes [0..written] were
-                    // initialized by libdeflate above.
-                    unsafe { list.set_len(result.written) };
-
-                    if result.status == bun_libdeflate::Status::Success {
-                        // SAFETY: same invariant as above; redundant set_len mirrors Zig.
-                        unsafe { list.set_len(result.written) };
-                        break;
-                    }
-
+                let result = compressor.compress_to_vec(compressed, &mut list, encoding);
+                if result.status != bun_libdeflate::Status::Success {
                     drop(list);
                     return Err(global_this.throw(format_args!(
                         "libdeflate error: {}",
@@ -2855,51 +2817,22 @@ pub mod JSZstd {
 
     // --- Async versions ---
 
-    pub struct ZstdJob {
+    pub struct ZstdCtx {
         /// Created with `is_async=true` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
         pub level: i32,
-        pub task: jsc::WorkPoolTask,
-        pub promise: jsc::JSPromiseStrong,
-        pub vm: &'static VirtualMachine,
         pub output: Vec<u8>,
         pub error_message: Option<&'static [u8]>,
-        pub any_task: jsc::AnyTask::AnyTask,
-        pub poll: KeepAlive,
+        pub promise: jsc::JSPromiseStrong,
     }
 
-    impl ZstdJob {
-        // bun.TrivialNew(@This())
-        pub fn new(init: ZstdJob) -> *mut ZstdJob {
-            bun_core::heap::into_raw(Box::new(init))
-        }
+    impl jsc::AnyTaskJobCtx for ZstdCtx {
+        fn run(&mut self, _global: *mut JSGlobalObject) {
+            let input = self.buffer.slice();
 
-        /// SAFETY: `task` must point to the `task` field of a live `ZstdJob`
-        /// scheduled via `WorkPool::schedule` from `ZstdJob::create`.
-        pub unsafe fn run_task(task: *mut jsc::WorkPoolTask) {
-            // SAFETY: task points to ZstdJob.task; recover parent via offset_of.
-            let job_ptr: *mut ZstdJob = unsafe {
-                bun_core::from_field_ptr!(ZstdJob, task, task)
-            };
-            let _enqueue = scopeguard::guard(job_ptr, |job_ptr| {
-                // SAFETY: job_ptr is the unique live ZstdJob; vm.event_loop is a
-                // self-pointer into the VM and the loop outlives the job
-                // (vm is &'static).
-                unsafe {
-                    let job = &mut *job_ptr;
-                    (*job.vm.event_loop).enqueue_task_concurrent(
-                        jsc::ConcurrentTask::create(job.any_task.task()),
-                    );
-                }
-            });
-            // SAFETY: caller contract — job_ptr is the unique live ZstdJob.
-            let job = unsafe { &mut *job_ptr };
-
-            let input = job.buffer.slice();
-
-            if job.is_compress {
+            if self.is_compress {
                 // Compression path
                 // Calculate max compressed size
                 let max_size = bun_zstd::compress_bound(input.len());
@@ -2907,53 +2840,42 @@ pub mod JSZstd {
                 // and surfaced OOM as an error. Rust's global allocator aborts on
                 // OOM, so the explicit "Out of memory" path is unreachable here.
                 // Phase B: route through a fallible bun_alloc helper.
-                job.output = vec![0u8; max_size];
+                self.output = vec![0u8; max_size];
 
                 // Perform compression
-                job.output = match bun_zstd::compress(&mut job.output, input, Some(job.level)) {
+                self.output = match bun_zstd::compress(&mut self.output, input, Some(self.level)) {
                     bun_zstd::Result::Success(size) => 'blk: {
                         // Resize to actual compressed size
-                        if size < job.output.len() {
-                            let mut out = core::mem::take(&mut job.output);
+                        if size < self.output.len() {
+                            let mut out = core::mem::take(&mut self.output);
                             out.truncate(size);
                             out.shrink_to_fit();
                             break 'blk out;
                         }
-                        break 'blk core::mem::take(&mut job.output);
+                        break 'blk core::mem::take(&mut self.output);
                     }
                     bun_zstd::Result::Err(err) => {
-                        job.output = Vec::new();
-                        job.error_message = Some(err);
+                        self.output = Vec::new();
+                        self.error_message = Some(err);
                         return;
                     }
                 };
             } else {
                 // Decompression path
-                job.output = match bun_zstd::decompress_alloc(input) {
+                self.output = match bun_zstd::decompress_alloc(input) {
                     Ok(v) => v,
                     Err(_) => {
-                        job.error_message = Some(b"Decompression failed");
+                        self.error_message = Some(b"Decompression failed");
                         return;
                     }
                 };
             }
         }
 
-        pub fn run_from_js(this: *mut ZstdJob) -> Result<(), jsc::JsTerminated> {
-            // SAFETY: `this` was created via ZstdJob::new (heap::alloc) and is exclusively
-            // owned here; destroy() reclaims the Box at scope exit on every path.
-            let _deinit = scopeguard::guard(this, |p| unsafe { ZstdJob::destroy(p) });
-            // SAFETY: `this` is non-null and valid for the duration of this call (see above).
-            let this = unsafe { &mut *this };
+        fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+            let promise = self.promise.swap();
 
-            if this.vm.is_shutting_down() {
-                return Ok(());
-            }
-
-            let global_this: &JSGlobalObject = this.vm.global();
-            let promise = this.promise.swap();
-
-            if let Some(err_msg) = this.error_message {
+            if let Some(err_msg) = self.error_message {
                 promise.reject_with_async_stack(
                     global_this,
                     Ok(global_this
@@ -2963,94 +2885,58 @@ pub mod JSZstd {
                 return Ok(());
             }
 
-            let output_slice = core::mem::take(&mut this.output);
+            let output_slice = core::mem::take(&mut self.output);
             let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
             promise.resolve(global_this, buffer_value)?;
             Ok(())
         }
+    }
 
-        /// Tear down and free a heap-allocated job.
-        ///
-        /// SAFETY: `this` must have been produced by `ZstdJob::new` (i.e. `heap::alloc`)
-        /// and must not be used after this call. Invoked exactly once from `run_from_js`.
-        pub unsafe fn destroy(this: *mut ZstdJob) {
-            // SAFETY: caller contract — `this` is the unique raw Box pointer.
-            let mut boxed = unsafe { bun_core::heap::take(this) };
-            boxed.poll.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ));
-            // `buffer: ThreadSafe<StringOrBuffer>` unprotects + drops with `boxed`.
-            boxed.promise = Default::default();
-            boxed.output = Vec::new();
-            // `boxed` drops here, freeing the allocation.
-        }
+    pub type ZstdJob = jsc::AnyTaskJob<ZstdCtx>;
 
-        pub fn create(
-            vm: &'static VirtualMachine,
-            global_this: &JSGlobalObject,
-            buffer: node::StringOrBuffer,
-            is_compress: bool,
-            level: i32,
-        ) -> *mut ZstdJob {
-            let job = ZstdJob::new(ZstdJob {
+    /// Zig `ZstdJob.create` — free fn (not `impl ZstdJob`) because
+    /// `AnyTaskJob<_>` is a foreign type.
+    fn create_job(
+        global_this: &JSGlobalObject,
+        buffer: node::StringOrBuffer,
+        is_compress: bool,
+        level: i32,
+    ) -> *mut ZstdJob {
+        let job = jsc::AnyTaskJob::create(
+            global_this,
+            ZstdCtx {
                 // Caller passed `from_js_maybe_async(.., is_async=true)`; adopt
                 // so the protect ref is paired with drop.
                 buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
-                task: jsc::WorkPoolTask {
-                    node: Default::default(),
-                    callback: ZstdJob::run_task,
-                },
-                promise: Default::default(),
-                vm,
                 output: Vec::new(),
                 error_message: None,
-                any_task: Default::default(), // overwritten below
-                poll: KeepAlive::default(),
-            });
-
-            // SAFETY: job is freshly allocated and exclusively owned here.
-            let job_ref = unsafe { &mut *job };
-            job_ref.promise = jsc::JSPromiseStrong::init(global_this);
-            // PORT NOTE: Zig `jsc.AnyTask.New(ZstdJob, runFromJS).init(job)` monomorphizes
-            // a wrapper at comptime; Rust's `AnyTask::New<T>` cannot bind a callback
-            // const-generically yet, so build the AnyTask inline with an erased shim.
-            job_ref.any_task = jsc::AnyTask::AnyTask {
-                ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
-                callback: |p: *mut c_void| {
-                    ZstdJob::run_from_js(p.cast::<ZstdJob>()).map_err(Into::into)
-                },
-            };
-            job_ref.poll.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ));
-            WorkPool::schedule(&raw mut job_ref.task);
-
-            job
-        }
+                promise: jsc::JSPromiseStrong::init(global_this),
+            },
+        )
+        .expect("ZstdCtx::init is infallible");
+        // SAFETY: `job` is a freshly-created live pointer.
+        unsafe { jsc::AnyTaskJob::schedule(job) };
+        job
     }
 
     #[bun_jsc::host_fn]
     pub fn compress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-
-        // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-        let vm: &'static VirtualMachine = global_this.bun_vm();
-        let job = ZstdJob::create(vm, global_this, buffer, true, level);
-        // SAFETY: job is live until run_from_js consumes it.
-        Ok(unsafe { (*job).promise.value() })
+        let job = create_job(global_this, buffer, true, level);
+        // SAFETY: `job` is live; `ctx.promise` is not touched by the off-thread
+        // `run` body, and the JS-thread completion cannot run until this host
+        // fn returns.
+        Ok(unsafe { (*job).ctx.promise.value() })
     }
 
     #[bun_jsc::host_fn]
     pub fn decompress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-
-        // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-        let vm: &'static VirtualMachine = global_this.bun_vm();
-        let job = ZstdJob::create(vm, global_this, buffer, false, 0); // level is ignored for decompression
-        // SAFETY: job is live until run_from_js consumes it.
-        Ok(unsafe { (*job).promise.value() })
+        let job = create_job(global_this, buffer, false, 0); // level is ignored for decompression
+        // SAFETY: see `compress`.
+        Ok(unsafe { (*job).ctx.promise.value() })
     }
 }
 

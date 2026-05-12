@@ -48,11 +48,12 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             ctx: *mut ContextData,
             cli: *mut CommandLineArguments,
         }
-        impl Analyzer {
+        impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer {
             fn on_analyze(
-                this: &mut Self,
-                result: &mut DependenciesScannerResult,
+                &mut self,
+                result: &mut DependenciesScannerResult<'_, '_>,
             ) -> Result<(), Error> {
+                let this = self;
                 // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
                 //
                 // Process-lifetime storage for the rewritten positionals.
@@ -98,18 +99,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             }
         }
 
-        // Type-erased trampoline matching `DependenciesScanner.on_fetch` (Zig used
-        // `@ptrCast` on the method fn pointer; Rust routes through a thin shim).
-        fn on_fetch_trampoline(
-            ctx: *mut (),
-            result: &mut DependenciesScannerResult,
-        ) -> Result<(), Error> {
-            // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below
-            // and outlives the `BuildCommand::exec` call.
-            let analyzer = unsafe { bun_ptr::callback_ctx::<Analyzer>(ctx.cast()) };
-            Analyzer::on_analyze(analyzer, result)
-        }
-
         // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
         // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
         // owned buffer (small one-shot list — no perf concern). Captured *before*
@@ -129,11 +118,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             cli: &raw mut cli,
         };
 
-        let mut fetcher = DependenciesScanner {
-            ctx: (&raw mut analyzer).cast::<()>(),
-            entry_points,
-            on_fetch: on_fetch_trampoline,
-        };
+        let mut fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
         // Zig: `bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher)`.
         // `Command.get()` resolves to the same `*ContextData` already held in

@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, BuiltinIO, Impl, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
@@ -177,14 +177,6 @@ impl Yes {
         }
         debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Yes {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            Impl::Yes(y) => &mut **y,
-            _ => unreachable!(),
-        }
     }
 
     /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields

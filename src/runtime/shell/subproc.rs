@@ -200,11 +200,7 @@ impl Drop for FileSinkPtr {
     }
 }
 
-bun_output::declare_scope!(SHELL_SUBPROC, visible);
-
-macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(SHELL_SUBPROC, $($arg)*) };
-}
+bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
 #[derive(Default)]
@@ -1079,7 +1075,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        JscSubprocess::Source::Blob(blob),
+                        JscSubprocess::source_from_blob(blob),
                     )));
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
@@ -1087,7 +1083,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        JscSubprocess::Source::ArrayBuffer(core::mem::take(array_buffer)),
+                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -1138,7 +1134,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        JscSubprocess::Source::Blob(blob),
+                        JscSubprocess::source_from_blob(blob),
                     )))
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
@@ -1146,7 +1142,7 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        JscSubprocess::Source::ArrayBuffer(core::mem::take(array_buffer)),
+                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
                     )))
                 }
                 Stdio::Memfd(memfd) => {

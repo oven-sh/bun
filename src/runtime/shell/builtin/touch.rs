@@ -1,9 +1,9 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
-    OutputTask, OutputTaskVTable, ParseError, ParseFlagResult, ShellTask,
+    OutputTask, OutputTaskVTable, ParseFlagResult, ShellTask,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -55,7 +55,11 @@ impl Touch {
                         1,
                     );
                 }
-                Err(e) => return Self::fail_parse(interp, cmd, e),
+                Err(e) => {
+                    return Builtin::fail_parse(interp, cmd, Kind::Touch, e, || {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+                    })
+                }
             }
         };
         Self::state_mut(interp, cmd).opts = opts;
@@ -70,31 +74,6 @@ impl Touch {
             output_queue: std::collections::VecDeque::new(),
         });
         Self::next(interp, cmd)
-    }
-
-    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match &e {
-            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Touch),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
-            ParseError::ShowUsage => Kind::Touch.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Touch),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
-                ),
-            )
-            .to_vec(),
-        };
-        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-        Builtin::write_failing_error(interp, cmd, &buf, 1)
     }
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -189,14 +168,6 @@ impl Touch {
             return;
         }
         Self::next(interp, cmd).run(interp);
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Touch {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Touch(t) => &mut **t,
-            _ => unreachable!(),
-        }
     }
 }
 

@@ -13,6 +13,7 @@ use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
+use bun_install_types::DependencyGroup;
 use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
@@ -1041,15 +1042,7 @@ impl UpdateInteractiveCommand {
                 // Already filtered by version.order check above
 
                 version_buf.clear();
-                let dep_type: &'static [u8] = if dep.behavior.is_dev() {
-                    b"devDependencies"
-                } else if dep.behavior.is_optional() {
-                    b"optionalDependencies"
-                } else if dep.behavior.is_peer() {
-                    b"peerDependencies"
-                } else {
-                    b"dependencies"
-                };
+                let dep_type: &'static [u8] = DependencyGroup::prop_for_behavior(dep.behavior);
 
                 // Get workspace name but only show if it's actually a workspace
                 let workspace_resolution =
@@ -2191,18 +2184,7 @@ impl UpdateInteractiveCommand {
                                             .split(|b| *b == b';')
                                             .filter(|s| !s.is_empty());
                                         if let Some(button_str) = parts.next() {
-                                            // TODO(port): replace inline fold with shared bun_str parse_int helper
-                                            // std.fmt.parseInt(u32, _, 10) on raw bytes — terminal
-                                            // input is bytes, do not round-trip through from_utf8.
-                                            let button: u32 = button_str
-                                                .iter()
-                                                .try_fold(0u32, |acc, &b| match b {
-                                                    b'0'..=b'9' => acc
-                                                        .checked_mul(10)
-                                                        .and_then(|a| a.checked_add((b - b'0') as u32)),
-                                                    _ => None,
-                                                })
-                                                .unwrap_or(0);
+                                            let button: u32 = strings::parse_int(button_str, 10).unwrap_or(0);
                                             // Mouse wheel events
                                             if button == 64 {
                                                 // Scroll up
@@ -2248,19 +2230,14 @@ impl UpdateInteractiveCommand {
 }
 
 fn dep_type_priority(dep_type: &[u8]) -> u8 {
-    if strings::eql_comptime(dep_type, b"dependencies") {
-        return 0;
+    // caller-specific UI sort order; not baked into canonical
+    match DependencyGroup::from_prop(dep_type) {
+        Some(g) if g.behavior == Behavior::PROD => 0,
+        Some(g) if g.behavior == Behavior::DEV => 1,
+        Some(g) if g.behavior == Behavior::PEER => 2,
+        Some(g) if g.behavior == Behavior::OPTIONAL => 3,
+        _ => 4,
     }
-    if strings::eql_comptime(dep_type, b"devDependencies") {
-        return 1;
-    }
-    if strings::eql_comptime(dep_type, b"peerDependencies") {
-        return 2;
-    }
-    if strings::eql_comptime(dep_type, b"optionalDependencies") {
-        return 3;
-    }
-    4
 }
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a

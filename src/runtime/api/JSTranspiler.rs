@@ -43,6 +43,7 @@ use bun_collections::ArrayHashMapExt;
 // auto-derefs to `&T` so the impls below compile against either. `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
 #[bun_jsc::JsClass(name = "Transpiler")]
+#[derive(bun_ptr::RefCounted)]
 pub struct JSTranspiler {
     pub transpiler: JsCell<Transpiler::Transpiler<'static>>,
     /// Read-only after construction EXCEPT for `config.log`, which is the
@@ -62,19 +63,6 @@ pub struct JSTranspiler {
     // `Arc<JSTranspiler>`, but `bun.ptr.RefCount` is single-thread intrusive and `*JSTranspiler`
     // crosses FFI as `m_ctx`. Reconcile in Phase B (likely IntrusiveRc, not Arc).
     pub ref_count: bun_ptr::RefCount<JSTranspiler>,
-}
-
-// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
-impl bun_ptr::RefCounted for JSTranspiler {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; allocated via Box in constructor().
-        drop(unsafe { bun_core::heap::take(this) });
-    }
 }
 
 fn default_transform_options() -> api::TransformOptions {
@@ -1104,10 +1092,7 @@ pub fn constructor(
 }
 
     pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is the live m_ctx payload; `rc_deref` frees on count==0.
-        unsafe { <JSTranspiler as bun_ptr::AnyRefCounted>::rc_deref_with_context(Box::into_raw(self), ()) };
+        bun_ptr::finalize_js_box_noop(self);
     }
 }
 

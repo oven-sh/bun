@@ -170,7 +170,7 @@ pub mod open {
 
 // ─── non-JSC subcommand bodies (heavy; re-gated inside or here) ──────────────
 // `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
-// `crate::create_command::initialize_store`; `install_completions_command.rs`
+// `bun_ast::initialize_store`; `install_completions_command.rs`
 // and `package_manager_command.rs` need bun_install::PackageManager + a real
 // `Command::Context` (blocked on `create_context_data`). Help/print-only paths
 // are handled inline in `Command::start()` below; full bodies stay gated.

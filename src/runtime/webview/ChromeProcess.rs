@@ -281,7 +281,7 @@ fn find_playwright_shell() -> Option<ZBox> {
             continue;
         }
         let rev_str = &name[PREFIX.len()..];
-        let rev: u32 = match core::str::from_utf8(rev_str).ok().and_then(|s| s.parse().ok()) {
+        let rev: u32 = match bun_core::fmt::parse_int(rev_str, 10).ok() {
             Some(r) => r,
             None => continue,
         };
@@ -598,7 +598,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
             None => continue,
         };
         // Validate port (catch stale/corrupt files).
-        let port: u16 = match core::str::from_utf8(port_str).ok().and_then(|s| s.parse().ok()) {
+        let port: u16 = match bun_core::fmt::parse_int(port_str, 10).ok() {
             Some(p) => p,
             None => continue,
         };

@@ -322,9 +322,8 @@ impl S3HttpSimpleTask {
                             size: response
                                 .headers
                                 .get(b"content-length")
-                                .and_then(|s| strings::parse_int::<usize>(s, 10).ok())
+                                .map(bun_http_types::parse_content_length)
                                 .unwrap_or(0),
-                            // TODO(port): confirm bun_str::strings::parse_int signature (std.fmt.parseInt equiv)
                         }),
                         this.callback_context,
                     )?;

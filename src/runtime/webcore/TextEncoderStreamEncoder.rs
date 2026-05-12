@@ -17,10 +17,6 @@ pub struct TextEncoderStreamEncoder {
 }
 
 impl TextEncoderStreamEncoder {
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
-
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
@@ -98,16 +94,13 @@ impl TextEncoderStreamEncoder {
         let mut remain = input;
         while !remain.is_empty() {
             // SAFETY: copy_latin1_into_utf8 writes initialized bytes into the spare capacity and
-            // returns the number written; set_len below stays within capacity.
+            // returns the number written; fill_spare commits exactly that many.
             let result = unsafe {
-                let spare = buffer.spare_capacity_mut();
-                let spare_slice =
-                    core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len());
-                strings::copy_latin1_into_utf8(spare_slice, remain)
+                bun_core::vec::fill_spare(&mut buffer, 0, |spare| {
+                    let r = strings::copy_latin1_into_utf8(spare, remain);
+                    (r.written as usize, r)
+                })
             };
-
-            // SAFETY: result.written bytes were just initialized in spare capacity.
-            unsafe { buffer.set_len(buffer.len() + result.written as usize) };
             remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
@@ -207,17 +200,16 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the count.
+        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
+        // count; on non-SUCCESS we commit 0 and fall through to the slow path.
         let result = unsafe {
-            let spare = buf.spare_capacity_mut();
-            let spare_slice =
-                core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len());
-            simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare_slice)
+            bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+                let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
+                (if r.status == simdutf::Status::SUCCESS { r.count } else { 0 }, r)
+            })
         };
 
         if result.status == simdutf::Status::SUCCESS {
-            // SAFETY: result.count bytes were just initialized in spare capacity.
-            unsafe { buf.set_len(buf.len() + result.count) };
             JSUint8Array::from_bytes(global, buf.into())
         } else {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.

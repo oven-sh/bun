@@ -173,12 +173,7 @@ pub fn resp_value_to_js_with_options(
         }
         RESPValue::BigNumber(str) => {
             // Try to parse as number if possible
-            // TODO(port): std.fmt.parseInt on []const u8 — RESP big numbers are ASCII digits,
-            // so the from_utf8 here is safe (not arbitrary external bytes).
-            if let Some(int) = core::str::from_utf8(str)
-                .ok()
-                .and_then(|s| s.parse::<i64>().ok())
-            {
+            if let Ok(int) = bun_core::fmt::parse_int::<i64>(str, 10) {
                 Ok(JSValue::js_number(int as f64))
             } else {
                 // If it doesn't fit in an i64, return as string

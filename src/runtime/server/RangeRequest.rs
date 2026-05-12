@@ -125,12 +125,39 @@ pub fn raw_from_request(req: &AnyRequest) -> Raw {
     parse_raw(h)
 }
 
-// std.fmt.parseUnsigned(u64, s, 10) — input is trimmed ASCII from an HTTP
-// header; invalid bytes (non-UTF-8 or non-digit) map to None, matching Zig's
-// `catch return .none`.
+// std.fmt.parseUnsigned(u64, s, 10) — invalid bytes map to None ⇔ Zig `catch return .none`.
 #[inline]
-fn parse_u64(s: &[u8]) -> Option<u64> {
-    core::str::from_utf8(s).ok()?.parse::<u64>().ok()
+fn parse_u64(s: &[u8]) -> Option<u64> { bun_core::fmt::parse_int(s, 10).ok() }
+
+/// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +
+/// three `u64::MAX` (20 each) + `'-'` + `'/'` = 68. 96 leaves slack.
+pub const CONTENT_RANGE_BUF: usize = 96;
+
+/// Render a `Content-Range` header value into `buf` per RFC 9110 §14.4.
+///
+/// | `range`             | `total`   | output                |
+/// |---------------------|-----------|-----------------------|
+/// | `Satisfiable{s,e}`  | `Some(t)` | `bytes {s}-{e}/{t}`   |
+/// | `Satisfiable{s,e}`  | `None`    | `bytes {s}-{e}/*`     |
+/// | `Unsatisfiable`     | `Some(t)` | `bytes */{t}`         |
+/// | `Unsatisfiable`     | `None`    | `bytes */*`           |
+/// | `None`              | _         | empty (caller skips)  |
+///
+/// `buf_print` into a [`CONTENT_RANGE_BUF`]-sized buffer cannot overflow with
+/// `u64` operands, so this is infallible for correctly-sized `buf`.
+pub fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -> &[u8] {
+    use bun_core::fmt::buf_print_infallible as bp;
+    match range {
+        Result::None => &buf[..0],
+        Result::Satisfiable { start, end } => match total {
+            Some(t) => bp(buf, format_args!("bytes {}-{}/{}", start, end, t)),
+            None => bp(buf, format_args!("bytes {}-{}/*", start, end)),
+        },
+        Result::Unsatisfiable => match total {
+            Some(t) => bp(buf, format_args!("bytes */{}", t)),
+            None => b"bytes */*",
+        },
+    }
 }
 
 // ported from: src/runtime/server/RangeRequest.zig

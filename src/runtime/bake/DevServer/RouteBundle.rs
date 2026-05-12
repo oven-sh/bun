@@ -9,10 +9,7 @@ use crate::server::html_bundle::HTMLBundleRoute;
 use crate::api::server::StaticRoute;
 
 // Zig: `pub const Index = bun.GenericIndex(u30, RouteBundle);`
-// TODO(port): Zig used u30 backing; Rust has no u30 — using u32 newtype. Reconcile with bun.GenericIndex port.
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct Index(pub u32);
+pub use crate::bake::dev_server::route_bundle::{Index, IndexOptional};
 
 pub struct RouteBundle {
     pub server_state: State,
@@ -79,9 +76,7 @@ pub struct HTML {
 }
 
 // Zig: `const ByteOffset = bun.GenericIndex(u32, u8);` (nested in HTML)
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub struct ByteOffset(pub u32);
+pub use crate::bake::dev_server::route_bundle::ByteOffset;
 
 /// A union is not used so that `bundler_failure_logs` can re-use memory, as
 /// this state frequently changes between `loaded` and the failure variants.

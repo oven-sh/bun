@@ -321,26 +321,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
 }
 
-// `SinkHandler` impl: bridges `Sink::init(self)` (vtable-erased writer). The
-// inherent `connect` returns `()`; trait wants `sys::Result<()>` to unify with
-// other sink types' fallible connect.
-impl SinkHandler for ArrayBufferSink {
-    fn write(&mut self, data: streams::Result) -> streams::result::Writable {
-        ArrayBufferSink::write(self, data)
-    }
-    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
-        ArrayBufferSink::write_latin1(self, data)
-    }
-    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
-        ArrayBufferSink::write_utf16(self, data)
-    }
-    fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        ArrayBufferSink::end(self, err)
-    }
-    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
-        ArrayBufferSink::connect(self, signal);
-        Ok(())
-    }
-}
+crate::impl_sink_handler!(ArrayBufferSink);
 
 // ported from: src/runtime/webcore/ArrayBufferSink.zig

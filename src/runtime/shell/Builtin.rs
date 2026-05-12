@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    is_pollable_from_mode, shell_openat, Interpreter, NodeId, OutputNeedsIOSafeGuard,
+    is_pollable_from_mode, shell_openat, Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -38,18 +38,182 @@ pub struct Builtin {
     pub impl_: Impl,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-pub enum Kind {
-    Cd, Echo, Export, Exit, Pwd, True, False, Which, Rm, Mv, Ls, Mkdir,
-    Touch, Cat, Cp, Seq, Dirname, Basename, Yes,
+// ──────────────────────────────────────────────────────────────────────────
+// shell_builtins! — single source of truth for the builtin set.
+//
+// Zig (Builtin.zig) gets this for free via comptime reflection: `@tagName`,
+// `std.meta.stringToEnum`, `@unionInit`, and one shared `callImpl` switch
+// cover what Rust hand-unrolled into eight parallel 19-arm matches. This
+// table macro restores the single-definition property: each row declares
+// {Variant, argv0 name, module path, storage shape, usage, posix-gate} once
+// and the macro emits `Kind`, `Impl`, `as_str`, `usage_string`,
+// `from_argv0_raw`, `DISABLED_ON_POSIX`, `make_impl`, `start`,
+// `on_io_writer_chunk`, and the per-variant [`BuiltinState`] downcast impls.
+//
+// Rows are grouped by storage shape (`unit` → bare variant, `inline` →
+// `Variant(T)`, `boxed` → `Variant(Box<T>)`) because `macro_rules!` cannot
+// expand a per-row helper in enum-variant position; grouping keeps the table
+// declarative without a tt-muncher.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Per-builtin state downcast. Replaces the 17 hand-rolled
+/// `fn state_mut(interp, cmd) -> &mut Self { match Builtin::of_mut(..).impl_ {
+/// Impl::X(v) => v, _ => unreachable!() } }` copies that every
+/// `src/runtime/shell/builtin/*.rs` carried — the Rust analogue of Zig's
+/// per-file `fn bltn(this: *Self) *Builtin { @fieldParentPtr(...) }`.
+///
+/// `extract` is the bare variant projection (knows whether the payload is
+/// boxed in `Impl`); `state_mut` is the convenience entry point every builtin
+/// actually calls. Call sites keep writing `Self::state_mut(interp, cmd)` —
+/// they only need this trait in scope. Impls are generated per-row by
+/// [`shell_builtins!`].
+pub trait BuiltinState: Sized {
+    /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
+    fn extract(impl_: &mut Impl) -> &mut Self;
+
+    #[inline]
+    #[track_caller]
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Self {
+        Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
+    }
+}
+
+macro_rules! shell_builtins {
+    (
+        unit:   { $( $UV:ident => ($u_mod:ident :: $UT:ident, $u_name:literal, $u_usage:expr) ),* $(,)? }
+        inline: { $( $IV:ident => ($i_mod:ident :: $IT:ident, $i_name:literal, $i_usage:expr) ),* $(,)? }
+        boxed:  { $( $BV:ident => ($b_mod:ident :: $BT:ident, $b_name:literal, $b_usage:expr) ),* $(,)? }
+        posix_disabled: [ $( $PD:ident ),* $(,)? ]
+    ) => {
+        #[repr(u8)]
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+        pub enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
+
+        /// Per-builtin state. In Zig this was a `union(Kind)`; in Rust an enum.
+        pub enum Impl {
+            $( $UV, )*
+            $( $IV(crate::shell::builtins::$i_mod::$IT), )*
+            // Heavy builtins boxed to keep `Node` small.
+            $( $BV(Box<crate::shell::builtins::$b_mod::$BT>), )*
+        }
+
+        impl Kind {
+            /// Builtins disabled on POSIX (delegate to the system binary) unless
+            /// the experimental feature flag is set. Spec: Builtin.zig
+            /// `Kind.DISABLED_ON_POSIX`.
+            pub const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
+
+            /// Lowercase tag for error prefixes (`"{kind}: ..."`). Spec: Zig
+            /// `@tagName(kind)`.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $( Kind::$UV => $u_name, )*
+                    $( Kind::$IV => $i_name, )*
+                    $( Kind::$BV => $b_name, )*
+                }
+            }
+
+            /// Spec: Builtin.zig `Kind.usageString`.
+            pub fn usage_string(self) -> &'static [u8] {
+                match self {
+                    $( Kind::$UV => $u_usage, )*
+                    $( Kind::$IV => $i_usage, )*
+                    $( Kind::$BV => $b_usage, )*
+                }
+            }
+
+            /// argv[0] → `Kind`, no POSIX gating. Spec: Builtin.zig
+            /// `std.meta.stringToEnum(Kind, str)`.
+            fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
+                $( if s == $u_name.as_bytes() { return Some(Kind::$UV); } )*
+                $( if s == $i_name.as_bytes() { return Some(Kind::$IV); } )*
+                $( if s == $b_name.as_bytes() { return Some(Kind::$BV); } )*
+                None
+            }
+        }
+
+        $( impl BuiltinState for crate::shell::builtins::$i_mod::$IT {
+            #[inline]
+            fn extract(impl_: &mut Impl) -> &mut Self {
+                match impl_ { Impl::$IV(v) => v, _ => unreachable!() }
+            }
+        } )*
+        $( impl BuiltinState for crate::shell::builtins::$b_mod::$BT {
+            #[inline]
+            fn extract(impl_: &mut Impl) -> &mut Self {
+                match impl_ { Impl::$BV(v) => &mut **v, _ => unreachable!() }
+            }
+        } )*
+
+        impl Builtin {
+            #[inline]
+            fn make_impl(kind: Kind) -> Impl {
+                match kind {
+                    $( Kind::$UV => Impl::$UV, )*
+                    $( Kind::$IV => Impl::$IV(Default::default()), )*
+                    $( Kind::$BV => Impl::$BV(Box::default()), )*
+                }
+            }
+
+            /// Hoisted dispatch: start the builtin's state machine.
+            pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+                // PORT NOTE: reshaped for borrowck — match on a copied Kind, then
+                // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
+                // own state via `Builtin::of_mut(interp, cmd).impl_`.
+                match Self::kind_of(interp, cmd) {
+                    $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::start(interp, cmd), )*
+                    $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::start(interp, cmd), )*
+                    $( Kind::$BV => crate::shell::builtins::$b_mod::$BT::start(interp, cmd), )*
+                }
+            }
+
+            /// Hoisted dispatch for the `onIOWriterChunk` callback.
+            pub fn on_io_writer_chunk(
+                interp: &Interpreter,
+                cmd: NodeId,
+                written: usize,
+                err: Option<bun_sys::SystemError>,
+            ) -> Yield {
+                match Self::kind_of(interp, cmd) {
+                    $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
+                    $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
+                    $( Kind::$BV => crate::shell::builtins::$b_mod::$BT::on_io_writer_chunk(interp, cmd, written, err), )*
+                }
+            }
+        }
+    };
+}
+
+shell_builtins! {
+    unit: {
+        True     => (true_::True,       "true",     b""),
+        False    => (false_::False,     "false",    b""),
+    }
+    inline: {
+        Pwd      => (pwd::Pwd,          "pwd",      b""),
+        Exit     => (exit::Exit,        "exit",     b"usage: exit [n]\n"),
+        Basename => (basename::Basename,"basename", b"usage: basename string\n"),
+        Dirname  => (dirname::Dirname,  "dirname",  b"usage: dirname string\n"),
+        Cd       => (cd::Cd,            "cd",       b""),
+        Echo     => (echo::Echo,        "echo",     b""),
+        Export   => (export::Export,    "export",   b""),
+    }
+    boxed: {
+        Cat      => (cat::Cat,          "cat",      b"usage: cat [-belnstuv] [file ...]\n"),
+        Mv       => (mv::Mv,            "mv",       b"usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n"),
+        Rm       => (rm::Rm,            "rm",       b"usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n"),
+        Which    => (which::Which,      "which",    b""),
+        Ls       => (ls::Ls,            "ls",       b"usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n"),
+        Mkdir    => (mkdir::Mkdir,      "mkdir",    b"usage: mkdir [-pv] [-m mode] directory_name ...\n"),
+        Touch    => (touch::Touch,      "touch",    b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n"),
+        Cp       => (cp::Cp,            "cp",       b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n"),
+        Seq      => (seq::Seq,          "seq",      b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n"),
+        Yes      => (yes::Yes,          "yes",      b"usage: yes [expletive]\n"),
+    }
+    posix_disabled: [Cat, Cp]
 }
 
 impl Kind {
-    /// Builtins disabled on POSIX (delegate to the system binary) unless the
-    /// experimental feature flag is set. Spec: Builtin.zig `Kind.DISABLED_ON_POSIX`.
-    pub const DISABLED_ON_POSIX: &'static [Kind] = &[Kind::Cat, Kind::Cp];
-
     fn force_enable_on_posix() -> bool {
         bun_core::env_var::feature_flag::BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS
             .get()
@@ -59,28 +223,7 @@ impl Kind {
     /// Spec: Builtin.zig `Kind.fromStr`. Maps argv[0] to a builtin kind, or
     /// `None` to fall through to subprocess spawn.
     pub fn from_argv0(s: &[u8]) -> Option<Kind> {
-        let result = match s {
-            b"cat" => Kind::Cat,
-            b"touch" => Kind::Touch,
-            b"mkdir" => Kind::Mkdir,
-            b"export" => Kind::Export,
-            b"cd" => Kind::Cd,
-            b"echo" => Kind::Echo,
-            b"pwd" => Kind::Pwd,
-            b"which" => Kind::Which,
-            b"rm" => Kind::Rm,
-            b"mv" => Kind::Mv,
-            b"ls" => Kind::Ls,
-            b"exit" => Kind::Exit,
-            b"true" => Kind::True,
-            b"false" => Kind::False,
-            b"yes" => Kind::Yes,
-            b"seq" => Kind::Seq,
-            b"dirname" => Kind::Dirname,
-            b"basename" => Kind::Basename,
-            b"cp" => Kind::Cp,
-            _ => return None,
-        };
+        let result = Self::from_argv0_raw(s)?;
         if cfg!(windows) || Self::force_enable_on_posix() {
             return Some(result);
         }
@@ -88,57 +231,6 @@ impl Kind {
             return None;
         }
         Some(result)
-    }
-
-    /// Spec: Builtin.zig `Kind.usageString`.
-    pub fn usage_string(self) -> &'static [u8] {
-        match self {
-            Kind::Cat => b"usage: cat [-belnstuv] [file ...]\n",
-            Kind::Touch => b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n",
-            Kind::Mkdir => b"usage: mkdir [-pv] [-m mode] directory_name ...\n",
-            Kind::Export => b"",
-            Kind::Cd => b"",
-            Kind::Echo => b"",
-            Kind::Pwd => b"",
-            Kind::Which => b"",
-            Kind::Rm => b"usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
-            Kind::Mv => b"usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n",
-            Kind::Ls => b"usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n",
-            Kind::Exit => b"usage: exit [n]\n",
-            Kind::True => b"",
-            Kind::False => b"",
-            Kind::Yes => b"usage: yes [expletive]\n",
-            Kind::Seq => b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
-            Kind::Dirname => b"usage: dirname string\n",
-            Kind::Basename => b"usage: basename string\n",
-            Kind::Cp => b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n",
-        }
-    }
-
-    /// Lowercase tag for error prefixes (`"{kind}: ..."`). Spec: Zig
-    /// `@tagName(kind)`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kind::Cat => "cat",
-            Kind::Touch => "touch",
-            Kind::Mkdir => "mkdir",
-            Kind::Export => "export",
-            Kind::Cd => "cd",
-            Kind::Echo => "echo",
-            Kind::Pwd => "pwd",
-            Kind::Which => "which",
-            Kind::Rm => "rm",
-            Kind::Mv => "mv",
-            Kind::Ls => "ls",
-            Kind::Exit => "exit",
-            Kind::True => "true",
-            Kind::False => "false",
-            Kind::Yes => "yes",
-            Kind::Seq => "seq",
-            Kind::Dirname => "dirname",
-            Kind::Basename => "basename",
-            Kind::Cp => "cp",
-        }
     }
 }
 
@@ -348,30 +440,6 @@ impl BuiltinInput {
     }
 }
 
-/// Per-builtin state. In Zig this was a `union(Kind)`; in Rust an enum.
-pub enum Impl {
-    True,
-    False,
-    Pwd(crate::shell::builtins::pwd::Pwd),
-    Exit(crate::shell::builtins::exit::Exit),
-    Basename(crate::shell::builtins::basename::Basename),
-    Dirname(crate::shell::builtins::dirname::Dirname),
-    Cd(crate::shell::builtins::cd::Cd),
-    Echo(crate::shell::builtins::echo::Echo),
-    Export(crate::shell::builtins::export::Export),
-    // Heavy builtins boxed to keep `Node` small.
-    Cat(Box<crate::shell::builtins::cat::Cat>),
-    Mv(Box<crate::shell::builtins::mv::Mv>),
-    Rm(Box<crate::shell::builtins::rm::Rm>),
-    Which(Box<crate::shell::builtins::which::Which>),
-    Ls(Box<crate::shell::builtins::ls::Ls>),
-    Mkdir(Box<crate::shell::builtins::mkdir::Mkdir>),
-    Touch(Box<crate::shell::builtins::touch::Touch>),
-    Cp(Box<crate::shell::builtins::cp::Cp>),
-    Seq(Box<crate::shell::builtins::seq::Seq>),
-    Yes(Box<crate::shell::builtins::yes::Yes>),
-}
-
 impl Builtin {
     #[inline]
     pub fn args_slice(&self) -> &[*const c_char] {
@@ -425,7 +493,6 @@ impl Builtin {
     ///
     /// Spec: Builtin.zig `init()`.
     pub fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
-        use crate::shell::builtins;
         use crate::shell::states::cmd::Exec;
 
         // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
@@ -448,28 +515,6 @@ impl Builtin {
             )
         };
 
-        let impl_ = match kind {
-            Kind::True => Impl::True,
-            Kind::False => Impl::False,
-            Kind::Pwd => Impl::Pwd(builtins::pwd::Pwd::default()),
-            Kind::Exit => Impl::Exit(builtins::exit::Exit::default()),
-            Kind::Basename => Impl::Basename(builtins::basename::Basename::default()),
-            Kind::Dirname => Impl::Dirname(builtins::dirname::Dirname::default()),
-            Kind::Cd => Impl::Cd(builtins::cd::Cd::default()),
-            Kind::Echo => Impl::Echo(builtins::echo::Echo::default()),
-            Kind::Export => Impl::Export(builtins::export::Export::default()),
-            Kind::Cat => Impl::Cat(Box::default()),
-            Kind::Mv => Impl::Mv(Box::default()),
-            Kind::Rm => Impl::Rm(Box::default()),
-            Kind::Which => Impl::Which(Box::default()),
-            Kind::Ls => Impl::Ls(Box::default()),
-            Kind::Mkdir => Impl::Mkdir(Box::default()),
-            Kind::Touch => Impl::Touch(Box::default()),
-            Kind::Cp => Impl::Cp(Box::default()),
-            Kind::Seq => Impl::Seq(Box::default()),
-            Kind::Yes => Impl::Yes(Box::default()),
-        };
-
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
             cmd,
             kind,
@@ -479,7 +524,7 @@ impl Builtin {
             stderr,
             exit_code: None,
             err_buf: Vec::new(),
-            impl_,
+            impl_: Self::make_impl(kind),
         }));
 
         Self::init_redirections(interp, cmd, kind)
@@ -804,68 +849,6 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
-    /// Hoisted dispatch: start the builtin's state machine.
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        use crate::shell::builtins::*;
-        // PORT NOTE: reshaped for borrowck — match on a copied Kind, then
-        // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
-        // own state via `Builtin::of_mut(interp, cmd).impl_`.
-        let kind = Self::kind_of(interp, cmd);
-        match kind {
-            Kind::True => true_::True::start(interp, cmd),
-            Kind::False => false_::False::start(interp, cmd),
-            Kind::Pwd => pwd::Pwd::start(interp, cmd),
-            Kind::Exit => exit::Exit::start(interp, cmd),
-            Kind::Basename => basename::Basename::start(interp, cmd),
-            Kind::Dirname => dirname::Dirname::start(interp, cmd),
-            Kind::Cd => cd::Cd::start(interp, cmd),
-            Kind::Echo => echo::Echo::start(interp, cmd),
-            Kind::Export => export::Export::start(interp, cmd),
-            Kind::Cat => cat::Cat::start(interp, cmd),
-            Kind::Mv => mv::Mv::start(interp, cmd),
-            Kind::Rm => rm::Rm::start(interp, cmd),
-            Kind::Which => which::Which::start(interp, cmd),
-            Kind::Ls => ls::Ls::start(interp, cmd),
-            Kind::Mkdir => mkdir::Mkdir::start(interp, cmd),
-            Kind::Touch => touch::Touch::start(interp, cmd),
-            Kind::Cp => cp::Cp::start(interp, cmd),
-            Kind::Seq => seq::Seq::start(interp, cmd),
-            Kind::Yes => yes::Yes::start(interp, cmd),
-        }
-    }
-
-    /// Hoisted dispatch for the `onIOWriterChunk` callback.
-    pub fn on_io_writer_chunk(
-        interp: &Interpreter,
-        cmd: NodeId,
-        written: usize,
-        err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        use crate::shell::builtins::*;
-        let kind = Self::kind_of(interp, cmd);
-        match kind {
-            Kind::True => true_::True::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::False => false_::False::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Pwd => pwd::Pwd::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Exit => exit::Exit::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Basename => basename::Basename::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Dirname => dirname::Dirname::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Cd => cd::Cd::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Echo => echo::Echo::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Export => export::Export::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Cat => cat::Cat::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Mv => mv::Mv::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Rm => rm::Rm::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Which => which::Which::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Ls => ls::Ls::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Mkdir => mkdir::Mkdir::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Touch => touch::Touch::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Cp => cp::Cp::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Seq => seq::Seq::on_io_writer_chunk(interp, cmd, written, err),
-            Kind::Yes => yes::Yes::on_io_writer_chunk(interp, cmd, written, err),
-        }
-    }
-
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
     #[track_caller]
@@ -1076,6 +1059,45 @@ impl Builtin {
             Some(kind),
             format_args!("unknown error {}\n", err.errno),
         )
+    }
+
+    /// Shared failure path for builtins whose option parser returns
+    /// [`ParseError`]. Formats the canonical three-arm message
+    /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
+    /// so the per-builtin state machine can move to its `WaitingWriteErr`
+    /// variant, then writes the message to stderr and finishes with exit 1.
+    ///
+    /// Spec: open-coded `switch (e)` in cat.zig:45, mkdir.zig:52, cp.zig:74,
+    /// touch.zig:33 — Zig duplicates this per builtin; hoisted once here.
+    pub fn fail_parse(
+        interp: &Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        e: ParseError,
+        set_wait_err: impl FnOnce(),
+    ) -> Yield {
+        let buf: Vec<u8> = match &e {
+            ParseError::IllegalOption(_) => Self::fmt_error_arena(
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
+            )
+            .to_vec(),
+            ParseError::ShowUsage => kind.usage_string().to_vec(),
+            ParseError::Unsupported(_) => Self::fmt_error_arena(
+                interp,
+                cmd,
+                Some(kind),
+                format_args!(
+                    "unsupported option, please open a GitHub issue -- {}\n",
+                    bstr::BStr::new(e.opt())
+                ),
+            )
+            .to_vec(),
+        };
+        set_wait_err();
+        Self::write_failing_error(interp, cmd, &buf, 1)
     }
 
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.

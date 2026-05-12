@@ -8,21 +8,13 @@ use crate::bake::framework_router;
 use crate::server::{html_bundle::HTMLBundleRoute, StaticRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct Index(pub u32);
-impl Index {
-    #[inline] pub const fn init(v: u32) -> Self { debug_assert!(v < (1 << 30)); Self(v) }
-    #[inline] pub const fn get(self) -> u32 { self.0 }
-    #[inline] pub const fn to_optional(self) -> IndexOptional { Some(self) }
-}
+pub enum RouteBundleMarker {}
+pub type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
 /// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
 pub type IndexOptional = Option<Index>;
 
 /// `bun.GenericIndex(u32, u8)` — byte offset into `bundled_html_text`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ByteOffset(pub u32);
+pub type ByteOffset = bun_core::GenericIndex<u32, u8>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum State {

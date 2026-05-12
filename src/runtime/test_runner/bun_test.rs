@@ -53,17 +53,10 @@ pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
 /// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
 /// Local helper so it can compare `bun_core::Timespec` against the
 /// event-loop crate's distinct `Timespec` (converted by field).
+// ElTimespec dedup is a separate ticket.
+#[inline]
 fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
-    let b = Timespec { sec: b.sec, nsec: b.nsec };
-    if a.eql(&b) {
-        core::cmp::Ordering::Equal
-    } else if a.eql(&Timespec::EPOCH) {
-        core::cmp::Ordering::Greater
-    } else if b.eql(&Timespec::EPOCH) {
-        core::cmp::Ordering::Less
-    } else {
-        a.order(&b)
-    }
+    Timespec::order_ignore_epoch(*a, Timespec { sec: b.sec, nsec: b.nsec })
 }
 
 /// `Strong::create` requires a `&JSGlobalObject`; recover it from the
@@ -1447,31 +1440,30 @@ impl fmt::Display for RefDataValue {
     }
 }
 
+// `bun.ptr.RefCount(RefData, "ref_count", #destroy, .{})` — intrusive single-thread refcount.
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub struct RefData {
     pub buntest_weak: BunTestPtrWeak,
     pub phase: RefDataValue,
     pub ref_count: bun_ptr::RefCount<RefData>,
 }
-// `bun.ptr.RefCount(RefData, "ref_count", #destroy, .{})` — intrusive single-thread refcount.
 // `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
 pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
-impl bun_ptr::RefCounted for RefData {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: `this` points to a live RefData; field projection is in-bounds.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+impl RefData {
+    /// `RefCounted` destructor — last ref dropped.
+    ///
+    /// # Safety
+    /// `this` must be the sole owner of a `RefPtr::new`-boxed allocation.
+    unsafe fn destroy(this: *mut RefData) {
         let _g = group_begin!();
-        // SAFETY: refcount hit zero; we own the allocation (boxed by RefPtr::new)
+        // SAFETY: caller contract — refcount hit zero.
         unsafe {
             bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
             // buntest_weak.deinit() → Weak::drop
             drop(bun_core::heap::take(this));
         }
     }
-}
-impl RefData {
     pub fn has_one_ref(&self) -> bool {
         self.ref_count.has_one_ref()
     }

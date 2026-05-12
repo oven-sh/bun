@@ -13,21 +13,8 @@ use crate::server::StaticRoute;
 use crate::webcore::AnyBlob;
 
 /// `bun.GenericIndex(u30, Assets)`.
-// PORT NOTE: Zig used `u30`; Rust has no u30, so store u32 and debug-assert range in `init`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct EntryIndex(u32);
-impl EntryIndex {
-    #[inline]
-    pub const fn init(v: u32) -> Self {
-        debug_assert!(v < (1 << 30));
-        Self(v)
-    }
-    #[inline]
-    pub const fn get(self) -> usize {
-        self.0 as usize
-    }
-}
+pub enum AssetsMarker {}
+pub type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub struct Assets {
@@ -73,7 +60,7 @@ impl Assets {
 
     pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
         debug_assert!(self.owner().magic == Magic::Valid);
-        self.path_map.get(path).map(|idx| self.files.keys()[idx.get()])
+        self.path_map.get(path).map(|idx| self.files.keys()[idx.get_usize()])
     }
 
     /// When an asset is overwritten, it receives a new URL to get around
@@ -134,15 +121,15 @@ impl Assets {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
-            if self.refs[entry_index.get()] == 1 {
+            if self.refs[entry_index.get_usize()] == 1 {
                 // PORT NOTE: Zig accessed `files.entries.slice()` (MultiArrayList SoA view) and
                 // mutated `.key`/`.value` columns directly. Rust ArrayHashMap exposes keys_mut/values_mut.
-                let prev = self.files.values()[entry_index.get()];
+                let prev = self.files.values()[entry_index.get_usize()];
                 // SAFETY: `prev` is a live intrusively-refcounted StaticRoute we hold one ref to.
                 unsafe { StaticRoute::deref_(prev) };
 
-                self.files.keys_mut()[entry_index.get()] = content_hash;
-                self.files.values_mut()[entry_index.get()] = StaticRoute::init_from_any_blob(
+                self.files.keys_mut()[entry_index.get_usize()] = content_hash;
+                self.files.values_mut()[entry_index.get_usize()] = StaticRoute::init_from_any_blob(
                     contents,
                     InitFromBytesOptions { mime_type: Some(mime_type), server, ..Default::default() },
                 );
@@ -153,8 +140,8 @@ impl Assets {
                 debug_assert_eq!(self.files.count(), self.refs.len());
                 return Ok(entry_index);
             } else {
-                self.refs[entry_index.get()] -= 1;
-                debug_assert!(self.refs[entry_index.get()] > 0);
+                self.refs[entry_index.get_usize()] -= 1;
+                debug_assert!(self.refs[entry_index.get_usize()] > 0);
             }
         }
 
@@ -210,12 +197,12 @@ impl Assets {
 
     pub fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {
         debug_assert!(dec_count > 0);
-        self.refs[index.get()] -= dec_count;
-        if self.refs[index.get()] == 0 {
+        self.refs[index.get_usize()] -= dec_count;
+        if self.refs[index.get_usize()] == 0 {
             // SAFETY: value is a live intrusively-refcounted StaticRoute we hold one ref to.
-            unsafe { StaticRoute::deref_(self.files.values()[index.get()]) };
-            self.files.swap_remove_at(index.get());
-            self.refs.swap_remove(index.get());
+            unsafe { StaticRoute::deref_(self.files.values()[index.get_usize()]) };
+            self.files.swap_remove_at(index.get_usize());
+            self.refs.swap_remove(index.get_usize());
             // `swap_remove` moved the entry that was at the old last index into
             // `index`'s slot. Any `path_map` value that still points at the old
             // last index (now equal to `files.count()`) must be patched to point
@@ -223,9 +210,9 @@ impl Assets {
             // past the end of `files`/`refs`, or alias an unrelated asset if a
             // new entry is appended afterwards.
             let moved_from = u32::try_from(self.files.count()).expect("int cast");
-            if moved_from != index.0 {
+            if moved_from != index.get() {
                 for entry_index in self.path_map.values_mut() {
-                    if entry_index.0 == moved_from {
+                    if entry_index.get() == moved_from {
                         *entry_index = index;
                     }
                 }

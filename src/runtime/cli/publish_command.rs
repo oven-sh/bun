@@ -1889,18 +1889,14 @@ impl PublishCommand {
                 "application/octet-stream",
             ).ok();
 
-            buf.reserve(encoded_tarball_len);
-            let old_len = buf.len();
             // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
-            // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into
-            // the just-reserved spare capacity; `set_len` is only applied after
-            // the FFI fully initialises that range, so no `&mut [u8]` over
-            // uninitialised bytes is ever materialised.
+            // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
+            // reserved spare capacity; `fill_spare` commits exactly that count.
             let count = unsafe {
-                let dst = buf.spare_capacity_mut().as_mut_ptr().cast::<u8>();
-                let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, dst, false);
-                buf.set_len(old_len + n);
-                n
+                bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
+                    let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
+                    (n, n)
+                })
             };
             debug_assert!(count == encoded_tarball_len);
 

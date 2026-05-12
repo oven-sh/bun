@@ -396,45 +396,11 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
                                         // std.mem.replacementSize / std.mem.replace
                                         // for "&quot;" → "\""
-                                        // TODO(port): consider bun_str helper for byte-slice replace
-                                        let needle: &[u8] = b"&quot;";
-                                        let mut count = 0usize;
-                                        {
-                                            let mut k = 0usize;
-                                            while let Some(p) =
-                                                strings::index_of(&input[k..], needle)
-                                            {
-                                                count += 1;
-                                                k += p + needle.len();
-                                            }
-                                        }
-                                        let size = input.len() - count * (needle.len() - 1);
-                                        let mut output = vec![0u8; size];
-                                        // perform replacement
-                                        {
-                                            let mut src = 0usize;
-                                            let mut dst = 0usize;
-                                            while src < input.len() {
-                                                if input[src..].starts_with(needle) {
-                                                    output[dst] = b'"';
-                                                    dst += 1;
-                                                    src += needle.len();
-                                                } else {
-                                                    output[dst] = input[src];
-                                                    dst += 1;
-                                                    src += 1;
-                                                }
-                                            }
-                                        }
-                                        let len = count;
-
-                                        if len != 0 {
-                                            // 5 = "&quot;".len - 1 for replacement "
-                                            output.truncate(input.len() - len * 5);
+                                        let output = strings::replace_owned(input, b"&quot;", b"\"");
+                                        if output.len() != input.len() {
                                             etag_owned = Some(output);
                                             etag = None; // sentinel: owned path uses etag_owned
                                         } else {
-                                            drop(output);
                                             etag = Some(input);
                                         }
 
@@ -679,12 +645,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 }
 
 #[inline]
-fn parse_i64(bytes: &[u8]) -> Option<i64> {
-    // std.fmt.parseInt(i64, _, 10) catch null
-    // Input is ASCII digit text from XML; from_utf8 failure maps to None just
-    // like a Zig parse error would.
-    core::str::from_utf8(bytes).ok()?.parse::<i64>().ok()
-}
+fn parse_i64(bytes: &[u8]) -> Option<i64> { bun_core::fmt::parse_int(bytes, 10).ok() }
 
 pub fn get_list_objects_options_from_js(
     global_this: &JSGlobalObject,

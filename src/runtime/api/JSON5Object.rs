@@ -432,8 +432,8 @@ impl Stringifier {
                 0x01..=0x07 | 0x0e..=0x1f | 0x7f => {
                     // Other control chars → \xHH
                     self.builder.append_latin1(b"\\x");
-                    self.builder.append_lchar(hex_digit(c >> 4));
-                    self.builder.append_lchar(hex_digit(c & 0x0f));
+                    self.builder.append_lchar(bun_core::fmt::hex_char_lower((c >> 4) as u8));
+                    self.builder.append_lchar(bun_core::fmt::hex_char_lower(c as u8));
                 }
                 _ => self.builder.append_uchar(c),
             }
@@ -465,14 +465,6 @@ impl Stringifier {
     }
 }
 
-fn hex_digit(v: u16) -> u8 {
-    let nibble = u8::try_from(v & 0x0f).expect("int cast");
-    if nibble < 10 {
-        b'0' + nibble
-    } else {
-        b'a' + nibble - 10
-    }
-}
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
     // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in

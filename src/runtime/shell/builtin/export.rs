@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -84,14 +84,6 @@ impl Export {
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, if err.is_some() { 1 } else { 0 })
-    }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Export {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Export(e) => e,
-            _ => unreachable!(),
-        }
     }
 }
 

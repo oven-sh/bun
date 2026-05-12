@@ -203,17 +203,7 @@ pub const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
 // `ptr` is `void*` on the C++ side; declaring it as such here (rather than
 // `*mut ParsedShellScript`) matches the ABI exactly and avoids the
 // `improper_ctypes` lint on a non-`#[repr(C)]` payload struct.
-#[cfg(all(windows, target_arch = "x86_64"))]
-unsafe extern "sysv64" {
-    #[link_name = "ParsedShellScript__createWithValues"]
-    fn ParsedShellScript__createWithValues(
-        global: *mut JSGlobalObject,
-        ptr: *mut core::ffi::c_void,
-        marked_argument_buffer: *mut core::ffi::c_void,
-    ) -> JSValue;
-}
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-unsafe extern "C" {
+bun_jsc::jsc_abi_extern! {
     #[link_name = "ParsedShellScript__createWithValues"]
     fn ParsedShellScript__createWithValues(
         global: *mut JSGlobalObject,

@@ -77,6 +77,32 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
+/// Lazily create-and-cache a JS host-function callback in `slot`.
+///
+/// All four `get_js_handlers` slots follow the identical pattern from
+/// `UpgradedDuplex.zig:getJSHandlers` (lines 268/287/306/324):
+/// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
+/// redundant `setFunctionData(self)` → `Strong.Optional.create`. The
+/// redundant `set_function_data` is preserved verbatim from the Zig source.
+#[inline]
+fn lazy_js_handler(
+    slot: &mut StrongOptional,
+    global: &JSGlobalObject,
+    func: host_fn::JsHostFn,
+    this_ptr: *mut c_void,
+) -> JSValue {
+    match slot.get() {
+        Some(cb) => cb,
+        None => {
+            let callback = host_fn::new_function_with_data(global, None, 0, func, this_ptr);
+            callback.ensure_still_alive();
+            host_fn::set_function_data(callback, Some(this_ptr));
+            *slot = StrongOptional::create(callback, global);
+            callback
+        }
+    }
+}
+
 impl UpgradedDuplex {
     fn on_open(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
@@ -227,91 +253,11 @@ impl UpgradedDuplex {
         let array = JSValue::create_empty_array(global, 4)?;
         array.ensure_still_alive();
 
-        {
-            let callback = match self.on_data_callback.get() {
-                Some(cb) => cb,
-                None => {
-                    let data_callback = host_fn::new_function_with_data(
-                        global,
-                        None,
-                        0,
-                        __jsc_host_on_received_data,
-                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-                    );
-                    data_callback.ensure_still_alive();
-
-                    host_fn::set_function_data(data_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
-
-                    self.on_data_callback = StrongOptional::create(data_callback, global);
-                    data_callback
-                }
-            };
-            array.put_index(global, 0, callback)?;
-        }
-
-        {
-            let callback = match self.on_end_callback.get() {
-                Some(cb) => cb,
-                None => {
-                    let end_callback = host_fn::new_function_with_data(
-                        global,
-                        None,
-                        0,
-                        __jsc_host_on_end,
-                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-                    );
-                    end_callback.ensure_still_alive();
-
-                    host_fn::set_function_data(end_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
-
-                    self.on_end_callback = StrongOptional::create(end_callback, global);
-                    end_callback
-                }
-            };
-            array.put_index(global, 1, callback)?;
-        }
-
-        {
-            let callback = match self.on_writable_callback.get() {
-                Some(cb) => cb,
-                None => {
-                    let writable_callback = host_fn::new_function_with_data(
-                        global,
-                        None,
-                        0,
-                        __jsc_host_on_writable,
-                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-                    );
-                    writable_callback.ensure_still_alive();
-
-                    host_fn::set_function_data(writable_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
-                    self.on_writable_callback = StrongOptional::create(writable_callback, global);
-                    writable_callback
-                }
-            };
-            array.put_index(global, 2, callback)?;
-        }
-
-        {
-            let callback = match self.on_close_callback.get() {
-                Some(cb) => cb,
-                None => {
-                    let close_callback = host_fn::new_function_with_data(
-                        global,
-                        None,
-                        0,
-                        __jsc_host_on_close_js,
-                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-                    );
-                    close_callback.ensure_still_alive();
-
-                    host_fn::set_function_data(close_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
-                    self.on_close_callback = StrongOptional::create(close_callback, global);
-                    close_callback
-                }
-            };
-            array.put_index(global, 3, callback)?;
-        }
+        let this_ptr = std::ptr::from_mut(self).cast::<c_void>();
+        array.put_index(global, 0, lazy_js_handler(&mut self.on_data_callback, global, __jsc_host_on_received_data, this_ptr))?;
+        array.put_index(global, 1, lazy_js_handler(&mut self.on_end_callback, global, __jsc_host_on_end, this_ptr))?;
+        array.put_index(global, 2, lazy_js_handler(&mut self.on_writable_callback, global, __jsc_host_on_writable, this_ptr))?;
+        array.put_index(global, 3, lazy_js_handler(&mut self.on_close_callback, global, __jsc_host_on_close_js, this_ptr))?;
 
         Ok(array)
     }

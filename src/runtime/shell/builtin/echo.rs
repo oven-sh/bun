@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -121,14 +121,6 @@ impl Echo {
             err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
         )
     }
-
-    #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Echo {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Echo(e) => e,
-            _ => unreachable!(),
-        }
-    }
 }
 
 /// Appends `input` to `output`, interpreting backslash escape sequences.
@@ -224,12 +216,4 @@ fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
     false
 }
 
-#[inline]
-fn hex_digit_value(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
+use bun_core::fmt::hex_digit_value;

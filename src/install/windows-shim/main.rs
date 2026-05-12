@@ -407,19 +407,23 @@ pub mod compat {
 
     /// `gs:[0x30]` (x64) / `x18` (ARM64) — Zig `std.os.windows.teb()`.
     ///
-    /// # Safety
-    /// Only sound on Windows targets (the segment register / x18 reservation
-    /// is the OS thread-block pointer there). Guaranteed by `#[cfg(windows)]`
-    /// on the enclosing module.
+    /// Safe fn (mirrors `bun_sys::windows::teb`): the only precondition —
+    /// that the segment register / x18 reservation is the OS thread-block
+    /// pointer — is guaranteed by `#[cfg(windows)]` on the enclosing module,
+    /// so there is no caller-side obligation to discharge.
     #[inline(always)]
-    pub unsafe fn teb() -> *mut TEB {
+    pub fn teb() -> *mut TEB {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: on Windows x64 `gs:[0x30]` is the OS-maintained TEB self-
+        // pointer; reading it has no side effects and is always valid.
         unsafe {
             let p: *mut TEB;
             core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
             p
         }
         #[cfg(target_arch = "aarch64")]
+        // SAFETY: on Windows ARM64 `x18` is the reserved OS thread-block
+        // pointer; reading it has no side effects and is always valid.
         unsafe {
             let p: *mut TEB;
             core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));

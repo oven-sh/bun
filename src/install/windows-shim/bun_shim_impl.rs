@@ -478,8 +478,8 @@ impl BunCtx for () {
 #[allow(clippy::too_many_lines)]
 fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet {
     // peb! w.teb is a couple instructions of inline asm
+    let teb: *mut w::TEB = w::teb();
     // SAFETY: TEB/PEB are valid for the process lifetime.
-    let teb: *mut w::TEB = unsafe { w::teb() };
     let peb = unsafe { (*teb).ProcessEnvironmentBlock };
     // SAFETY: ProcessParameters is OS-owned process-global state. The Zig spec only ever reads
     // from it (`const ProcessParameters = peb.ProcessParameters`), so we keep it as a raw pointer

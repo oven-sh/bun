@@ -43,20 +43,23 @@ pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 // fns, declared here as `extern "Rust"` and resolved at link time — no vtable,
 // no `AtomicPtr`, no init-order hazard. PERF(port): was inline field access —
 // spawnSync is per-process-spawn, not per-tick, so the cross-crate call is fine.
+// All bodies are defined as safe `pub fn` in `bun_jsc::event_loop` (the impl
+// encapsulates the erased-pointer derefs), so the declarations are `safe fn` —
+// no caller-side `unsafe { }` needed.
 unsafe extern "Rust" {
     /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, with
     /// `uws_loop` as its loop on Windows. Returns erased `*mut jsc::EventLoop`.
-    fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
-    fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
+    safe fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
+    safe fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
     /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
-    fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ());
-    fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
-    fn __bun_spawn_sync_vm_get_event_loop_handle(vm: *mut ()) -> VmEventLoopHandle;
-    fn __bun_spawn_sync_vm_set_event_loop_handle(vm: *mut (), h: VmEventLoopHandle);
+    safe fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ());
+    safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
+    safe fn __bun_spawn_sync_vm_get_event_loop_handle(vm: *mut ()) -> VmEventLoopHandle;
+    safe fn __bun_spawn_sync_vm_set_event_loop_handle(vm: *mut (), h: VmEventLoopHandle);
     /// `vm.event_loop = prev` (cleanup path).
-    fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ());
+    safe fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ());
     /// Swap `vm.suppress_microtask_drain`, return previous.
-    fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool;
+    safe fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool;
 }
 
 /// RAII scope that sets `vm.suppress_microtask_drain = true` for its lifetime
@@ -68,12 +71,12 @@ struct SuppressMicrotaskDrain {
 }
 
 impl SuppressMicrotaskDrain {
-    /// # Safety
-    /// `vm` must be a valid `*mut jsc::VirtualMachine` that outlives the guard.
+    /// `vm` is the erased `*mut jsc::VirtualMachine` backref; the swap extern
+    /// is a safe `pub fn` (impl encapsulates the deref), so no caller-side
+    /// precondition remains here.
     #[inline]
-    unsafe fn new(vm: *mut ()) -> Self {
-        // SAFETY: caller guarantees `vm` is valid.
-        let prev = unsafe { __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm, true) };
+    fn new(vm: *mut ()) -> Self {
+        let prev = __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm, true);
         Self { vm, prev }
     }
 }
@@ -81,8 +84,7 @@ impl SuppressMicrotaskDrain {
 impl Drop for SuppressMicrotaskDrain {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `vm` was valid at construction and outlives this guard by contract.
-        unsafe { __bun_spawn_sync_vm_swap_suppress_microtask_drain(self.vm, self.prev) };
+        __bun_spawn_sync_vm_swap_suppress_microtask_drain(self.vm, self.prev);
     }
 }
 
@@ -160,8 +162,7 @@ impl SpawnSyncEventLoop {
 
         // Initialize the JSC EventLoop with empty state.
         // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
-        // SAFETY: heap-allocates a fresh EventLoop bound to vm.
-        let event_loop = unsafe { __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr()) };
+        let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
 
         this.write(Self {
             uws_loop: loop_,
@@ -266,8 +267,7 @@ impl Drop for SpawnSyncEventLoop {
         }
 
         // PORT NOTE: Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
-        // SAFETY: frees the heap-allocated EventLoop from `init`.
-        unsafe { __bun_spawn_sync_destroy_event_loop(self.event_loop) };
+        __bun_spawn_sync_destroy_event_loop(self.event_loop);
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
         unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
     }
@@ -276,13 +276,11 @@ impl Drop for SpawnSyncEventLoop {
 impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
-        // SAFETY: `vm` is the live per-thread VM; `event_loop` is the heap-owned isolated loop.
-        unsafe { __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm) };
+        __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm);
         self.did_timeout.set(false);
         self.vm = vm;
 
-        // SAFETY: `vm` is the live per-thread VM.
-        self.original_event_loop_handle = unsafe { __bun_spawn_sync_vm_get_event_loop_handle(vm) };
+        self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
         #[cfg(unix)]
         let new_handle: VmEventLoopHandle = Some(self.uws_loop);
         #[cfg(windows)]
@@ -290,8 +288,7 @@ impl SpawnSyncEventLoop {
             NonNull::new(self.uws_loop().uv_loop)
                 .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
         );
-        // SAFETY: `vm` is the live per-thread VM.
-        unsafe { __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle) };
+        __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
     }
 
     /// Restore the original event loop handle after spawnSync completes
@@ -300,11 +297,8 @@ impl SpawnSyncEventLoop {
         vm: *mut (),             /* SAFETY: erased *mut VirtualMachine */
         prev_event_loop: *mut (), /* SAFETY: erased *mut jsc::EventLoop */
     ) {
-        // SAFETY: `vm` is the live per-thread VM.
-        unsafe {
-            __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
-            __bun_spawn_sync_vm_set_event_loop(vm, prev_event_loop);
-        }
+        __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
+        __bun_spawn_sync_vm_set_event_loop(vm, prev_event_loop);
 
         #[cfg(windows)]
         {
@@ -403,9 +397,7 @@ impl SpawnSyncEventLoop {
         // reaches drainMicrotasksWithGlobal, we must already have the flag set.
         // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
         // via the task queue, but we set the flag here uniformly for safety.
-        // SAFETY: `self.vm` is a valid backref set in `init`/`prepare`;
-        // the VM outlives this SpawnSyncEventLoop by construction.
-        let _suppress = unsafe { SuppressMicrotaskDrain::new(self.vm) };
+        let _suppress = SuppressMicrotaskDrain::new(self.vm);
         // PORT NOTE: Zig `defer` restores at scope exit; RAII Drop mirrors that.
 
         // Tick the isolated uws loop with the specified timeout
@@ -455,8 +447,7 @@ impl SpawnSyncEventLoop {
             }
         }
 
-        // SAFETY: `event_loop` is the live heap-owned isolated loop.
-        unsafe { __bun_spawn_sync_event_loop_tick_tasks_only(self.event_loop) };
+        __bun_spawn_sync_event_loop_tick_tasks_only(self.event_loop);
 
         let did_timeout = self.did_timeout.replace(false);
 

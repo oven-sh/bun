@@ -441,6 +441,11 @@ pub const package_json_version: &str = if cfg!(debug_assertions) {
     version_string
 };
 
+/// `package_json_version` with a trailing `\n` baked in, so
+/// `print_version_and_exit` is a single `write_all` (one syscall) — matches
+/// Zig's `writeAll(version ++ "\n")`.
+pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
+
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
 /// like "1.0.0-canary.12"
 pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {

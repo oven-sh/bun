@@ -705,8 +705,8 @@ impl<'a> JSON5Parser<'a> {
             b'u' => {
                 // \uHHHH unicode escape
                 let cp = self.read_hex4()?;
-                // Check for surrogate pair
-                if cp >= 0xD800 && cp <= 0xDBFF {
+                // Check for surrogate pair (read_hex4 returns 0..=0xFFFF, cast is lossless)
+                if bun_core::strings::u16_is_lead(cp as u16) {
                     // High surrogate - expect \uDCxx low surrogate
                     if self.pos + 1 < self.source.len()
                         && self.source[self.pos] == b'\\'
@@ -714,9 +714,8 @@ impl<'a> JSON5Parser<'a> {
                     {
                         self.pos += 2;
                         let low = self.read_hex4()?;
-                        if low >= 0xDC00 && low <= 0xDFFF {
-                            let full_cp: i32 = 0x10000 + (cp - 0xD800) * 0x400 + (low - 0xDC00);
-                            append_codepoint_to_utf8(buf, full_cp)?;
+                        if let Some(full) = bun_core::strings::decode_surrogate_pair(cp as u16, low as u16) {
+                            append_codepoint_to_utf8(buf, full as i32)?;
                         } else {
                             // Invalid low surrogate - just encode both independently
                             append_codepoint_to_utf8(buf, cp)?;
@@ -841,11 +840,8 @@ impl<'a> JSON5Parser<'a> {
         self.pos += 2; // skip '0x' or '0X'
         let hex_start = self.pos;
 
-        while self.pos < self.source.len() {
-            match self.source[self.pos] {
-                b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => self.pos += 1,
-                _ => break,
-            }
+        while self.pos < self.source.len() && self.source[self.pos].is_ascii_hexdigit() {
+            self.pos += 1;
         }
 
         if self.pos == hex_start {
@@ -1010,13 +1006,7 @@ impl<'a> JSON5Parser<'a> {
         if self.pos >= self.source.len() {
             return None;
         }
-        let c = self.source[self.pos];
-        let result: u8 = match c {
-            b'0'..=b'9' => c - b'0',
-            b'a'..=b'f' => c - b'a' + 10,
-            b'A'..=b'F' => c - b'A' + 10,
-            _ => return None,
-        };
+        let result = bun_core::fmt::hex_digit_value(self.source[self.pos])?;
         self.pos += 1;
         Some(result)
     }

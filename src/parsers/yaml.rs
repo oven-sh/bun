@@ -473,6 +473,15 @@ pub trait Encoding: Copy + 'static {
     /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
     /// `decodeHexCodePoint` where `unit() == u16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
+
+    /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
+    /// encodings keep this default `unreachable!()` because every call site is
+    /// gated on `Enc::KIND == EncodingKind::Utf16` (same pattern as
+    /// `unit_from_u16`). Feeds [`bun_core::strings::narrow_ascii_u16`].
+    #[inline]
+    fn as_u16_slice(_s: &[Self::Unit]) -> &[u16] {
+        unreachable!("as_u16_slice on u8 encoding")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -564,6 +573,10 @@ impl Encoding for Utf16 {
     fn unit_from_u16(u: u16) -> u16 {
         u
     }
+    #[inline]
+    fn as_u16_slice(s: &[u16]) -> &[u16] {
+        s
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -578,7 +591,8 @@ pub mod chars {
     }
 
     pub fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
-        matches!(Enc::wide(c), 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)
+        // YAML 1.2 production [36] ns-hex-digit — keep spec name, delegate to canonical.
+        bun_str::strings::is_hex_code_point(Enc::wide(c))
     }
 
     pub fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
@@ -1592,33 +1606,21 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     }
 }
 
-/// Narrow an `Enc::Unit` slice to ASCII bytes. Only valid when the lexer has
-/// guaranteed every unit is `< 0x80` (digits / sign / `.` / `e` / `_` / radix
-/// prefix); callers are `parse_double_generic` and `parse_unsigned_radix0`.
-#[inline]
-fn ascii_narrow<Enc: Encoding>(s: &[Enc::Unit]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    for &u in s {
-        let w = Enc::wide(u);
-        debug_assert!(w < 0x80, "ascii_narrow: non-ASCII unit {w:#x}");
-        out.push(w as u8);
-    }
-    out
-}
-
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
 /// `bun_str::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
 /// via `Enc::key_bytes` (identity). For `Utf16` the lexer guarantees the
-/// slice is ASCII-only, so it is narrowed unit-by-unit.
+/// slice is ASCII-only, so it is narrowed via
+/// [`bun_core::strings::narrow_ascii_u16`].
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
-            let bytes = Enc::key_bytes(s);
-            bun_str::wtf::parse_double(bytes).map_err(|_| ())
+            bun_str::wtf::parse_double(Enc::key_bytes(s)).map_err(|_| ())
         }
         EncodingKind::Utf16 => {
-            let narrowed = ascii_narrow::<Enc>(s);
-            bun_str::wtf::parse_double(&narrowed).map_err(|_| ())
+            let mut buf = vec![0u8; s.len()];
+            bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
+                .expect("lexer guarantees ASCII");
+            bun_str::wtf::parse_double(&buf).map_err(|_| ())
         }
     }
 }
@@ -1626,15 +1628,17 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
 /// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
 /// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
 /// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
-/// `Enc::key_bytes`; Utf16 narrows ASCII unit-by-unit.
+/// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
             parse_unsigned_radix0_bytes(Enc::key_bytes(s))
         }
         EncodingKind::Utf16 => {
-            let narrowed = ascii_narrow::<Enc>(s);
-            parse_unsigned_radix0_bytes(&narrowed)
+            let mut buf = vec![0u8; s.len()];
+            bun_core::strings::narrow_ascii_u16(Enc::as_u16_slice(s), &mut buf)
+                .expect("lexer guarantees ASCII");
+            parse_unsigned_radix0_bytes(&buf)
         }
     }
 }
@@ -4686,19 +4690,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 if (0xD800..=0xDFFF).contains(&cp) {
                     return Err(ParseError::UnexpectedCharacter);
                 }
-                let len: u8 = if cp < 0x10000 { 1 } else { 2 };
-                match len {
-                    1 => {
-                        let unit = u16::try_from(cp).expect("int cast");
-                        text.push(Enc::unit_from_u16(unit));
-                    }
-                    2 => {
-                        let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).expect("int cast");
-                        let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).expect("int cast");
-                        text.push(Enc::unit_from_u16(high));
-                        text.push(Enc::unit_from_u16(low));
-                    }
-                    _ => unreachable!("EncodingKind::Utf16 codepoint range exhausted"),
+                if cp < 0x10000 {
+                    text.push(Enc::unit_from_u16(cp as u16));
+                } else {
+                    let [hi, lo] = bun_core::strings::encode_surrogate_pair(cp);
+                    text.push(Enc::unit_from_u16(hi));
+                    text.push(Enc::unit_from_u16(lo));
                 }
             }
             EncodingKind::Latin1 => {

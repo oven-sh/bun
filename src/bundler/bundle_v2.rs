@@ -33,7 +33,7 @@ pub use crate::ungate_support::entry_point::{EntryPoint, Kind as EntryPointKind,
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 pub use bv2_impl::{
     singleton, BuildResult, BundleV2Result, CompletionStruct, CrossChunkImport,
-    DependenciesScanner, DependenciesScannerResult, EXTERNAL_FREE_VTABLE,
+    DependenciesScanner, DependenciesScannerResult, OnDependenciesAnalyze, EXTERNAL_FREE_VTABLE,
 };
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
@@ -3264,6 +3264,38 @@ pub struct DependenciesScannerResult<'r, 'a> {
     pub dependencies: bun_collections::StringSet,
     pub reachable_files: &'r [Index],
     pub bundle_v2: &'r mut BundleV2<'a>,
+}
+
+/// Callback contract for [`DependenciesScanner`]. Each call site's local
+/// `Analyzer` struct implements this; [`DependenciesScanner::new`] erases the
+/// concrete type behind a monomorphized trampoline — Rust's analogue of Zig's
+/// one-liner `.onFetch = @ptrCast(&Analyzer.onAnalyze)` (bundle_v2.zig:1492).
+pub trait OnDependenciesAnalyze {
+    fn on_analyze(&mut self, result: &mut DependenciesScannerResult<'_, '_>) -> Result<(), Error>;
+}
+
+impl DependenciesScanner {
+    /// Type-erase `analyzer` into the `(ctx, on_fetch)` pair. The returned
+    /// scanner borrows `*analyzer` for its lifetime: caller must keep
+    /// `analyzer` alive and exclusively owned until the scan completes
+    /// (mirrors Zig's stack-local `Analyzer` + `*anyopaque` ctx pattern).
+    pub fn new<A: OnDependenciesAnalyze>(analyzer: &mut A, entry_points: Box<[Box<[u8]>]>) -> Self {
+        fn trampoline<A: OnDependenciesAnalyze>(
+            ctx: *mut (),
+            result: &mut DependenciesScannerResult,
+        ) -> Result<(), Error> {
+            // SAFETY: `ctx` was set from `&mut *analyzer` in `new`; the caller
+            // contract guarantees `*analyzer` outlives the scanner and is not
+            // otherwise borrowed, so reconstituting `&mut A` here is exclusive.
+            let analyzer = unsafe { &mut *ctx.cast::<A>() };
+            analyzer.on_analyze(result)
+        }
+        Self {
+            ctx: core::ptr::from_mut(analyzer).cast::<()>(),
+            entry_points,
+            on_fetch: trampoline::<A>,
+        }
+    }
 }
 
 impl<'a> BundleV2<'a> {

@@ -2345,27 +2345,21 @@ pub fn serialize_json_source_map_for_standalone(
         let offset = string_payload.len();
 
         let bound = bun_zstd::compress_bound(utf8.len());
-        string_payload.reserve(bound);
-
-        // SAFETY: spare_capacity_mut yields uninitialized bytes; zstd writes into them.
-        let unused = string_payload.spare_capacity_mut();
-        // TODO(port): zstd compress into MaybeUninit slice — Phase B may need a safe wrapper.
-        let unused_slice = unsafe {
-            core::slice::from_raw_parts_mut(unused.as_mut_ptr().cast::<u8>(), unused.len())
+        // SAFETY: zstd writes only into the spare slice and reports the byte
+        // count on success; on error we commit 0 and `Output::panic` diverges.
+        unsafe {
+            bun_core::vec::fill_spare(string_payload, bound, |spare| {
+                match bun_zstd::compress(spare, utf8, Some(1)) {
+                    bun_zstd::Result::Err(err_msg) => {
+                        Output::panic(format_args!(
+                            "Unexpected error compressing sourcemap: {}",
+                            bstr::BStr::new(err_msg.as_bytes())
+                        ));
+                    }
+                    bun_zstd::Result::Success(n) => (n, ()),
+                }
+            })
         };
-        let compressed_result = bun_zstd::compress(unused_slice, utf8, Some(1));
-        match compressed_result {
-            bun_zstd::Result::Err(err_msg) => {
-                Output::panic(format_args!(
-                    "Unexpected error compressing sourcemap: {}",
-                    bstr::BStr::new(err_msg.as_bytes())
-                ));
-            }
-            bun_zstd::Result::Success(n) => {
-                // SAFETY: zstd wrote `n` bytes into spare capacity.
-                unsafe { string_payload.set_len(string_payload.len() + n) };
-            }
-        }
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),

@@ -324,11 +324,6 @@ impl JSSourceMap {
             )
         })
     }
-
-    /// Called by the GC sweeper (mutator thread). Do not touch JS values here.
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-    }
 }
 
 fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32; 2]> {

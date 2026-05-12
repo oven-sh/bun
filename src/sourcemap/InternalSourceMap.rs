@@ -88,6 +88,7 @@ use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
+use bun_collections::VecExt as _;
 use bun_str::MutableString;
 
 use crate::vlq::decode as vlq_decode;
@@ -1057,15 +1058,14 @@ impl Builder {
             cap += 8 + n_deltas * MAX_VARINT_LEN;
         }
 
-        self.win_stream.reserve(cap);
         let base = self.win_stream.len();
-        // SAFETY: `cap` bytes were just reserved past `base`. All writes below go
-        // through `buf_ptr` into [base..base+cap). The cursor `w` is bounded by
+        // `cap` bytes are reserved past `base`. All writes below go through
+        // `buf_ptr` into [base..base+cap). The cursor `w` is bounded by
         // construction: `cap` is the worst-case sum of every section's max length
         // (each varint <= MAX_VARINT_LEN, each optional section gated on `flags`),
         // so `w <= cap` and `w + MAX_VARINT_LEN <= cap` at every `write_varint`
         // call. The trailing `set_len(base + w)` exposes only the written prefix.
-        let buf_ptr: *mut u8 = unsafe { self.win_stream.as_mut_ptr().add(base) };
+        let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
         unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
 
         unsafe {
@@ -1183,9 +1183,8 @@ impl Builder {
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
             // no uninit bytes are exposed by set_len.
-            out.list.reserve_exact(total);
-            unsafe { out.list.set_len(total) };
-            let blob = out.list.as_mut_slice();
+            // SAFETY: every byte in [0..total) is written below (see comment above).
+            let blob = unsafe { out.list.writable_slice_exact(total) };
 
             blob[0..24].fill(0);
             blob[24..28].copy_from_slice(&u32::try_from(self.sync_entries.len()).expect("int cast").to_ne_bytes());

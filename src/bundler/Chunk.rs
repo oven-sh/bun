@@ -1519,34 +1519,8 @@ impl Content {
     pub fn is_html(&self) -> bool {
         matches!(self, Content::Html)
     }
-    #[inline]
-    pub fn javascript(&self) -> &JavaScriptChunk {
-        match self {
-            Content::Javascript(js) => js,
-            _ => unreachable!("Content is not javascript"),
-        }
-    }
-    #[inline]
-    pub fn javascript_mut(&mut self) -> &mut JavaScriptChunk {
-        match self {
-            Content::Javascript(js) => js,
-            _ => unreachable!("Content is not javascript"),
-        }
-    }
-    #[inline]
-    pub fn css(&self) -> &CssChunk {
-        match self {
-            Content::Css(c) => c,
-            _ => unreachable!("Content is not css"),
-        }
-    }
-    #[inline]
-    pub fn css_mut(&mut self) -> &mut CssChunk {
-        match self {
-            Content::Css(c) => c,
-            _ => unreachable!("Content is not css"),
-        }
-    }
+    bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
+    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
 
     pub fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {

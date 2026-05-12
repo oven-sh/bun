@@ -1052,7 +1052,7 @@ where
                     // Variable-length
                     self.step();
                     while self.code_point != '}' as CodePoint {
-                        if is_hex_digit(self.code_point) {
+                        if strings::is_hex_code_point(self.code_point) {
                             self.step();
                         } else {
                             self.syntax_error()?;
@@ -1062,7 +1062,7 @@ where
                 } else {
                     // Fixed-length (4 hex digits)
                     for _ in 0..4 {
-                        if is_hex_digit(self.code_point) {
+                        if strings::is_hex_code_point(self.code_point) {
                             self.step();
                         } else {
                             self.syntax_error()?;
@@ -1390,29 +1390,15 @@ where
 
 #[inline]
 fn push_codepoint(buf: &mut Vec<u16>, cp: CodePoint) {
-    if cp < 0 {
-        return;
-    }
-    let cp = cp as u32;
-    if cp <= 0xFFFF {
-        buf.push(cp as u16);
-    } else {
-        let cp = cp - 0x1_0000;
-        buf.push(0xD800 + ((cp >> 10) as u16));
-        buf.push(0xDC00 + ((cp & 0x3FF) as u16));
-    }
+    if cp < 0 { return; }
+    strings::push_codepoint_utf16(buf, cp as u32);
 }
 
 #[inline]
 fn is_whitespace(cp: CodePoint) -> bool {
-    // Zig: `js_lexer_tables.isWhitespace`. JSON spec only recognises 0x09/0x0A/
-    // 0x0D/0x20, but the JS lexer also skips the Unicode `Zs` set; mirror the
-    // explicit list from `lexer_tables.zig`.
-    matches!(
-        cp,
-        0x000B | 0x000C | 0x00A0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F
-            | 0x3000 | 0xFEFF
-    )
+    // 0x09/0x0A/0x0D/0x20 handled by earlier match arms; VT/FF/LS/PS/BOM + Zs here.
+    matches!(cp, 0x000B | 0x000C | 0x2028 | 0x2029 | 0xFEFF)
+        || strings::is_unicode_space_separator(cp as u32)
 }
 
 #[inline]
@@ -1427,13 +1413,6 @@ fn is_identifier_start(cp: CodePoint) -> bool {
 #[inline]
 fn is_identifier_continue(cp: CodePoint) -> bool {
     is_identifier_start(cp) || (cp >= '0' as CodePoint && cp <= '9' as CodePoint)
-}
-
-#[inline]
-fn is_hex_digit(cp: CodePoint) -> bool {
-    (cp >= '0' as CodePoint && cp <= '9' as CodePoint)
-        || (cp >= 'a' as CodePoint && cp <= 'f' as CodePoint)
-        || (cp >= 'A' as CodePoint && cp <= 'F' as CodePoint)
 }
 
 // ported from: src/js_parser/lexer.zig

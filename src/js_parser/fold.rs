@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> RelocateVars {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if core::ptr::eq(p.current_scope, p.module_scope) {
+        if p.current_scope == p.module_scope {
             return RelocateVars { ok: false, ..Default::default() };
         }
 
@@ -72,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             scope = parent.unwrap();
         }
 
-        if !core::ptr::eq(scope.as_ptr(), p.module_scope) {
+        if scope != p.module_scope {
             return RelocateVars { ok: false, ..Default::default() };
         }
 
@@ -221,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 let stmt_bin = p.stmt_expr_value.e_binary().expect("infallible: variant checked");
                                 let deopt =
                                     // if it's not top-level, don't do this
-                                    !core::ptr::eq(p.module_scope, p.current_scope)
+                                    p.module_scope != p.current_scope
                                     // if you do
                                     //
                                     // exports.foo = 123;

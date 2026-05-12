@@ -38,10 +38,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let ref_: Ref = 'brk: {
             // `Scope.parent` is an arena-backref `Option<StoreRef<Scope>>`; walk via the
-            // safe `StoreRef` wrapper (Deref) instead of a raw-ptr loop. Seed from
-            // `self.current_scope` (always non-null once `init()` ran) via `NonNull::new`.
-            let mut current: Option<js_ast::StoreRef<Scope>> =
-                core::ptr::NonNull::new(self.current_scope).map(js_ast::StoreRef::from);
+            // safe `StoreRef` wrapper (Deref) instead of a raw-ptr loop.
+            let mut current: Option<js_ast::StoreRef<Scope>> = Some(self.current_scope);
 
             let mut did_forbid_arguments = false;
 

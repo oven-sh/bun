@@ -249,7 +249,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
     pub latest_arrow_arg_loc: bun_ast::Loc,
     pub forbid_suffix_after_as_loc: bun_ast::Loc,
-    pub current_scope: *mut js_ast::Scope,
+    pub current_scope: js_ast::StoreRef<js_ast::Scope>,
     pub scopes_for_current_part: List<'a, *mut js_ast::Scope>,
     pub symbols: ListManaged<'a, js_ast::Symbol>,
     pub ts_use_counts: List<'a, u32>,
@@ -455,7 +455,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub call_target: js_ast::ExprData,
     pub delete_target: js_ast::ExprData,
     pub loop_body: js_ast::StmtData,
-    pub module_scope: *mut js_ast::Scope,
+    pub module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
@@ -745,42 +745,36 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     /// Shared borrow of the current scope.
+    ///
+    /// `current_scope` is a [`StoreRef`](js_ast::StoreRef) into the parser
+    /// arena: initialised to a valid arena-allocated Scope in `init()` and
+    /// every reassignment (push/pop scope) stores another arena-owned handle;
+    /// the pointee outlives `'a` and is never freed during parsing.
     #[inline]
     pub fn current_scope(&self) -> &js_ast::Scope {
-        // SAFETY: `current_scope` is initialised to a valid arena-allocated
-        // Scope in `init()` and every reassignment (push/pop scope) stores
-        // another arena-owned pointer; the pointee outlives `'a` and is never
-        // freed during parsing.
-        unsafe { &*self.current_scope }
+        &self.current_scope
     }
 
     /// Unique borrow of the current scope. Takes `&mut self` so two live
     /// `&mut Scope` cannot alias from a shared `&P` (PORTING.md §Forbidden).
+    /// Caller must not also hold a borrow obtained via `module_scope[_mut]()`
+    /// when the two handles alias (top level).
     #[inline]
     pub fn current_scope_mut(&mut self) -> &mut js_ast::Scope {
-        // SAFETY: see `current_scope()`. `&mut self` ensures no other borrow
-        // of `*self.current_scope` is reachable through `self` for the
-        // returned lifetime. Caller must not also hold a borrow obtained via
-        // `module_scope[_mut]()` when the two pointers alias (top level).
-        unsafe { &mut *self.current_scope }
+        &mut self.current_scope
     }
 
     /// Shared borrow of the module (top-level) scope.
     #[inline]
     pub fn module_scope(&self) -> &js_ast::Scope {
-        // SAFETY: `module_scope` is initialised to a valid arena-allocated
-        // Scope in `init()` (and reassigned in `prepare_for_visit_pass`); the
-        // pointee outlives `'a` and is never freed during parsing.
-        unsafe { &*self.module_scope }
+        &self.module_scope
     }
 
     /// Unique borrow of the module scope. Takes `&mut self` (see
     /// `current_scope_mut`).
     #[inline]
     pub fn module_scope_mut(&mut self) -> &mut js_ast::Scope {
-        // SAFETY: see `module_scope()`. `&mut self` ensures exclusivity for
-        // the returned lifetime.
-        unsafe { &mut *self.module_scope }
+        &mut self.module_scope
     }
 
     /// `current_scope` as an arena-backed [`StoreRef`](js_ast::StoreRef) handle.
@@ -788,14 +782,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// Use this for parent-chain walks that need to hold the cursor across
     /// `&mut self` calls — `StoreRef` is `Copy` and does not borrow `self`, so
     /// it sidesteps the borrowck conflict that `current_scope()` (which
-    /// returns a `&Scope` tied to `&self`) would hit, without an `unsafe`
-    /// raw-pointer deref at every loop iteration.
+    /// returns a `&Scope` tied to `&self`) would hit.
     #[inline]
     pub fn current_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
-        // `current_scope` is initialised to a valid arena-allocated Scope in
-        // `init()` and every reassignment stores another arena-owned non-null
-        // pointer; the runtime null check is unreachable in practice.
-        js_ast::StoreRef::from(NonNull::new(self.current_scope).expect("current_scope non-null after init()"))
+        self.current_scope
     }
 
     /// `module_scope` as an arena-backed [`StoreRef`](js_ast::StoreRef) handle.
@@ -803,7 +793,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// `self`, so it can be held across `&mut self` calls.
     #[inline]
     pub fn module_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
-        js_ast::StoreRef::from(NonNull::new(self.module_scope).expect("module_scope non-null after init()"))
+        self.module_scope
     }
 
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
@@ -3161,7 +3151,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.panic("Scope mismatch while visiting", format_args!(""));
         }
 
-        self.current_scope = order.scope;
+        self.current_scope = order.scope_ref();
         self.scopes_for_current_part.push(order.scope);
         Ok(())
     }
@@ -3174,18 +3164,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         KIND: js_ast::scope::Kind,
         loc: bun_ast::Loc,
     ) -> Result<usize, bun_core::Error> {
-        let parent: *mut Scope = self.current_scope;
-        // `current_scope` is arena-owned and non-null after `init()`; the
-        // runtime check is unreachable in practice (matches `current_scope_ref`).
-        let parent_nn = NonNull::new(parent).expect("current_scope non-null after init()");
+        let mut parent: js_ast::StoreRef<Scope> = self.current_scope;
         let arena = self.arena;
         // Consume the arena `&mut Scope` directly into a `NonNull` so the
         // SharedRW raw-pointer tag derived inside `NonNull::from` is the one
         // stored in `parent.children` / `current_scope` / `scopes_in_order`.
         // Deriving `scope_nn` from a `&mut` reborrow and then writing through
         // the original `&mut` would pop `scope_nn`'s tag off the borrow stack
-        // (Stacked Borrows); going `&mut → NonNull → *mut` avoids that — every
-        // later deref/store comes from `scope_nn` / `scope_ptr` only.
+        // (Stacked Borrows); going `&mut → NonNull → StoreRef` avoids that —
+        // every later deref/store goes through the `StoreRef` wrapping `scope_nn`.
         // `..Scope::EMPTY` (a `const`) instead of `..Default::default()` so the
         // remaining fields are filled from a compile-time value: no temporary
         // `Scope` is built via the `Default` chain and then partially dropped,
@@ -3193,21 +3180,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // This runs once per pushed scope (every block/fn/class body).
         let scope_nn: NonNull<Scope> = NonNull::from(arena.alloc(Scope {
             kind: KIND,
-            parent: Some(parent_nn.into()),
+            parent: Some(parent),
             ..Scope::EMPTY
         }));
-        let scope_ptr: *mut Scope = scope_nn.as_ptr();
-        // SAFETY: fresh arena allocation; the `&mut` is a child of `scope_ptr`'s
-        // SharedRW tag and may be freely popped without invalidating `scope_nn`.
-        let scope = unsafe { &mut *scope_ptr };
+        // `StoreRef` wraps the SharedRW `NonNull` derived above; every later
+        // `Deref`/`DerefMut` goes through `scope_nn`, so reborrows do not pop
+        // its tag (see comment above).
+        let mut scope = js_ast::StoreRef::from(scope_nn);
 
-        // SAFETY: arena-owned Scope; `parent != scope` (fresh alloc) so the two
-        // `&mut` do not alias.
-        let parent_mut = unsafe { &mut *parent };
-        VecExt::append(&mut parent_mut.children, scope_nn.into());
-        scope.strict_mode = parent_mut.strict_mode;
+        // `parent != scope` (fresh alloc) so the two `&mut` do not alias.
+        VecExt::append(&mut parent.children, scope);
+        scope.strict_mode = parent.strict_mode;
 
-        self.current_scope = scope_ptr;
+        self.current_scope = scope;
 
         if KIND == js_ast::scope::Kind::With {
             // "with" statements change the default from ESModule to CommonJS at runtime.
@@ -3245,13 +3230,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
         if KIND == js_ast::scope::Kind::FunctionBody {
-            // `parent_nn` is the saved old `current_scope`; arena-owned, distinct
+            // `parent` is the saved old `current_scope`; arena-owned, distinct
             // from the freshly-allocated `scope`, so the read does not alias the
             // `&mut *scope` write below.
-            let parent_ref = js_ast::StoreRef::from(parent_nn);
-            debug_assert!(parent_ref.kind == js_ast::scope::Kind::FunctionArgs);
+            debug_assert!(parent.kind == js_ast::scope::Kind::FunctionArgs);
 
-            for (key, value) in parent_ref.members.iter() {
+            for (key, value) in parent.members.iter() {
                 // Don't copy down the optional function expression name. Re-declaring
                 // the name of a function expression is allowed.
                 let value = *value;
@@ -3268,7 +3252,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // Remember the length in case we call popAndDiscardScope() later
         let scope_index = self.scopes_in_order.len();
-        self.scopes_in_order.push(Some(ScopeOrder::new(loc, scope_ptr)));
+        self.scopes_in_order.push(Some(ScopeOrder::new(loc, scope.as_ptr())));
         // Output.print("\nLoc: {d}\n", .{loc.start});
         Ok(scope_index)
     }
@@ -3455,7 +3439,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let to_discard = self.current_scope_ref();
         let parent = to_discard.parent.expect("unreachable");
 
-        self.current_scope = parent.as_ptr();
+        self.current_scope = parent;
 
         // Truncate the scope order where we started to pretend we never saw this scope
         self.scopes_in_order.truncate(scope_index);
@@ -4265,18 +4249,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // taking the scope `Kind` by value, so we copy `scope.kind` out before
         // taking the entry, and every other read inside the match
         // (`self.symbols`, `self.log()`, `self.source`) touches `P` fields
-        // disjoint from the arena `Scope` the entry borrows. Deriving the
-        // `&mut Scope` directly from the raw `current_scope` pointer (not via
-        // `current_scope_mut`, which would tie it to `&mut self`) is what lets
-        // borrowck see that disjointness.
-        //
-        // SAFETY (scope deref): `current_scope` is an arena-owned non-null
-        // pointer (see `current_scope_mut`); nothing below re-derives a
-        // reference to `*self.current_scope` while `entry` is live.
+        // disjoint from the arena `Scope` the entry borrows. Copying the
+        // `StoreRef` out (instead of going through `current_scope_mut`, which
+        // would tie the borrow to `&mut self`) is what lets borrowck see that
+        // disjointness — `StoreRef` is `Copy` and does not borrow `self`, so
+        // the entry below can coexist with `self.symbols` / `self.log()` reads.
         // SAFETY (key lifetime): `name: &'a [u8]` points into source text or
         // the lexer string-table, both of which outlive the arena-owned
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
-        let scope: &mut js_ast::Scope = unsafe { &mut *self.current_scope };
+        let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
@@ -4518,8 +4499,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         self.current_scope = current_scope
             .parent
-            .unwrap_or_else(|| self.panic("Internal error: attempted to call popScope() on the topmost scope", format_args!("")))
-            .as_ptr();
+            .unwrap_or_else(|| self.panic("Internal error: attempted to call popScope() on the topmost scope", format_args!("")));
     }
 
     pub fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {
@@ -6694,7 +6674,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // writes.
         let to_flatten = self.current_scope_ref();
         let mut parent = to_flatten.parent.unwrap();
-        self.current_scope = parent.as_ptr();
+        self.current_scope = parent;
 
         // Erase this scope from the order. This will shift over the indices of all
         // the scopes that were created after us. However, we shouldn't have to
@@ -6727,7 +6707,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.generate_temp_ref_with_scope(default_name, self.current_scope)
     }
 
-    pub fn generate_temp_ref_with_scope(&mut self, default_name: Option<&'a [u8]>, scope: *mut Scope) -> Ref {
+    pub fn generate_temp_ref_with_scope(&mut self, default_name: Option<&'a [u8]>, mut scope: js_ast::StoreRef<Scope>) -> Ref {
         let name: &'a [u8] = if self.will_use_renamer() && default_name.is_some() {
             default_name.unwrap()
         } else {
@@ -6740,8 +6720,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         self.temp_refs_to_declare.push(TempRef { r#ref, ..Default::default() });
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *scope }.generated, r#ref);
+        VecExt::append(&mut scope.generated, r#ref);
 
         r#ref
     }
@@ -6952,7 +6931,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 scope = p;
             }
 
-            let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope.as_ptr());
+            let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope);
             *ctx_storage = Some(crate::HookContext {
                 hasher: Wyhash::init(0),
                 signature_cb,
@@ -7780,7 +7759,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         mut opts: ParserOptions<'a>,
     ) -> Result<(), bun_core::Error> {
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
-        let scope: *mut Scope = arena.alloc(Scope {
+        let scope = js_ast::StoreRef::from_bump(arena.alloc(Scope {
             members: Default::default(),
             children: bun_alloc::AstAlloc::vec(),
             generated: bun_alloc::AstAlloc::vec(),
@@ -7788,9 +7767,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             label_ref: None,
             parent: None,
             ..Default::default()
-        });
+        }));
 
-        scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope)));
+        scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));
         // PERF(port): was assume_capacity
 
         // Only enable during bundling, when not bundling CJS
@@ -8175,7 +8154,7 @@ impl LowerUsingDeclarationsContext {
             scope = scope.parent.unwrap();
         }
 
-        let is_top_level = core::ptr::eq(scope.as_ptr(), p.module_scope);
+        let is_top_level = scope == p.module_scope;
         scope
             .generated
             .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);

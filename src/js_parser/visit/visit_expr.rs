@@ -1781,7 +1781,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
                     // walk via the safe arena back-pointer.
                     let mut scope_iter: Option<js_ast::StoreRef<js_ast::Scope>> =
-                        NonNull::new(p.current_scope).map(js_ast::StoreRef::from);
+                        Some(p.current_scope);
                     while let Some(mut scope) = scope_iter {
                         scope.contains_direct_eval = true;
                         scope_iter = scope.parent;

@@ -85,7 +85,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
                 ref_: r#ref,
-                is_top_level: core::ptr::eq(self.current_scope, self.module_scope),
+                is_top_level: self.current_scope == self.module_scope,
             })
             .expect("oom");
     }
@@ -1196,7 +1196,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
 
         #[cfg(debug_assertions)]
-        let initial_scope: *mut js_ast::Scope = p.current_scope;
+        let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
         {
             // Save the current control-flow liveness. This represents if we are
@@ -1243,7 +1243,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            if core::ptr::eq(p.current_scope, p.module_scope) {
+            if p.current_scope == p.module_scope {
                 // TODO(port): `MacroState::prepend_stmts` is `&'a mut Vec<Stmt>` but
                 // `before` is a `BumpVec<'a, Stmt>` — type-shape divergence in
                 // parser.rs. Zig: `p.macro.prepend_stmts = &before;`. The macro
@@ -1471,7 +1471,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         #[cfg(debug_assertions)]
         // if this fails it means that scope pushing/popping is not balanced
-        debug_assert!(core::ptr::eq(p.current_scope, initial_scope));
+        debug_assert!(p.current_scope == initial_scope);
 
         if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
             return Ok(());
@@ -1578,7 +1578,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if !core::ptr::eq(p.current_scope, p.module_scope)
+            if p.current_scope != p.module_scope
                 && !p.current_scope().contains_direct_eval
             {
                 // Keep inlining variables until a failure or until there are none left.

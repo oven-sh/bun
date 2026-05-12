@@ -1446,7 +1446,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
-                                if core::ptr::eq(p.current_scope, p.module_scope) {
+                                if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
                             } else if str_.eql_comptime(b"use asm") {

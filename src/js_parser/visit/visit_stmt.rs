@@ -925,7 +925,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 ));
             }
 
-            if core::ptr::eq(p.current_scope, p.module_scope) {
+            if p.current_scope == p.module_scope {
                 p.handle_react_refresh_register(
                     stmts,
                     original_name,
@@ -1098,7 +1098,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data.kind = kind;
         stmts.push(*stmt);
 
-        if p.options.features.react_fast_refresh && core::ptr::eq(p.current_scope, p.module_scope) {
+        if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
             for decl in data.decls.slice() {
                 'try_register: {
                     let Some(val) = decl.value else { break 'try_register };
@@ -1233,7 +1233,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
 
-        let is_top_level = core::ptr::eq(p.current_scope, p.module_scope);
+        let is_top_level = p.current_scope == p.module_scope;
         if p.should_unwrap_common_js_to_esm() {
             p.commonjs_named_exports_needs_conversion = if is_top_level {
                 u32::MAX
@@ -1867,7 +1867,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // referencing, `esbuild` builds a separate hash map of hash
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
-        if core::ptr::eq(p.current_scope, p.module_scope) && p.options.bundle {
+        if p.current_scope == p.module_scope && p.options.bundle {
             p.top_level_enums.push(data.name.ref_.expect("infallible: ref bound"));
         }
 

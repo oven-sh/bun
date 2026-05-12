@@ -666,7 +666,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
             // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-            if (auto* pair = jsDynamicCast<JSArray*>(deserialized)) {
+            if (auto* pair = JSC::jsDynamicCast<JSArray*>(deserialized)) {
                 ASSERT(pair->length() == 2);
                 ASSERT(pair->canGetIndexQuickly(0u));
                 ASSERT(pair->canGetIndexQuickly(1u));

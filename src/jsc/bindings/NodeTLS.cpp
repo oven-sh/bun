@@ -170,7 +170,8 @@ static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(
         if (!sk_X509_push(out, x)) {
             X509_free(x);
             BIO_free(bio);
-            while (pushed-- > 0) X509_free(sk_X509_pop(out));
+            while (pushed-- > 0)
+                X509_free(sk_X509_pop(out));
             OPENSSL_PUT_ERROR(PEM, ERR_R_MALLOC_FAILURE);
             return ERR_peek_last_error();
         }

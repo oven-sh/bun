@@ -2085,6 +2085,7 @@ dependencies = [
  "parking_lot",
  "phf 0.11.3",
  "scopeguard",
+ "smallvec",
  "strum",
  "typed-arena",
 ]

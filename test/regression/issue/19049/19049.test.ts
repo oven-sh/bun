@@ -5,8 +5,12 @@
 // the event loop alive. Verify we now detect the dead loop, report it, and
 // exit.
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+// Each test spawns a bun subprocess; under the ASAN debug build that's
+// several seconds of startup per spawn, which can exceed the 5s default.
+setDefaultTimeout(30_000);
 
 async function run(opts: { cmd: string[]; cwd: string }) {
   await using proc = Bun.spawn({
@@ -24,7 +28,10 @@ async function run(opts: { cmd: string[]; cwd: string }) {
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-describe.concurrent("bun test: unsettled top-level await", () => {
+// Sequential, not concurrent: each test spawns a bun-debug subprocess (the
+// unfixed behaviour is a 100%-CPU busy-spin), and 9 of those at once on an
+// ASAN build overwhelm the CI machine and hit the default per-test timeout.
+describe("bun test: unsettled top-level await", () => {
   test("reports an error instead of hanging (never-resolving Promise)", async () => {
     using dir = tempDir("issue-19049-test", {
       "hang.test.ts": `await new Promise(() => {});`,
@@ -111,7 +118,7 @@ await new Promise(() => http2.connect("foo").request());
   });
 });
 
-describe.concurrent("bun run: unsettled top-level await", () => {
+describe("bun run: unsettled top-level await", () => {
   test("warns and exits with code 13", async () => {
     using dir = tempDir("issue-19049-run", {
       "entry.mjs": `await new Promise(() => {});\nconsole.log("unreachable");`,

@@ -892,9 +892,12 @@ impl<'a> AsyncHTTP<'a> {
 /// `task` must point to the `task` field of a live `AsyncHTTP` scheduled via
 /// `schedule()`.
 pub unsafe fn start_async_http(task: *mut Task) {
-    // SAFETY: caller upholds the invariant above.
-    let this = unsafe { AsyncHTTP::<'static>::from_task_ptr(task) };
-    unsafe { (*this).on_start() };
+    // SAFETY: caller upholds the invariant above — `from_task_ptr` recovers the
+    // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
+    // borrower (HTTP-thread-only). Same single-step shape as every other
+    // `IntrusiveWorkTask` call site (`&mut *Self::from_task_ptr(task)`).
+    let this = unsafe { &mut *AsyncHTTP::<'static>::from_task_ptr(task) };
+    this.on_start();
 }
 
 impl<'a> AsyncHTTP<'a> {

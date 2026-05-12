@@ -61,15 +61,18 @@ impl PendingConnect {
         // holds one ref from construction until Drop. `session_mut` centralises
         // the backref upgrade (same invariant as the other call sites below).
         session_mut(session).ref_();
-        let self_ = bun_core::heap::into_raw(Box::new(PendingConnect {
+        let self_ = Box::new(PendingConnect {
             session,
             pc,
             loop_ptr: l,
-        }));
-        // SAFETY: pc is a live quic::PendingConnect C handle; addrinfo() yields its addrinfo
-        // request slot which the DNS layer fills. self_ is the Box we just leaked above and
-        // is consumed by on_dns_resolved (via the global cache's notify path).
-        unsafe { bun_dns::internal::register_quic((*pc).addrinfo(), self_.cast()) };
+        });
+        // Route the addrinfo read through the existing [`pc_mut`] accessor
+        // (centralised raw upgrade) instead of an open-coded `(*pc)` deref.
+        let addrinfo = self_.pc_mut().addrinfo();
+        let self_ = bun_core::heap::into_raw(self_);
+        // SAFETY: `self_` is the Box we just leaked above and is consumed by
+        // `on_dns_resolved` (via the global cache's notify path).
+        unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {
@@ -116,10 +119,15 @@ impl PendingConnect {
     ///
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
     pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
-        // SAFETY: `this` is a live heap-allocated PendingConnect (caller contract).
-        // Read `loop_ptr` *before* publishing `this` — once pushed, the HTTP
-        // thread may free `this` at any time via `drain_resolved`.
-        let loop_ptr = unsafe { (*this).loop_ptr };
+        // `this` is a live heap-allocated PendingConnect (caller contract);
+        // wrap it in a `ParentRef` (pointee outlives holder) so the shared
+        // `loop_ptr` read goes through the safe `Deref` impl instead of an
+        // open-coded `(*this)`. Read *before* publishing — once pushed, the
+        // HTTP thread may free `this` at any time via `drain_resolved`.
+        let loop_ptr = bun_ptr::ParentRef::from(
+            NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null"),
+        )
+        .r#loop();
         RESOLVED.lock().push(Resolved(this));
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
         unsafe { (*loop_ptr).wakeup() };

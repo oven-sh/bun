@@ -113,19 +113,17 @@ pub mod fs {
                 #[inline]
                 pub fn instance() -> &'static Self { &$zst }
                 pub fn append_slice(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
-                    // SAFETY: `$backing()` returns the raw `*mut` singleton (Zig `*Self`);
-                    // the singleton serializes all mutation through its internal `mutex`.
-                    let s = unsafe { &mut *$backing() }.append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
-                    // SAFETY: `append` returns a slice into the singleton's backing storage
-                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
-                    // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
-                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton
+                    // (Zig `*Self`); the singleton serializes all mutation through its
+                    // internal `mutex`. The returned slice borrows its never-freed backing
+                    // storage (heap-owned by a `'static` `BSSStringList` or a leaked
+                    // mi_malloc); the unbounded raw-deref lifetime coerces soundly to
+                    // `'static`.
+                    unsafe { (*$backing()).append(value) }.map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: see `append_slice`.
-                    let s = unsafe { &mut *$backing() }.append(parts).map_err(|_| bun_core::err!("OutOfMemory"))?;
-                    // SAFETY: see `append_slice`.
-                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                    unsafe { (*$backing()).append(parts) }.map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
@@ -146,19 +144,17 @@ pub mod fs {
                 /// Zig: `<Store>.append(allocator, value)`.
                 #[inline]
                 pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: `$backing()` returns the raw `*mut` singleton; the singleton
-                    // serializes all mutation through its internal `mutex`.
-                    let s = unsafe { &mut *$backing() }.append(value).map_err(|_| bun_alloc::AllocError)?;
-                    // SAFETY: returned slice borrows the process-lifetime singleton; re-erase to `'static`.
-                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
+                    // the singleton serializes all mutation through its internal `mutex`.
+                    // Returned slice borrows its never-freed storage; the unbounded
+                    // raw-deref lifetime coerces soundly to `'static`.
+                    unsafe { (*$backing()).append(value) }.map_err(|_| bun_alloc::AllocError)
                 }
                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.
                 #[inline]
                 pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append`.
-                    let s = unsafe { &mut *$backing() }.append_lower_case(value).map_err(|_| bun_alloc::AllocError)?;
-                    // SAFETY: see `append`.
-                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                    unsafe { (*$backing()).append_lower_case(value) }.map_err(|_| bun_alloc::AllocError)
                 }
             }
         };
@@ -854,18 +850,12 @@ pub mod fs {
     // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
     impl strings::Appender for &FilenameStore {
         fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            // SAFETY: `filename_store_backing()` returns the raw `*mut` singleton; serialized
-            // by its internal mutex.
-            let out = unsafe { &mut *filename_store_backing() }.append(s)?;
-            // SAFETY: `out` borrows the 'static singleton; re-erase the artificially-short
-            // `&mut self` borrow.
-            Ok(unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) })
+            // Route through the inherent method (which already handles the
+            // singleton deref + `'static` widening) instead of open-coding it.
+            FilenameStore::append(self, s)
         }
         fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            // SAFETY: see `append`.
-            let out = unsafe { &mut *filename_store_backing() }.append_lower_case(s)?;
-            // SAFETY: see `append`.
-            Ok(unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) })
+            FilenameStore::append_lower_case(self, s)
         }
     }
 
@@ -3599,13 +3589,11 @@ fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
         // fall back to a copy so we never hand out a dangling slice.
         other => Box::from(other.as_slice()),
     };
-    static ARENA: std::sync::LazyLock<parking_lot::Mutex<Vec<Box<[u8]>>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut guard = ARENA.lock();
-    guard.push(owned);
-    let last: &[u8] = guard.last().unwrap();
-    // SAFETY: see `intern_package_json` — same append-only LazyLock invariant.
-    unsafe { core::slice::from_raw_parts(last.as_ptr(), last.len()) }
+    // `Interned::leak` is the centralized process-lifetime byte-slice store
+    // (PORTING.md §Forbidden bars open-coded `Box::leak` + `from_raw_parts`;
+    // `bun_ptr::Interned` is the sanctioned wrapper that consumes the `Box`
+    // and hands back a proven `&'static [u8]`).
+    bun_ptr::Interned::leak(owned).as_bytes()
 }
 
 // Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).

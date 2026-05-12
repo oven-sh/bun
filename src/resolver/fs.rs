@@ -212,12 +212,11 @@ macro_rules! string_store_impl {
                 let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` is held, so this is the only live `&mut` to the
                 // process-lifetime singleton; `append` further serializes mutation
-                // through its (now-redundant) internal mutex.
-                let s = unsafe { (*Self::backing()).append(value)? };
-                // SAFETY: `append` returns a slice into the singleton's backing storage
-                // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
-                // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
-                Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                // through its (now-redundant) internal mutex. The returned slice
+                // borrows the singleton's never-freed backing storage (heap-owned
+                // by a `'static` `BSSStringList` or a leaked mi_malloc); the
+                // unbounded raw-deref lifetime coerces soundly to `'static`.
+                unsafe { (*Self::backing()).append(value) }
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
@@ -229,17 +228,15 @@ macro_rules! string_store_impl {
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
-                let r = unsafe { (*<$t>::backing()).append(s)? };
-                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
-                Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+                // SAFETY: `$mutex` held — sole live `&mut` to the process-lifetime
+                // singleton. Returned slice borrows its never-freed storage; the
+                // unbounded raw-deref lifetime narrows to the trait's elided one.
+                unsafe { (*<$t>::backing()).append(s) }
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
-                let r = unsafe { (*<$t>::backing()).append_lower_case(s)? };
-                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
-                Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+                // SAFETY: see `append`.
+                unsafe { (*<$t>::backing()).append_lower_case(s) }
             }
         }
     };

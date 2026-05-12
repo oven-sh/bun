@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import { closeSync, constants, openSync, unlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, constants, openSync } from "node:fs";
 import { join } from "node:path";
 
 // Reading a Blob wrapping a write-only pollable fd (like the write end of a
@@ -8,8 +8,8 @@ import { join } from "node:path";
 // get "not ready", and then register for EPOLLIN/EVFILT_READ on the write end,
 // which never fires. Now it rejects with EBADF instead of waiting.
 test.skipIf(isWindows)("Bun.file(fd).text() rejects on a write-only FIFO instead of hanging", async () => {
-  const dir = tmpdirSync();
-  const fifo = join(dir, "fifo");
+  using dir = tempDir("bun-stdout-read-wronly", {});
+  const fifo = join(String(dir), "fifo");
   Bun.spawnSync({ cmd: ["mkfifo", fifo], env: bunEnv });
 
   // Open a non-blocking reader so opening the write side doesn't block.
@@ -27,7 +27,6 @@ test.skipIf(isWindows)("Bun.file(fd).text() rejects on a write-only FIFO instead
   } finally {
     closeSync(writer);
     closeSync(reader);
-    unlinkSync(fifo);
   }
 });
 

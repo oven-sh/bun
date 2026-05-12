@@ -2197,20 +2197,16 @@ pub fn normalize_string_windows_t<'a,
 }
 
 pub fn normalize_string_node<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    // TODO(port): Zig returned []u8 here but []const T from the T variant; we
-    // unify to &[T] in the T variant and cast here.
-    let r = normalize_string_node_t::<u8, P>(str, buf);
-    // SAFETY: result always points into `buf`
-    unsafe { core::slice::from_raw_parts_mut(r.as_ptr().cast_mut(), r.len()) }
+    normalize_string_node_t::<u8, P>(str, buf)
 }
 
 pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
     buf: &'a mut [T],
-) -> &'a [T] {
+) -> &'a mut [T] {
     if str.is_empty() {
         buf[0] = T::from_u8(b'.');
-        return &buf[0..1];
+        return &mut buf[0..1];
     }
 
     let is_absolute = P::P.is_absolute_t::<T>(str);
@@ -2236,18 +2232,18 @@ pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     if out_len == 0 {
         if is_absolute {
             buf[0] = separator_t;
-            return &buf[0..1];
+            return &mut buf[0..1];
         }
 
         if trailing_separator {
             let sep = P::P.trailing_separator();
             buf[0] = T::from_u8(sep[0]);
             buf[1] = T::from_u8(sep[1]);
-            return &buf[0..2];
+            return &mut buf[0..2];
         }
 
         buf[0] = T::from_u8(b'.');
-        return &buf[0..1];
+        return &mut buf[0..1];
     }
 
     if trailing_separator {
@@ -2259,13 +2255,13 @@ pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
 
     if is_absolute {
         if P::P == Platform::Windows {
-            return &buf[buf_off..buf_off + out_len];
+            return &mut buf[buf_off..buf_off + out_len];
         }
         buf[0] = separator_t;
-        return &buf[0..out_len + 1];
+        return &mut buf[0..out_len + 1];
     }
 
-    &buf[buf_off..buf_off + out_len]
+    &mut buf[buf_off..buf_off + out_len]
 }
 
 /// Port of `resolve_path.zig:basename` — **NOT** `std.fs.path.basename` (see

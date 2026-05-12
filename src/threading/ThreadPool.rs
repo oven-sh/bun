@@ -492,10 +492,10 @@ impl ThreadPool {
         #[repr(C)]
         struct RunnerTask<Ctx, V, F> {
             task: Task,
-            // TODO(port): lifetime — LIFETIMES.tsv row 2144 says BORROW_PARAM →
-            // `&'a WaitContext<Ctx, Values>`. Kept as raw because it crosses threads
-            // via the intrusive Task callback; revisit with a scoped lifetime in Phase B.
-            ctx: *const WaitContext<Ctx, V, F>,
+            // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
+            // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
+            // tasks finish), so this is the canonical `BackRef` invariant.
+            ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
         }
 
@@ -508,8 +508,7 @@ impl ThreadPool {
                 &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task)
             };
             let i = runner_task.i;
-            // SAFETY: ctx points to a stack-local WaitContext kept alive by wait_for_all().
-            let wctx = unsafe { &*runner_task.ctx };
+            let wctx = runner_task.ctx.get();
             // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
             // every task finishes); each task owns a distinct index `i`.
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
@@ -536,7 +535,7 @@ impl ThreadPool {
                     node: Node::default(),
                     callback: call::<Ctx, V, F>,
                 },
-                ctx: &raw const wait_context,
+                ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
         // PORT NOTE: reshaped for borrowck — Zig wrote into pre-allocated slots and
@@ -1033,27 +1032,29 @@ thread_local! {
 /// RAII scope for a worker thread's active lifetime: publishes `thread` as
 /// `CURRENT` and registers it with `pool` on construction; on drop, unregisters
 /// from the pool and clears `CURRENT` (matching the Zig `defer` order).
+///
+/// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
+/// worker, so it strictly outlives this guard.
 struct ThreadRegistration {
-    pool: *const ThreadPool,
+    pool: bun_ptr::BackRef<ThreadPool>,
     thread: *mut Thread,
 }
 
 impl ThreadRegistration {
-    /// SAFETY: `pool` must outlive the returned guard (join() waits on workers),
-    /// and `thread` must point to the caller's stack-local `Thread`.
-    unsafe fn new(pool: *const ThreadPool, thread: *mut Thread) -> Self {
+    /// SAFETY: `thread` must point to the caller's stack-local `Thread`.
+    unsafe fn new(pool: &ThreadPool, thread: *mut Thread) -> Self {
         CURRENT.with(|c| c.set(thread));
-        // SAFETY: per fn contract.
-        unsafe { (*pool).register(thread) };
-        Self { pool, thread }
+        pool.register(thread);
+        Self { pool: bun_ptr::BackRef::new(pool), thread }
     }
 }
 
 impl Drop for ThreadRegistration {
     fn drop(&mut self) {
-        // SAFETY: per `new()` contract. `unregister` takes `*const` because the
-        // pool may be freed by the joiner before it returns.
-        unsafe { ThreadPool::unregister(self.pool, self.thread) };
+        // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
+        // `BackRef`) because the pool may be freed by the joiner before it
+        // returns — see `unregister`'s doc.
+        unsafe { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1137,14 +1138,12 @@ impl Thread {
             thread_pool,
         };
         let self_ptr: *mut Thread = &raw mut self_;
-        // SAFETY: thread_pool outlives this worker (join() waits); self_ptr is
-        // our stack-local Thread.
-        let _registration = unsafe { ThreadRegistration::new(thread_pool, self_ptr) };
-        // SAFETY: `_registration` proves liveness — the pool's `join()` blocks
-        // on every registered thread, so `thread_pool` is valid for all of
-        // `run()`. Hoist a single shared ref so the hot loop (and the
-        // `BUN_THREADPOOL_STATS` instrumentation) need no per-use `unsafe`.
+        // SAFETY: thread_pool outlives this worker (join() waits). Hoist a
+        // single shared ref so the hot loop, the registration guard, and the
+        // `BUN_THREADPOOL_STATS` instrumentation need no per-use `unsafe`.
         let pool: &ThreadPool = unsafe { &*thread_pool };
+        // SAFETY: self_ptr is our stack-local Thread.
+        let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
 
         let stats = stats_enabled();
         let mut is_waking = false;
@@ -1411,13 +1410,16 @@ pub mod node {
     pub struct Queue {
         stack: AtomicUsize,
         // PORT NOTE: Zig's plain `?*Node` is mutated through `&self` while
-        // `IS_CONSUMING` is held. UnsafeCell gives interior mutability without
-        // an atomic — the `stack` Acquire/Release barriers order accesses.
-        cache: core::cell::UnsafeCell<*mut Node>,
+        // `IS_CONSUMING` is held. `Cell` gives interior mutability without an
+        // atomic — the `stack` Acquire/Release barriers order accesses, and the
+        // `unsafe impl Sync` below is where that synchronization promise lives.
+        cache: core::cell::Cell<*mut Node>,
     }
 
-    // SAFETY: Queue is a lock-free MPMC queue; raw `cache` is guarded by the
-    // IS_CONSUMING bit in `stack`.
+    // SAFETY: Queue is a lock-free MPMC queue; the non-atomic `cache` Cell is
+    // only read/written by the thread that has CAS-acquired the IS_CONSUMING
+    // bit in `stack` (Acquire on take, Release on give-back), so all `cache`
+    // accesses are totally ordered despite `Cell: !Sync`.
     unsafe impl core::marker::Sync for Queue {}
     unsafe impl Send for Queue {}
 
@@ -1425,7 +1427,7 @@ pub mod node {
         fn default() -> Self {
             Queue {
                 stack: AtomicUsize::new(0),
-                cache: core::cell::UnsafeCell::new(ptr::null_mut()),
+                cache: core::cell::Cell::new(ptr::null_mut()),
             }
         }
     }
@@ -1493,8 +1495,8 @@ pub mod node {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
-                        // SAFETY: we now hold IS_CONSUMING; cache is exclusively ours.
-                        let cache = unsafe { *self.cache.get() };
+                        // We now hold IS_CONSUMING; cache is exclusively ours.
+                        let cache = self.cache.get();
                         return Ok(if !cache.is_null() {
                             cache
                         } else {
@@ -1516,8 +1518,8 @@ pub mod node {
 
             // Release the consumer with a release barrier to ensure cache/node accesses
             // happen before the consumer was released and before the next consumer starts using the cache.
-            // SAFETY: we hold IS_CONSUMING; cache is exclusively ours until fetch_sub releases it.
-            unsafe { *self.cache.get() = consumer };
+            // We hold IS_CONSUMING; cache is exclusively ours until fetch_sub releases it.
+            self.cache.set(consumer);
             let stack = self.stack.fetch_sub(remove, Ordering::Release);
             debug_assert!(stack & remove != 0);
         }

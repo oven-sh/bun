@@ -97,25 +97,29 @@ impl Mutex {
     #[must_use = "the mutex unlocks immediately if the guard is dropped"]
     pub fn lock_guard(&self) -> MutexGuard {
         self.lock();
-        MutexGuard { mutex: self }
+        MutexGuard { mutex: bun_ptr::BackRef::new(self), _not_send: core::marker::PhantomData }
     }
 }
 
 /// RAII guard returned by [`Mutex::lock_guard`]. Unlocks on `Drop`.
 ///
-/// Stores a raw `*const Mutex` so it does not hold a borrow of the mutex's
-/// owner — see [`Mutex::lock_guard`] for the rationale.
+/// Stores a [`BackRef<Mutex>`] (lifetime-erased `&Mutex`) so it does not hold
+/// a borrow of the mutex's owner — see [`Mutex::lock_guard`] for the rationale.
+/// The `BackRef` invariant (pointee outlives holder) is the caller contract on
+/// `lock_guard()`: the mutex outlives this guard (always true when the guard
+/// is a local that drops before the owning struct).
 pub struct MutexGuard {
-    mutex: *const Mutex,
+    mutex: bun_ptr::BackRef<Mutex>,
+    // Preserve the previous `!Send`/`!Sync` auto-trait surface (the field was
+    // `*const Mutex`): the Darwin `os_unfair_lock` / Windows `SRWLOCK` backends
+    // require unlock on the locking thread.
+    _not_send: core::marker::PhantomData<*const Mutex>,
 }
 
 impl Drop for MutexGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `lock_guard()` was called on a live `&Mutex`; caller contract
-        // is that the mutex outlives this guard (always true when the guard is a
-        // local that drops before the owning struct).
-        unsafe { (*self.mutex).unlock() }
+        self.mutex.unlock()
     }
 }
 

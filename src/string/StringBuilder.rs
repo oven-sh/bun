@@ -149,17 +149,18 @@ impl StringBuilder {
         debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: `ptr` was allocated with `cap` bytes by `allocate()`; the
-        // debug_assert above guarantees `len + slice.len() <= cap`, so
-        // `[len..len+slice.len())` is in-bounds and exclusively owned here.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        unsafe { core::ptr::copy_nonoverlapping(slice.as_ptr(), base, slice.len()) };
+        // Reuse the safe `writable()` accessor for the bounds-checked copy
+        // instead of open-coding `ptr.add(len)` + `copy_nonoverlapping` here.
+        let dst = &mut self.writable()[..slice.len()];
+        dst.copy_from_slice(slice);
+        let base = dst.as_ptr();
         self.len += slice.len();
 
         debug_assert!(self.len <= self.cap);
 
         // SAFETY: `base..base+slice.len()` was just initialized above and lives
-        // for as long as `self.ptr` (heap allocation never moves).
+        // for as long as `self.ptr` (heap allocation never moves). The unbound
+        // `'a` lifetime is the documented caller contract of `append_raw`.
         unsafe { core::slice::from_raw_parts(base, slice.len()) }
     }
 

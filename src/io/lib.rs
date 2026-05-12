@@ -284,7 +284,9 @@ mod windows_ffi {
     // Bun C++ shim over `QueryPerformanceCounter` (src/bun.js/bindings/
     // c-bindings.cpp). Zig io.zig:314 declares it inline in `Loop`.
     unsafe extern "C" {
-        pub(super) fn clock_gettime_monotonic(sec: *mut i64, nsec: *mut i64) -> core::ffi::c_int;
+        // safe: out-params are `&mut i64` (non-null, valid for write); C++ side
+        // only writes the slots and returns a status code — no preconditions.
+        pub(super) safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64) -> core::ffi::c_int;
     }
 }
 
@@ -840,8 +842,7 @@ impl IoRequestLoop {
             // scope in `windows_ffi` since `extern` blocks can't live in `impl`.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
-            // SAFETY: valid out-pointers.
-            let rc = unsafe { windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec) };
+            let rc = windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec);
             debug_assert!(rc == 0);
             timespec.tv_sec = sec.try_into().expect("infallible: size matches");
             timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
@@ -1651,14 +1652,15 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        // Defined in src/io/io_darwin.cpp.
-        fn io_darwin_close_machport(port: bun_core::mach_port);
+        // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
+        // bad/dead ports are reported by mach return codes, not UB.
+        safe fn io_darwin_close_machport(port: bun_core::mach_port);
         fn io_darwin_create_machport(
             kq: i32,
             buf: *mut c_void,
             len: usize,
         ) -> bun_core::mach_port;
-        fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
     }
 
     #[cfg(target_os = "macos")]
@@ -1674,8 +1676,7 @@ pub mod waker {
         }
 
         pub fn wake(&mut self) {
-            // SAFETY: FFI call with a valid mach_port created in init.
-            if unsafe { io_darwin_schedule_wakeup(self.machport) } {
+            if io_darwin_schedule_wakeup(self.machport) {
                 self.has_pending_wake = false;
                 return;
             }

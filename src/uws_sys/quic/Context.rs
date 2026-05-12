@@ -17,7 +17,11 @@ unsafe extern "C" {
         stream_ext: c_uint,
     ) -> *mut Context;
 
-    fn us_quic_socket_context_loop(ctx: *mut Context) -> *mut Loop;
+    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
+    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
+    // `noalias`/`readonly` attribute. Shims taking only the handle + value
+    // types (incl. fn-pointer callbacks) are `safe fn`.
+    safe fn us_quic_socket_context_loop(ctx: &mut Context) -> *mut Loop;
 
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
@@ -30,30 +34,30 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
 
-    fn us_quic_socket_context_on_hsk_done(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_hsk_done(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),
     );
-    fn us_quic_socket_context_on_goaway(ctx: *mut Context, cb: unsafe extern "C" fn(*mut Socket));
-    fn us_quic_socket_context_on_close(ctx: *mut Context, cb: unsafe extern "C" fn(*mut Socket));
-    fn us_quic_socket_context_on_stream_open(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_goaway(ctx: &mut Context, cb: unsafe extern "C" fn(*mut Socket));
+    safe fn us_quic_socket_context_on_close(ctx: &mut Context, cb: unsafe extern "C" fn(*mut Socket));
+    safe fn us_quic_socket_context_on_stream_open(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream, c_int),
     );
-    fn us_quic_socket_context_on_stream_headers(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_stream_headers(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream),
     );
-    fn us_quic_socket_context_on_stream_data(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_stream_data(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int),
     );
-    fn us_quic_socket_context_on_stream_writable(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_stream_writable(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream),
     );
-    fn us_quic_socket_context_on_stream_close(
-        ctx: *mut Context,
+    safe fn us_quic_socket_context_on_stream_close(
+        ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Stream),
     );
 }
@@ -87,11 +91,11 @@ impl Context {
 
     #[inline]
     pub fn r#loop(&mut self) -> *mut Loop {
-        // SAFETY: self is a live us_quic_socket_context_t; the loop outlives every context it owns.
-        // Returns a raw pointer because the Loop is shared across every context/socket/timer on
-        // the thread (Zig `*uws.Loop` freely aliases) — materializing `&mut Loop` here would
-        // assert uniqueness we cannot guarantee.
-        unsafe { us_quic_socket_context_loop(self) }
+        // Returns a raw pointer because the Loop is shared across every
+        // context/socket/timer on the thread (Zig `*uws.Loop` freely aliases) —
+        // materializing `&mut Loop` here would assert uniqueness we cannot
+        // guarantee.
+        us_quic_socket_context_loop(self)
     }
 
     pub fn connect(
@@ -126,43 +130,35 @@ impl Context {
 
     #[inline]
     pub fn on_hsk_done(&mut self, cb: unsafe extern "C" fn(*mut Socket, c_int)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_hsk_done(self, cb) }
+        us_quic_socket_context_on_hsk_done(self, cb)
     }
     #[inline]
     pub fn on_goaway(&mut self, cb: unsafe extern "C" fn(*mut Socket)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_goaway(self, cb) }
+        us_quic_socket_context_on_goaway(self, cb)
     }
     #[inline]
     pub fn on_close(&mut self, cb: unsafe extern "C" fn(*mut Socket)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_close(self, cb) }
+        us_quic_socket_context_on_close(self, cb)
     }
     #[inline]
     pub fn on_stream_open(&mut self, cb: unsafe extern "C" fn(*mut Stream, c_int)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_stream_open(self, cb) }
+        us_quic_socket_context_on_stream_open(self, cb)
     }
     #[inline]
     pub fn on_stream_headers(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_stream_headers(self, cb) }
+        us_quic_socket_context_on_stream_headers(self, cb)
     }
     #[inline]
     pub fn on_stream_data(&mut self, cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_stream_data(self, cb) }
+        us_quic_socket_context_on_stream_data(self, cb)
     }
     #[inline]
     pub fn on_stream_writable(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_stream_writable(self, cb) }
+        us_quic_socket_context_on_stream_writable(self, cb)
     }
     #[inline]
     pub fn on_stream_close(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
-        // SAFETY: thin FFI forward.
-        unsafe { us_quic_socket_context_on_stream_close(self, cb) }
+        us_quic_socket_context_on_stream_close(self, cb)
     }
 }
 

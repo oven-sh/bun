@@ -11,25 +11,27 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+// `Socket` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Socket` is
+// ABI-identical to a non-null `*mut Socket` with no `noalias`/`readonly`
+// attribute. Shims taking only the handle + value types are `safe fn`; the
+// (ptr,len) writer keeps a raw signature.
 unsafe extern "C" {
-    fn us_quic_socket_make_stream(s: *mut Socket);
-    fn us_quic_socket_streams_avail(s: *mut Socket) -> c_uint;
+    safe fn us_quic_socket_make_stream(s: &mut Socket);
+    safe fn us_quic_socket_streams_avail(s: &mut Socket) -> c_uint;
     fn us_quic_socket_status(s: *mut Socket, buf: *mut u8, len: c_uint) -> c_int;
-    fn us_quic_socket_close(s: *mut Socket);
-    fn us_quic_socket_ext(s: *mut Socket) -> *mut c_void;
+    safe fn us_quic_socket_close(s: &mut Socket);
+    safe fn us_quic_socket_ext(s: &mut Socket) -> *mut c_void;
 }
 
 impl Socket {
     #[inline]
     pub fn make_stream(&mut self) {
-        // SAFETY: self is a live us_quic_socket_t (valid until on_close returns).
-        unsafe { us_quic_socket_make_stream(self) }
+        us_quic_socket_make_stream(self)
     }
 
     #[inline]
     pub fn streams_avail(&mut self) -> c_uint {
-        // SAFETY: self is a live us_quic_socket_t.
-        unsafe { us_quic_socket_streams_avail(self) }
+        us_quic_socket_streams_avail(self)
     }
 
     #[inline]
@@ -46,8 +48,7 @@ impl Socket {
 
     #[inline]
     pub fn close(&mut self) {
-        // SAFETY: self is a live us_quic_socket_t.
-        unsafe { us_quic_socket_close(self) }
+        us_quic_socket_close(self)
     }
 
     /// `conn_ext_size` bytes of caller storage co-allocated with the socket.

@@ -12,26 +12,28 @@ bun_opaque::opaque_ffi! {
     pub struct PendingConnect;
 }
 
+// `PendingConnect` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
+// `&mut PendingConnect` is ABI-identical to a non-null `*mut PendingConnect`
+// with no `noalias`/`readonly` attribute — handle-only shims are `safe fn`.
 unsafe extern "C" {
-    fn us_quic_pending_connect_addrinfo(pc: *mut PendingConnect) -> *mut c_void;
-    fn us_quic_pending_connect_resolved(pc: *mut PendingConnect) -> *mut Socket;
-    fn us_quic_pending_connect_cancel(pc: *mut PendingConnect);
+    safe fn us_quic_pending_connect_addrinfo(pc: &mut PendingConnect) -> *mut c_void;
+    safe fn us_quic_pending_connect_resolved(pc: &mut PendingConnect) -> *mut Socket;
+    safe fn us_quic_pending_connect_cancel(pc: &mut PendingConnect);
 }
 
 impl PendingConnect {
     pub fn addrinfo(&mut self) -> *mut c_void {
-        // SAFETY: self is a valid *mut PendingConnect (opaque FFI handle).
-        unsafe { us_quic_pending_connect_addrinfo(self) }
+        us_quic_pending_connect_addrinfo(self)
     }
 
     pub fn resolved(&mut self) -> Option<&mut Socket> {
-        // SAFETY: self is a valid *mut PendingConnect; C returns null or a valid Socket*.
+        // SAFETY: C returns null or a valid `us_quic_socket_t*`; `Socket` is an
+        // opaque ZST handle so `&mut` carries no aliasing assumptions.
         unsafe { us_quic_pending_connect_resolved(self).as_mut() }
     }
 
     pub fn cancel(&mut self) {
-        // SAFETY: self is a valid *mut PendingConnect (opaque FFI handle).
-        unsafe { us_quic_pending_connect_cancel(self) }
+        us_quic_pending_connect_cancel(self)
     }
 }
 

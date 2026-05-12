@@ -24,10 +24,9 @@ pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
-/// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
-/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
-/// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
+/// `bun_io_types::file_poll::Owner::BufferedReader` — every `FilePoll`
+/// allocated by this module stores a typed `BufferedReaderHandle` as its owner;
+/// the high-tier dispatcher calls back through `bun_io::with_buffered_reader_handle`.
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};

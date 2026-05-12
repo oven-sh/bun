@@ -273,17 +273,21 @@ const EV_EOF: u16 = 0x8000;
 // already names the syscall via `Tag`). No remaining call site → dropped.
 
 // ──────────────────────────────────────────────────────────────────────────
-// FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::on_poll`
-// owns the per-tag `match` so the variant types are never named in this crate.
+// FilePoll Owner — hot-path typed owner delivery (CYCLEBREAK §Hot dispatch list).
+// Low tier (here) stores a `bun_io_types::file_poll::Owner`; `bun_runtime::dispatch`
+// owns the per-owner `match` so the concrete runtime/install variant types are
+// never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type PollTag = bun_io_types::file_poll::Kind;
 pub type Owner = bun_io_types::file_poll::Owner;
 pub use bun_io_types::file_poll::kind as poll_tag;
+use bun_io_types::file_poll::{
+    Action as FilePollAction, Delivery as FilePollDelivery,
+};
 
 unsafe extern "Rust" {
-    fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
+    fn __bun_run_file_poll(delivery: FilePollDelivery) -> FilePollAction;
 }
 
 #[repr(u8)]
@@ -406,6 +410,29 @@ impl FilePoll {
         readable
     }
 
+    fn delivery(&mut self, size_or_offset: i64) -> FilePollDelivery {
+        let owner = self.owner;
+        let readable = if owner.kind() == PollTag::DnsResolver {
+            self.is_readable()
+        } else {
+            self.flags.contains(Flags::Readable)
+        };
+        let writable = if owner.kind() == PollTag::DnsResolver {
+            self.is_writable()
+        } else {
+            self.flags.contains(Flags::Writable)
+        };
+
+        FilePollDelivery::new(
+            owner,
+            self.fd.native() as i64,
+            size_or_offset,
+            readable,
+            writable,
+            self.flags.contains(Flags::Hup),
+        )
+    }
+
     // PORT NOTE: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
@@ -466,12 +493,17 @@ impl FilePoll {
 
         debug_assert!(!self.owner.is_null());
 
-        // Hot-path hoisted-match: the per-tag `switch` lives in
+        // Hot-path hoisted-match: the per-owner `switch` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types. // PERF(port): was inline switch.
-        // SAFETY: `self` is a live FilePoll for the duration of the call
-        // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
+        //
+        // The boundary carries the typed owner plus readiness facts, not the
+        // `FilePoll` slot itself. If the high tier needs the lower slot torn
+        // down, it returns an action and `bun_io` performs the deinit locally.
+        let action = unsafe { __bun_run_file_poll(self.delivery(size_or_offset)) };
+        if action.should_deinit() {
+            self.deinit();
+        }
     }
 
     #[inline]

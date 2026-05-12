@@ -16,7 +16,7 @@
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
 //! **Adding a variant** (do all three):
-//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
+//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io_types::file_poll::kind`);
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
 //!   3. a match arm here.
 
@@ -34,7 +34,9 @@ use bun_event_loop::ManagedTask::ManagedTask;
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
 // where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
-use bun_io::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
+use bun_io_types::file_poll::{
+    kind as poll_tag, Action as FilePollAction, Delivery as FilePollDelivery,
+};
 
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
@@ -970,16 +972,15 @@ pub fn tick_queue_with_count(
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
-/// # Safety
-/// `poll` must point at a live [`FilePoll`] for the duration of the call
-/// (guaranteed by `FilePoll::on_update`, the only caller).
+/// `delivery` is built by `FilePoll::on_update` from the live `FilePoll` slot.
+/// The runtime sees the typed owner and readiness facts only; any lower-slot
+/// teardown is returned as an action for `bun_io` to perform locally.
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
-    // SAFETY: contract above.
-    let poll_ref = unsafe { &mut *poll };
-    let owner = poll_ref.owner;
-    let hup = poll_ref.flags.contains(PollFlag::Hup);
+pub fn __bun_run_file_poll(delivery: FilePollDelivery) -> FilePollAction {
+    let owner = delivery.owner;
+    let size_or_offset = delivery.size_or_offset;
+    let hup = delivery.hup;
 
     debug_assert!(!owner.is_null());
 
@@ -1071,10 +1072,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             let resolver = owner
                 .dns_resolver_handle()
                 .expect("DNS_RESOLVER FilePoll owner carries a DnsResolverHandle");
-            crate::dns_jsc::with_resolver_handle(resolver, |resolver| {
-                // SAFETY: `poll` outlives this call (caller contract).
-                resolver.on_dns_poll(unsafe { &mut *poll });
+            let action = crate::dns_jsc::with_resolver_handle(resolver, |resolver| {
+                resolver.on_dns_poll(delivery.into())
             });
+            if action.should_deinit() {
+                return action;
+            }
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
@@ -1131,6 +1134,8 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             let _ = (size_or_offset, hup);
         }
     }
+
+    FilePollAction::Continue
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -147,11 +147,17 @@ FilePoll production path
   │     └─> generic writer parents expose type PollOwner: file_poll::PipeWriterVariant
   ├─> storage
   │     └─> bun_io::FilePoll stores bun_io_types::file_poll::Owner as a closed typed enum
+  ├─> delivery
+  │     └─> bun_io::FilePoll::on_update builds file_poll::Delivery
+  │           ├─> owner: file_poll::Owner
+  │           ├─> fd / size_or_offset
+  │           └─> readiness facts such as readable / writable / hup
   └─> consumer
-        └─> bun_runtime::dispatch::__bun_run_file_poll
-              ├─> matches owner.kind()
+        └─> bun_runtime::dispatch::__bun_run_file_poll(delivery) -> file_poll::Action
+              ├─> matches delivery.owner.kind()
               ├─> pulls typed handles from owner.process_handle(), owner.buffered_reader_handle(), etc.
-              └─> calls owner-crate helper APIs that keep layout recovery local
+              ├─> calls owner-crate helper APIs that keep layout recovery local
+              └─> returns Action::Deinit when bun_io must tear down the lower FilePoll slot
 ```
 
 The important detail is that writer families no longer thread a raw

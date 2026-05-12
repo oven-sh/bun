@@ -15,6 +15,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_io::{self as Async, FilePoll, KeepAlive};
 use bun_io_types::dns::{DnsRequestHandle, DnsResolverHandle, GetAddrInfoRequestHandle};
+use bun_io_types::file_poll::{Action as FilePollAction, Delivery as FilePollDelivery};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};
 use bun_dns::{
@@ -118,6 +119,26 @@ pub fn with_resolver_handle<R>(
     // allocations by this module. Keep Resolver recovery next to the Resolver
     // layout and c-ares re-entry rules.
     unsafe { f(&mut *handle.as_ptr::<Resolver>()) }
+}
+
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DnsPollReady {
+    fd: c_ares::ares_socket_t,
+    readable: bool,
+    writable: bool,
+}
+
+#[cfg(not(windows))]
+impl From<FilePollDelivery> for DnsPollReady {
+    #[inline]
+    fn from(delivery: FilePollDelivery) -> Self {
+        Self {
+            fd: delivery.fd as c_ares::ares_socket_t,
+            readable: delivery.readable,
+            writable: delivery.writable,
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -4191,7 +4212,7 @@ impl Resolver {
     /// libuv (`on_dns_poll_uv`) instead, and the only caller
     /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
     #[cfg(not(windows))]
-    pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
+    pub fn on_dns_poll(&mut self, ready: DnsPollReady) -> FilePollAction {
         // Drop to a raw pointer immediately: `Channel::process` (== `ares_process_fd`)
         // synchronously fires c-ares completion callbacks which re-enter this
         // Resolver via fresh `&mut` (e.g. `request_completed`, `drain_pending_*`).
@@ -4205,9 +4226,8 @@ impl Resolver {
         let _exit = vm.enter_event_loop_scope();
         // SAFETY: `this` is live for the duration of this callback (caller holds it).
         let Some(channel) = (unsafe { (*this).channel }) else {
-            unsafe { let _ = (*this).polls.remove(&poll.fd.native()); }
-            poll.deinit();
-            return;
+            unsafe { let _ = (*this).polls.remove(&ready.fd); }
+            return FilePollAction::Deinit;
         };
 
         // SAFETY: `this` is the heap allocation from `init`; ref_scope keeps count > 0 across re-entrant callbacks.
@@ -4216,8 +4236,10 @@ impl Resolver {
         // SAFETY: `channel` is the live c-ares channel owned by `*this`; no `&mut`
         // to `*this` is held across this re-entrant call.
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(ready.fd, ready.readable, ready.writable);
         }
+
+        FilePollAction::Continue
     }
 
     pub fn on_dns_socket_state(&mut self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {

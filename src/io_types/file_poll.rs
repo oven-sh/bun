@@ -109,6 +109,50 @@ pub enum Owner {
     LifecycleScriptSubprocessOutputReader(BufferedReaderHandle),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Delivery {
+    pub owner: Owner,
+    pub fd: i64,
+    pub size_or_offset: i64,
+    pub readable: bool,
+    pub writable: bool,
+    pub hup: bool,
+}
+
+impl Delivery {
+    #[inline]
+    pub const fn new(
+        owner: Owner,
+        fd: i64,
+        size_or_offset: i64,
+        readable: bool,
+        writable: bool,
+        hup: bool,
+    ) -> Self {
+        Self {
+            owner,
+            fd,
+            size_or_offset,
+            readable,
+            writable,
+            hup,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Continue,
+    Deinit,
+}
+
+impl Action {
+    #[inline]
+    pub const fn should_deinit(self) -> bool {
+        matches!(self, Self::Deinit)
+    }
+}
+
 impl Owner {
     pub const NULL: Self = Self::Null;
 
@@ -361,5 +405,21 @@ mod tests {
             core::mem::size_of::<Owner>(),
             core::mem::size_of::<usize>() * 2
         );
+    }
+
+    #[test]
+    fn delivery_carries_readiness_without_owner_erasure() {
+        let handle = ProcessHandle::from_usize(0xb000).unwrap();
+        let owner = Owner::Process(handle);
+        let delivery = Delivery::new(owner, 12, 34, true, false, true);
+
+        assert_eq!(delivery.owner, owner);
+        assert_eq!(delivery.fd, 12);
+        assert_eq!(delivery.size_or_offset, 34);
+        assert!(delivery.readable);
+        assert!(!delivery.writable);
+        assert!(delivery.hup);
+        assert!(!Action::Continue.should_deinit());
+        assert!(Action::Deinit.should_deinit());
     }
 }

@@ -1667,7 +1667,13 @@ pub const DIM: &str = "\x1b[2m";
 /// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
 /// payload (using stdout's colour state). Prefer the `pretty!` macro for literal
 /// templates so the rewrite stays comptime.
-#[inline]
+///
+/// `inline(always)`: with plain `#[inline]` the `<core::fmt::Arguments>`
+/// monomorphization materializes once in `bun_runtime` and every other crate's
+/// single startup-banner call jumps to that island, dragging a cold .text page
+/// into the install/no-op fault-around set. Forcing the body into each caller
+/// keeps it next to the call site (and the body is two calls — cheap).
+#[inline(always)]
 pub fn pretty(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
     write_bytes(Destination::Stdout, &buf);
@@ -1677,7 +1683,8 @@ pub fn pretty(payload: impl PrettyFmtInput) {
 /// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
 /// payload and appends `\n` if the result does not already end in one (matches
 /// Zig output.zig:1090-1093). Prefer the `prettyln!` macro for literal templates.
-#[inline]
+/// `inline(always)` for the same .text-layout reason as [`pretty`].
+#[inline(always)]
 pub fn prettyln(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
     write_bytes(Destination::Stdout, &buf);

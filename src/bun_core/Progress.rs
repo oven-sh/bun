@@ -24,6 +24,40 @@ use crate::Mutex;
 #[cfg(windows)]
 use crate::windows_sys as windows;
 
+// `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0/FALSE
+// on a non-console handle); every out-param is `&mut T` to a `#[repr(C)]` POD,
+// ABI-identical to the Win32 `LP*` pointer (thin non-null). The reference type
+// encodes the only pointer-validity precondition, so `safe fn` discharges the
+// link-time proof. (`bun_windows_sys::kernel32` declares these with `*mut`;
+// redeclared locally so the legacy-conhost cursor path below is plain calls.)
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    safe fn GetConsoleMode(hConsoleHandle: windows::HANDLE, lpMode: &mut windows::DWORD) -> windows::BOOL;
+    safe fn GetConsoleScreenBufferInfo(
+        hConsoleOutput: windows::HANDLE,
+        lpConsoleScreenBufferInfo: &mut windows::CONSOLE_SCREEN_BUFFER_INFO,
+    ) -> windows::BOOL;
+    safe fn FillConsoleOutputAttribute(
+        hConsoleOutput: windows::HANDLE,
+        wAttribute: windows::WORD,
+        nLength: windows::DWORD,
+        dwWriteCoord: windows::COORD,
+        lpNumberOfAttrsWritten: &mut windows::DWORD,
+    ) -> windows::BOOL;
+    safe fn FillConsoleOutputCharacterW(
+        hConsoleOutput: windows::HANDLE,
+        cCharacter: windows::WCHAR,
+        nLength: windows::DWORD,
+        dwWriteCoord: windows::COORD,
+        lpNumberOfCharsWritten: &mut windows::DWORD,
+    ) -> windows::BOOL;
+    safe fn SetConsoleCursorPosition(
+        hConsoleOutput: windows::HANDLE,
+        dwCursorPosition: windows::COORD,
+    ) -> windows::BOOL;
+}
+
 // Progress's terminal handle is the canonical `output::File` (vtable-backed
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
 // from B-0 round 1 is removed; tty/ansi/winsize route through the new
@@ -50,9 +84,7 @@ impl File {
             // conhost (emit raw escapes) or under NO_COLOR on a VT terminal
             // (force the SetConsoleCursorPosition path).
             let mut mode: windows::DWORD = 0;
-            // SAFETY: `mode` is a live stack out-param; if the handle is not a
-            // console GetConsoleMode returns 0 and we fall through to false.
-            (unsafe { windows::kernel32::GetConsoleMode(self.console_handle(), &mut mode) }) != 0
+            GetConsoleMode(self.console_handle(), &mut mode) != 0
                 && (mode & windows::ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
         }
         #[cfg(not(windows))]
@@ -483,12 +515,7 @@ impl Progress {
 
                     // TODO(port): verify bun_sys::windows::CONSOLE_SCREEN_BUFFER_INFO layout & kernel32 bindings.
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = crate::ffi::zeroed();
-                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
-                    // above); `info` is a live stack local out-ptr.
-                    if unsafe {
-                        windows::kernel32::GetConsoleScreenBufferInfo(file.console_handle(), &mut info)
-                    } != windows::TRUE
-                    {
+                    if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;
@@ -508,44 +535,31 @@ impl Progress {
                         windows::DWORD::try_from(info.dwSize.X - cursor_pos.X).unwrap();
 
                     let mut written: windows::DWORD = 0;
-                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
-                    // above); `cursor_pos` and `written` are live stack locals.
-                    if unsafe {
-                        windows::kernel32::FillConsoleOutputAttribute(
-                            file.console_handle(),
-                            info.wAttributes,
-                            fill_chars,
-                            cursor_pos,
-                            &mut written,
-                        )
-                    } != windows::TRUE
+                    if FillConsoleOutputAttribute(
+                        file.console_handle(),
+                        info.wAttributes,
+                        fill_chars,
+                        cursor_pos,
+                        &mut written,
+                    ) != windows::TRUE
                     {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;
                     }
-                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
-                    // above); `cursor_pos` and `written` are live stack locals.
-                    if unsafe {
-                        windows::kernel32::FillConsoleOutputCharacterW(
-                            file.console_handle(),
-                            b' ' as u16,
-                            fill_chars,
-                            cursor_pos,
-                            &mut written,
-                        )
-                    } != windows::TRUE
+                    if FillConsoleOutputCharacterW(
+                        file.console_handle(),
+                        b' ' as u16,
+                        fill_chars,
+                        cursor_pos,
+                        &mut written,
+                    ) != windows::TRUE
                     {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;
                     }
-                    // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
-                    // above); `cursor_pos` is passed by value.
-                    if unsafe {
-                        windows::kernel32::SetConsoleCursorPosition(file.console_handle(), cursor_pos)
-                    } != windows::TRUE
-                    {
+                    if SetConsoleCursorPosition(file.console_handle(), cursor_pos) != windows::TRUE {
                         // stop trying to write to this file
                         self.terminal = None;
                         break 'winapi;

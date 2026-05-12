@@ -526,6 +526,17 @@ pub mod windows_stdio {
     use crate::windows_sys as w;
     use crate::windows_sys::kernel32 as c;
 
+    // `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0 on
+    // a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
+    // non-null pointer). The reference type encodes the only pointer-validity
+    // precondition, so `safe fn` discharges the link-time proof. (`c::Get/Set
+    // ConsoleMode` from `bun_windows_sys` still take `*mut DWORD`; redeclared
+    // locally so the startup/restore paths below are plain calls.)
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        safe fn GetConsoleMode(hConsoleHandle: w::HANDLE, lpMode: &mut w::DWORD) -> w::BOOL;
+        safe fn SetConsoleMode(hConsoleHandle: w::HANDLE, dwMode: w::DWORD) -> w::BOOL;
+    }
 
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is
@@ -556,21 +567,17 @@ pub mod windows_stdio {
         // SAFETY: CONSOLE_MODE is only mutated at init/restore on the main thread.
         for (mode, handle) in unsafe { CONSOLE_MODE.read() }.iter().zip(handles.iter()) {
             if let Some(m) = *mode {
-                // SAFETY: FFI call; `handle` is a valid console handle from the PEB.
-                unsafe { c::SetConsoleMode(*handle, m) };
+                let _ = SetConsoleMode(*handle, m);
             }
         }
 
         let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
         let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
-        // SAFETY: FFI calls have no preconditions beyond a valid codepage id.
-        unsafe {
-            if out_cp != 0 {
-                c::SetConsoleOutputCP(out_cp);
-            }
-            if in_cp != 0 {
-                c::SetConsoleCP(in_cp);
-            }
+        if out_cp != 0 {
+            let _ = c::SetConsoleOutputCP(out_cp);
+        }
+        if in_cp != 0 {
+            let _ = c::SetConsoleCP(in_cp);
         }
     }
 
@@ -601,54 +608,47 @@ pub mod windows_stdio {
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
-        // SAFETY: single-threaded startup; FFI calls have no preconditions.
-        unsafe {
-            CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
-            c::SetConsoleOutputCP(CP_UTF8);
+        CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
+        let _ = c::SetConsoleOutputCP(CP_UTF8);
 
-            CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
-            c::SetConsoleCP(CP_UTF8);
-        }
+        CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
+        let _ = c::SetConsoleCP(CP_UTF8);
 
         let mut mode: w::DWORD = 0;
-        // SAFETY: single-threaded startup; `stdin/stdout/stderr` are valid handles (or
-        // INVALID_HANDLE_VALUE, which Get/SetConsoleMode reject with 0); CONSOLE_MODE
-        // is a write-once cache.
-        unsafe {
-            let console_mode = &mut *CONSOLE_MODE.get();
-            if c::GetConsoleMode(stdin, &mut mode) != 0 {
-                console_mode[0] = Some(mode);
-                bun_stdio_tty[0].store(1, Ordering::Relaxed);
-                // There are no flags to set on standard in, but just in case something
-                // later modifies the mode, we can still reset it at the end of program run
-                //
-                // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
-                // intentionally set for any purpose, and instead only caused problems.
-            }
+        // SAFETY: single-threaded startup; CONSOLE_MODE is a write-once cache.
+        let console_mode = unsafe { &mut *CONSOLE_MODE.get() };
+        if GetConsoleMode(stdin, &mut mode) != 0 {
+            console_mode[0] = Some(mode);
+            bun_stdio_tty[0].store(1, Ordering::Relaxed);
+            // There are no flags to set on standard in, but just in case something
+            // later modifies the mode, we can still reset it at the end of program run
+            //
+            // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
+            // intentionally set for any purpose, and instead only caused problems.
+        }
 
-            if c::GetConsoleMode(stdout, &mut mode) != 0 {
-                console_mode[1] = Some(mode);
-                bun_stdio_tty[1].store(1, Ordering::Relaxed);
-                c::SetConsoleMode(
-                    stdout,
-                    w::ENABLE_PROCESSED_OUTPUT
-                        | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                        | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                        | mode,
-                );
-            }
+        if GetConsoleMode(stdout, &mut mode) != 0 {
+            console_mode[1] = Some(mode);
+            bun_stdio_tty[1].store(1, Ordering::Relaxed);
+            let _ = SetConsoleMode(
+                stdout,
+                w::ENABLE_PROCESSED_OUTPUT
+                    | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
+                    | mode,
+            );
+        }
 
-            if c::GetConsoleMode(stderr, &mut mode) != 0 {
-                console_mode[2] = Some(mode);
-                bun_stdio_tty[2].store(1, Ordering::Relaxed);
-                c::SetConsoleMode(
-                    stderr,
-                    w::ENABLE_PROCESSED_OUTPUT
-                        | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                        | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                        | mode,
-                );
-            }
+        if GetConsoleMode(stderr, &mut mode) != 0 {
+            console_mode[2] = Some(mode);
+            bun_stdio_tty[2].store(1, Ordering::Relaxed);
+            let _ = SetConsoleMode(
+                stderr,
+                w::ENABLE_PROCESSED_OUTPUT
+                    | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
+                    | mode,
+            );
         }
     }
 }

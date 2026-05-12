@@ -2036,11 +2036,7 @@ impl Log {
         // TODO(port): Zig does comptime fmt-string concat `"{s}: " ++ fmt` and
         // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
         // value level instead.
-        // PORT NOTE: Zig `coreutils_error_map.get(sys_errno)` returns an Option;
-        // the Rust EnumMap is total (default "unknown error"), so emulate the
-        // None case by treating the default as missing.
-        let label = bun_sys::coreutils_error_map::COREUTILS_ERROR_MAP[sys_errno];
-        let prefix = if label == "unknown error" { tag_name } else { label };
+        let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
         self.add_error_fmt(
             None,
             Loc::EMPTY,
@@ -3223,16 +3219,25 @@ pub mod store_ast_alloc_heap {
         // This runs once per source file in the bundler (`Transpiler::
         // reset_store`) and once per resolve-queue iteration. A full
         // `mi_heap_destroy + mi_heap_new` per file memsets a fresh per-heap
-        // arena bitmap on the next first alloc; retain up to 8 MiB of garbage
-        // between files instead. The AST nodes themselves (block-store) are
-        // bump-reset every file regardless, so the only effect of *not*
-        // destroying here is that previous files' embedded `AstVec` buffers
-        // become unreachable garbage in this heap until the limit is crossed
-        // — they cannot be dereferenced again because their owning AST nodes
-        // are gone. `set_thread_heap` re-publishes `heap_ptr()`, which is
-        // unchanged when under the limit and the new heap when over it.
+        // arena bitmap on the next first alloc; retain garbage between files
+        // to amortize that.
+        //
+        // The AST nodes themselves (block-store) are bump-reset every file
+        // regardless, so the only effect of *not* destroying here is that
+        // previous files' embedded `AstVec` buffers become unreachable
+        // garbage in this heap until the limit is crossed — they cannot be
+        // dereferenced again because their owning AST nodes are gone.
+        // `set_thread_heap` re-publishes `heap_ptr()`, which is unchanged
+        // when under the limit and the new heap when over it.
+        //
+        // Limit was 8 MiB; smaps on `lint`/`create-vue` showed the primary
+        // anon mimalloc region at +11 MB RSS vs the Zig build, which has no
+        // side-arena at all (its block-store bump-resets to 0). 2 MiB still
+        // amortizes the bitmap memset across the ~8-16 typical-sized modules
+        // that fit under it, while bounding steady-state retention to a
+        // quarter of the old ceiling.
         unsafe {
-            (*arena).reset_retain_with_limit(8 * 1024 * 1024);
+            (*arena).reset_retain_with_limit(2 * 1024 * 1024);
             bun_alloc::ast_alloc::set_thread_heap((*arena).heap_ptr());
         }
     }

@@ -4751,7 +4751,7 @@ impl H2FrameParser {
                         None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                     };
 
-                    let value_slice = unsafe { (*value_str).to_slice(global_object) };
+                    let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
@@ -4780,7 +4780,7 @@ impl H2FrameParser {
                     None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                 };
 
-                let value_slice = unsafe { (*value_str).to_slice(global_object) };
+                let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
                 bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(name), BStr::new(value));
 
@@ -5223,7 +5223,7 @@ impl H2FrameParser {
                             None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                         };
 
-                        let value_slice = unsafe { (*value_str).to_slice(global_object) };
+                        let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
                         bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
 
@@ -5267,7 +5267,7 @@ impl H2FrameParser {
                         None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                     };
 
-                    let value_slice = unsafe { (*value_str).to_slice(global_object) };
+                    let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
                     bun_output::scoped_log!(H2FrameParser, "encode header {} {}", BStr::new(validated_name), BStr::new(value));
 

@@ -628,6 +628,26 @@ pub struct LinuxWatch {
 // Drop: Vec frees automatically.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
+impl PathWatcherManager {
+    /// Set-once inotify fd. Single unsafe deref site for the
+    /// `platform: UnsafeCell<Linux>` `fd` field so callers stay safe.
+    ///
+    /// `fd` is assigned exactly once in [`Linux::init`] *before* the reader
+    /// thread is spawned and is never reassigned afterwards (the manager is a
+    /// process-lifetime singleton with no teardown), so reading it from either
+    /// thread races with nothing. Projects only the `Copy` field — never
+    /// `&Linux` — so it can coexist with the reader thread's long-lived
+    /// `&AtomicBool` borrow of the disjoint `running` field and with the
+    /// `&mut wd_map` projections taken under `self.mutex`.
+    #[inline]
+    fn inotify_fd(&self) -> Fd {
+        // SAFETY: see fn doc — set-once-then-read-only `Copy` field, disjoint
+        // from every `&mut` projection.
+        unsafe { (*self.platform.get()).fd }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod inotify_masks {
     use bun_sys::linux::IN;
     pub const WATCH_FILE_MASK: u32 = IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
@@ -695,9 +715,7 @@ impl Linux {
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
-        // SAFETY: `fd` is set once in `init()` before the reader thread spawns and
-        // never mutated again; reading it here races with nothing.
-        let fd = unsafe { (*plat).fd };
+        let fd = manager.inotify_fd();
         // SAFETY: thin wrapper over libc::inotify_add_watch; abs_path is NUL-terminated.
         let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
@@ -760,8 +778,7 @@ impl Linux {
     /// wds; only issues `inotify_rm_watch` once a wd has no remaining owners.
     fn remove_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) {
         let plat: *mut Linux = manager.platform.get();
-        // SAFETY: `fd` is immutable after init; see `add_one`.
-        let fd = unsafe { (*plat).fd };
+        let fd = manager.inotify_fd();
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let wd_map = unsafe { &mut (*plat).wd_map };
         for &wd in watcher.platform.wds.iter() {
@@ -787,12 +804,13 @@ impl Linux {
         use bun_sys::linux::IN;
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
-        // SAFETY: `fd` and `running` are set in `init()` before this thread spawns and
-        // the fields themselves are never reassigned afterwards. We borrow only these
-        // disjoint fields (never `&Linux` / `&mut Linux` whole-struct) so the `&mut`
-        // projections of `wd_map` taken under `manager.mutex` below — and inside
-        // `add_one` when called reentrantly from the dispatch loop — never alias them.
-        let fd = unsafe { (*plat).fd };
+        let fd = manager.inotify_fd();
+        // SAFETY: `running` is set in `init()` before this thread spawns and the
+        // field itself is never reassigned afterwards. We borrow only this
+        // disjoint field (never `&Linux` / `&mut Linux` whole-struct) so the
+        // `&mut` projections of `wd_map` taken under `manager.mutex` below — and
+        // inside `add_one` when called reentrantly from the dispatch loop —
+        // never alias it.
         let running: &AtomicBool = unsafe { &(*plat).running };
         // Large enough for a burst of events; inotify guarantees whole events per read.
         // `align(InotifyEvent)`: stack array `[u8; N]` is 1-aligned; box for 4-byte
@@ -1191,6 +1209,26 @@ pub struct KqueueWatch {
 // Drop: Vec frees automatically.
 
 #[cfg(target_os = "freebsd")]
+impl PathWatcherManager {
+    /// Set-once kqueue fd. Single unsafe deref site for the
+    /// `platform: UnsafeCell<Kqueue>` `kq` field so callers stay safe.
+    ///
+    /// `kq` is assigned exactly once in [`Kqueue::init`] *before* the reader
+    /// thread is spawned and is never reassigned afterwards (the manager is a
+    /// process-lifetime singleton with no teardown), so reading it from either
+    /// thread races with nothing. Projects only the `Copy` field — never
+    /// `&Kqueue` — so it can coexist with the reader thread's long-lived
+    /// `&AtomicBool` borrow of the disjoint `running` field and with the
+    /// `&mut entries` projections taken under `self.mutex`.
+    #[inline]
+    fn kq_fd(&self) -> Fd {
+        // SAFETY: see fn doc — set-once-then-read-only `Copy` field, disjoint
+        // from every `&mut` projection.
+        unsafe { (*self.platform.get()).kq }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
 impl Kqueue {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
         let kq = match sys::kqueue() {
@@ -1257,14 +1295,14 @@ impl Kqueue {
         };
 
         // SAFETY: caller holds manager.mutex; exclusive access to `next_gen`/`entries`.
-        // `kq` is immutable after init. Project fields via raw ptr (never `&mut Kqueue`)
-        // so this can coexist with the reader thread's `&AtomicBool` borrow of `running`.
+        // Project fields via raw ptr (never `&mut Kqueue`) so this can coexist
+        // with the reader thread's `&AtomicBool` borrow of `running`.
         let generation = unsafe {
             let g = (*plat).next_gen;
             (*plat).next_gen = g.wrapping_add(1);
             g
         };
-        let kq = unsafe { (*plat).kq };
+        let kq = manager.kq_fd();
 
         // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
         let mut kev: Kevent = bun_core::ffi::zeroed();
@@ -1341,11 +1379,12 @@ impl Kqueue {
         use bun_sys::freebsd::{kevent, Kevent, NOTE};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Kqueue = manager.platform.get();
-        // SAFETY: `kq` and `running` are set in `init()` before this thread spawns and
-        // never reassigned. Borrow only these disjoint fields so the `&mut entries`
-        // projections taken under `manager.mutex` (here and in `add_one`/`remove_watch`)
-        // never alias them — we never form `&Kqueue` / `&mut Kqueue` over the whole struct.
-        let kq = unsafe { (*plat).kq };
+        let kq = manager.kq_fd();
+        // SAFETY: `running` is set in `init()` before this thread spawns and
+        // never reassigned. Borrow only this disjoint field so the
+        // `&mut entries` projections taken under `manager.mutex` (here and in
+        // `add_one`/`remove_watch`) never alias it — we never form `&Kqueue` /
+        // `&mut Kqueue` over the whole struct.
         let running: &AtomicBool = unsafe { &(*plat).running };
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();

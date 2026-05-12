@@ -2876,6 +2876,22 @@ pub mod JSZstd {
             bun_core::heap::into_raw(Box::new(init))
         }
 
+        /// Read the pending promise's `JSValue` from a freshly-`create`d job.
+        ///
+        /// Centralises the `*mut Self → field` deref so the two host-fn
+        /// callers stay safe. Sound because every caller passes the pointer
+        /// returned by [`create`](Self::create) (heap-allocated, already
+        /// scheduled but `run_from_js` runs only on this same JS thread, so
+        /// the allocation is live and the `promise` field is not concurrently
+        /// touched).
+        #[inline]
+        fn promise_value(this: *mut Self) -> JSValue {
+            // SAFETY: see fn doc — `this` is the live `heap::into_raw`
+            // allocation from `create()`; consumed only by `run_from_js` on the
+            // JS thread.
+            unsafe { (*this).promise.value() }
+        }
+
         /// SAFETY: `task` must point to the `task` field of a live `ZstdJob`
         /// scheduled via `WorkPool::schedule` from `ZstdJob::create`.
         pub unsafe fn run_task(task: *mut jsc::WorkPoolTask) {
@@ -3038,8 +3054,7 @@ pub mod JSZstd {
         // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let job = ZstdJob::create(vm, global_this, buffer, true, level);
-        // SAFETY: job is live until run_from_js consumes it.
-        Ok(unsafe { (*job).promise.value() })
+        Ok(ZstdJob::promise_value(job))
     }
 
     #[bun_jsc::host_fn]
@@ -3049,8 +3064,7 @@ pub mod JSZstd {
         // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let job = ZstdJob::create(vm, global_this, buffer, false, 0); // level is ignored for decompression
-        // SAFETY: job is live until run_from_js consumes it.
-        Ok(unsafe { (*job).promise.value() })
+        Ok(ZstdJob::promise_value(job))
     }
 }
 

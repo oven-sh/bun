@@ -633,27 +633,25 @@ impl Worker {
             self.heap.insert(ThreadLocalArena::new()),
         );
 
-        let arena = self.arena;
+        // SAFETY: self-referential — `self.arena` was just set to `&self.heap`
+        // (Worker is heap-pinned, address stable). `'static` is sound for the
+        // erased `Transpiler<'static>` slot below; the arena outlives
+        // `WorkerData`. Single deref site for the three uses that follow.
+        let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };
 
         // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
         // ASTMemoryAllocator owns its bump arena internally and ignores the
         // passed fallback (see ASTMemoryAllocator::new doc).
-        // SAFETY: arena points to the just-initialized self.heap.
         *self.ast_memory_store =
-            bun_ast::ASTMemoryAllocator::new(unsafe { &*arena });
+            bun_ast::ASTMemoryAllocator::new(arena_ref);
         self.ast_memory_store.reset();
 
-        // SAFETY: arena points to self.heap which outlives self.data.
-        let log: *mut bun_ast::Log = unsafe { (*arena).alloc(bun_ast::Log::init()) };
+        let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
         // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
-        // SAFETY: `arena` points at `self.heap` (initialized above), which is
-        // heap-pinned and outlives `WorkerData`; lifetime erased to `'static`
-        // to match the slot's erased `Transpiler<'static>`.
-        let arena_ref: &'static ThreadLocalArena = unsafe { &*arena };
         let data = self.data.insert(WorkerData {
             log,
             estimated_input_lines_of_code: 0,

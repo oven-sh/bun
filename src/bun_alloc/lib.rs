@@ -531,8 +531,7 @@ pub fn page_size() -> usize {
             libc::sysconf(libc::_SC_PAGESIZE) as usize
         }
         #[cfg(windows)]
-        // SAFETY: `GetSystemInfo` writes a fully-initialized SYSTEM_INFO.
-        unsafe {
+        {
             // Local `#[repr(C)]` mirror so this crate stays leaf (no
             // `windows-sys` dep — see PORTING.md §Crate map). Only
             // `dwPageSize` is read; the rest is opaque padding sized to
@@ -546,9 +545,19 @@ pub fn page_size() -> usize {
                 _ints: [u32; 5],
             }
             unsafe extern "system" {
-                fn GetSystemInfo(lpSystemInfo: *mut SystemInfo);
+                // `&mut SystemInfo` is ABI-identical to `LPSYSTEM_INFO` (thin
+                // non-null pointer to a `#[repr(C)]` struct); kernel32 fully
+                // initialises every field. No other preconditions, so `safe fn`
+                // discharges the link-time proof and the caller needs no `unsafe`.
+                safe fn GetSystemInfo(lpSystemInfo: &mut SystemInfo);
             }
-            let mut info = core::mem::zeroed::<SystemInfo>();
+            let mut info = SystemInfo {
+                _w_processor_architecture: 0,
+                _w_reserved: 0,
+                dw_page_size: 0,
+                _tail: [core::ptr::null_mut(); 3],
+                _ints: [0; 5],
+            };
             GetSystemInfo(&mut info);
             info.dw_page_size as usize
         }

@@ -251,11 +251,16 @@ pub struct OsUnfairLock {
 }
 
 // TODO(port): move to bun_sys (darwin libc externs)
+// `&UnsafeCell<OsUnfairLock>` is ABI-identical to `os_unfair_lock_t` (thin
+// non-null pointer to a `#[repr(C)]` u32; `UnsafeCell` is `#[repr(transparent)]`).
+// The type encodes the only pointer-validity precondition, and Apple's runtime
+// detects misuse (recursive lock / unowned unlock) by aborting — which is safe
+// — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
-    fn os_unfair_lock_trylock(lock: *mut OsUnfairLock) -> bool;
-    fn os_unfair_lock_lock(lock: *mut OsUnfairLock);
-    fn os_unfair_lock_unlock(lock: *mut OsUnfairLock);
+    safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
+    safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
+    safe fn os_unfair_lock_unlock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
 }
 
 #[cfg(target_vendor = "apple")]
@@ -265,18 +270,15 @@ impl DarwinImpl {
     }
 
     fn try_lock(&self) -> bool {
-        // SAFETY: os_unfair_lock is internally synchronized; pointer is valid for the call.
-        unsafe { os_unfair_lock_trylock(self.oul.get()) }
+        os_unfair_lock_trylock(&self.oul)
     }
 
     fn lock(&self) {
-        // SAFETY: os_unfair_lock is internally synchronized; pointer is valid for the call.
-        unsafe { os_unfair_lock_lock(self.oul.get()) }
+        os_unfair_lock_lock(&self.oul)
     }
 
     fn unlock(&self) {
-        // SAFETY: caller acquired the lock on this thread; pointer is valid.
-        unsafe { os_unfair_lock_unlock(self.oul.get()) }
+        os_unfair_lock_unlock(&self.oul)
     }
 }
 

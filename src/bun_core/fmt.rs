@@ -2444,13 +2444,16 @@ pub struct FormatDouble {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn WTF__dtoa(buf: *mut u8, number: f64) -> usize;
+    // `&mut [u8; 124]` is ABI-identical to the C `char *` argument (thin
+    // non-null pointer to 124 writable bytes); the type encodes WTF__dtoa's
+    // only precondition (≥124-byte writable buffer), so `safe fn` discharges
+    // the link-time proof and callers need no `unsafe` block.
+    safe fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize;
 }
 
 impl FormatDouble {
     pub fn dtoa(buf: &mut [u8; 124], number: f64) -> &[u8] {
-        // SAFETY: WTF__dtoa writes at most 124 bytes into buf and returns the length written.
-        let len = unsafe { WTF__dtoa(buf.as_mut_ptr(), number) };
+        let len = WTF__dtoa(buf, number);
         &buf[..len]
     }
 
@@ -2458,8 +2461,7 @@ impl FormatDouble {
         if number == 0.0 && number.is_sign_negative() {
             return b"-0";
         }
-        // SAFETY: see dtoa.
-        let len = unsafe { WTF__dtoa(buf.as_mut_ptr(), number) };
+        let len = WTF__dtoa(buf, number);
         &buf[..len]
     }
 }

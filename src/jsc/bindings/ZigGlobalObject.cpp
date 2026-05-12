@@ -567,6 +567,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         };
 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
+            globalObject->scriptExecutionContext()->isWorker = true;
             initializeWorker(*worker);
         }
     }

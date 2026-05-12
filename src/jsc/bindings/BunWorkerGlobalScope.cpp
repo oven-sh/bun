@@ -15,11 +15,13 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
         auto* context = global.scriptExecutionContext();
         // Inside a worker, a `message` listener on the global scope keeps the
         // event loop alive so the worker can receive messages from its parent.
-        // On the main thread there is no parent to receive messages from, so
+        // Outside a worker — the main thread, or a ShadowRealm (which gets its
+        // own ScriptExecutionContext but is never the target of parent
+        // messages) — there is nothing to wait for, so
         // `globalThis.onmessage = ...` / addEventListener("message", ...) must
         // not prevent the process from exiting.
         // https://github.com/oven-sh/bun/issues/24256
-        if (!context || context->isMainThread())
+        if (!context || !context->isWorker)
             return;
         switch (kind) {
         case Add:

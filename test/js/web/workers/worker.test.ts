@@ -258,11 +258,12 @@ describe("web worker", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/24256
-  // On the main thread there is no parent to receive messages from, so a
+  // Outside a worker there is no parent to receive messages from, so a
   // `message` listener on globalThis must not keep the process alive.
   describe.each([
     ["globalThis.onmessage", `globalThis.onmessage = () => {};`],
     ['addEventListener("message")', `globalThis.addEventListener("message", () => {});`],
+    ["ShadowRealm onmessage", `new ShadowRealm().evaluate("globalThis.onmessage = () => {}; 0");`],
   ])("%s on the main thread does not keep the process alive", (_, setup) => {
     test("exits", async () => {
       await using proc = Bun.spawn({

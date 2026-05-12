@@ -142,6 +142,23 @@ describe("bun run: unsettled top-level await", () => {
     expect(r.exitCode).toBe(13);
   });
 
+  test("warning names the stalled module, not the entry", async () => {
+    using dir = tempDir("issue-19049-deep", {
+      "leaf.mjs": `await new Promise(() => {});`,
+      "mid.mjs": `import "./leaf.mjs";`,
+      "entry.mjs": `import "./mid.mjs";`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("unsettled top-level await");
+    // The warning should point at leaf.mjs (the module actually suspended
+    // on its own await), not the entry or the intermediate import.
+    expect(r.stderr).toContain("leaf.mjs");
+    expect(r.stderr).not.toContain("entry.mjs");
+    expect(r.stderr).not.toContain("mid.mjs");
+    expect(r.exitCode).toBe(13);
+  });
+
   test("warns and exits with code 13 when a --preload has unsettled TLA", async () => {
     using dir = tempDir("issue-19049-preload", {
       "preload.mjs": `await new Promise(() => {});`,

@@ -441,12 +441,50 @@ impl Entry {
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
-                    let utf8 = pread_box(
-                        file,
-                        self.metadata.output_byte_length as usize,
-                        self.metadata.output_byte_offset,
-                    )?;
-                    OutputCode::Utf8(utf8)
+                    // PORT NOTE / PERF: Zig threaded `output_code_allocator`
+                    // (the per-call arena) here so the ~1.2 MB scratch buffer
+                    // was bump-freed with the parse arena. The Rust port
+                    // dropped that field and `pread_box`'d into a `Box<[u8]>`
+                    // on the worker thread's mimalloc heap, which — even after
+                    // the consumer's `String::clone_utf8` + drop — leaves the
+                    // segment resident in that thread heap (build/create-vue
+                    // bench regression).
+                    //
+                    // Instead, pread straight into a WTF-allocated Latin-1
+                    // buffer (`WTF::StringImpl::tryCreateUninitialized` →
+                    // bmalloc, not the worker mimalloc heap). Transpiler
+                    // output is overwhelmingly pure ASCII, in which case the
+                    // buffer *is* the final `BunString` and we skip the
+                    // 1.2 MB `clone_utf8` memcpy the consumer used to do at
+                    // RuntimeTranspilerStore.rs / jsc_hooks.rs. Only if the
+                    // bytes contain non-ASCII UTF-8 do we fall back to
+                    // `clone_utf8` (transcode → UTF-16) and deref the scratch.
+                    let len = self.metadata.output_byte_length as usize;
+                    let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
+                    // `(dead, &mut [])` on WTF allocation failure; `len > 0`
+                    // (handled above), so an empty slice means OOM.
+                    if bytes.is_empty() {
+                        return Err(bun_core::err!(OutOfMemory));
+                    }
+                    // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
+                    let errdefer = scopeguard::guard(scratch, |s| s.deref());
+                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
+                    if read_bytes as u64 != self.metadata.output_byte_length {
+                        return Err(bun_core::err!(MissingData));
+                    }
+
+                    if bun_core::strings::is_all_ascii(bytes) {
+                        // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
+                        // the correct `BunString` — hand it straight to the
+                        // consumer as `OutputCode::String`.
+                        scopeguard::ScopeGuard::into_inner(errdefer);
+                        OutputCode::String(scratch)
+                    } else {
+                        // Rare path: real multi-byte UTF-8. Transcode into a
+                        // fresh WTF string and drop the Latin-1 scratch (the
+                        // guard derefs it on scope exit).
+                        OutputCode::String(BunString::clone_utf8(bytes))
+                    }
                 }
                 Encoding::LATIN1 => {
                     let len = self.metadata.output_byte_length as usize;
@@ -551,8 +589,11 @@ pub struct RuntimeTranspilerCache {
     pub output_code: Option<BunString>,
     pub entry: Option<Entry>,
     // PORT NOTE: Zig had sourcemap_allocator / output_code_allocator / esm_record_allocator
-    // fields. Per §Allocators (non-AST crate) these are deleted; Box<[u8]> uses global
-    // mimalloc. If callers passed distinct arenas, Phase B may need to thread them back.
+    // fields. `sourcemap` / `esm_record` were `bun.default_allocator` at every
+    // call site so `Box<[u8]>` (global mimalloc) is equivalent.
+    // `output_code_allocator` was the per-call arena; rather than re-thread it,
+    // the UTF-8 load arm now preads straight into WTF storage (see
+    // `Entry::load`), so no arena scratch is needed at all.
 }
 
 impl Default for RuntimeTranspilerCache {

@@ -10,7 +10,7 @@ use bun_jsc::{
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
 use bun_js_parser::js_lexer as JSLexer;
-use bun_str::{strings, ZigString, ZigStringSlice};
+use bun_core::{strings, ZigString, ZigStringSlice};
 
 use super::expect;
 use crate::webcore::BlobExt as _;
@@ -1571,7 +1571,7 @@ impl<'a> Formatter<'a> {
                 Tag::Error => {
                     let mut classname = ZigString::EMPTY;
                     value.get_class_name(self.global_this, &mut classname)?;
-                    let mut message_string = bun_str::String::empty();
+                    let mut message_string = bun_core::String::empty();
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
                         message_string = message_prop.to_bun_string(self.global_this)?;
@@ -2067,7 +2067,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_str::String::empty();
+                    let mut str = bun_core::String::empty();
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
                     self.add_for_new_line(str.length());

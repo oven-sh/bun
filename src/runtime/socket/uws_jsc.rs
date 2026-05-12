@@ -5,7 +5,7 @@
 use core::ffi::CStr;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_uws::{
     create_bun_socket_error_t, us_bun_verify_error_t, us_socket_stream_buffer_t, us_socket_t,
     AnyWebSocket, RawWebSocket,

@@ -128,7 +128,7 @@ impl FetchFlags {
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
-    pub input_specifier: bun_string::String,
+    pub input_specifier: bun_core::String,
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: *mut JSGlobalObject,
@@ -186,8 +186,8 @@ pub struct LoaderHooks {
     pub fetch_builtin_module: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         global: *mut JSGlobalObject,
-        specifier: &bun_string::String,
-        referrer: &bun_string::String,
+        specifier: &bun_core::String,
+        referrer: &bun_core::String,
         out: *mut ErrorableResolvedSource,
     ) -> FetchBuiltinResult,
     /// `ModuleLoader.getHardcodedModule(jsc_vm, specifier, hardcoded)` —
@@ -195,7 +195,7 @@ pub struct LoaderHooks {
     /// (recognised but not currently servable); `true` ⇒ `*out` populated.
     pub get_hardcoded_module: unsafe fn(
         jsc_vm: *mut VirtualMachine,
-        specifier: &bun_string::String,
+        specifier: &bun_core::String,
         hardcoded: bun_resolve_builtins::Module,
         out: *mut ResolvedSource,
     ) -> bool,
@@ -206,7 +206,7 @@ pub struct LoaderHooks {
     /// Body lives in `bun_runtime` (reaches into `node::fs` +
     /// `StandaloneModuleGraph`).
     pub resolve_embedded_node_file:
-        unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_string::String) -> bool,
+        unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_core::String) -> bool,
     /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
     /// source, query_string?, is_esm, is_a_file_path, is_user_require_resolve)`
     /// (spec VirtualMachine.zig:1873-2016) — the resolution path behind
@@ -221,9 +221,9 @@ pub struct LoaderHooks {
     pub resolve: unsafe fn(
         res: *mut ErrorableString,
         global: *mut JSGlobalObject,
-        specifier: bun_string::String,
-        source: bun_string::String,
-        query_string: *mut bun_string::String,
+        specifier: bun_core::String,
+        source: bun_core::String,
+        query_string: *mut bun_core::String,
         is_esm: bool,
         is_a_file_path: bool,
         is_user_require_resolve: bool,
@@ -235,9 +235,9 @@ pub struct LoaderHooks {
     /// because the C++ caller already proved `plugin_runner != null`).
     pub transpile_virtual_module: unsafe fn(
         global: *mut JSGlobalObject,
-        specifier: *const bun_string::String,
-        referrer: *const bun_string::String,
-        source_code: *mut bun_string::ZigString,
+        specifier: *const bun_core::String,
+        referrer: *const bun_core::String,
+        source_code: *mut bun_core::ZigString,
         loader: bun_options_types::schema::api::Loader,
         ret: *mut ErrorableResolvedSource,
     ) -> bool,
@@ -248,9 +248,9 @@ pub struct LoaderHooks {
     pub transpile_file: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         global: *mut JSGlobalObject,
-        specifier: *const bun_string::String,
-        referrer: *const bun_string::String,
-        type_attribute: *const bun_string::String,
+        specifier: *const bun_core::String,
+        referrer: *const bun_core::String,
+        type_attribute: *const bun_core::String,
         ret: *mut ErrorableResolvedSource,
         allow_promise: bool,
         is_commonjs_require: bool,
@@ -293,8 +293,8 @@ pub fn transpile_source_code(
 pub fn fetch_builtin_module(
     jsc_vm: &mut VirtualMachine,
     global: *mut JSGlobalObject,
-    specifier: &bun_string::String,
-    referrer: &bun_string::String,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
     out: &mut ErrorableResolvedSource,
 ) -> FetchBuiltinResult {
     let Some(hooks) = loader_hooks() else {
@@ -318,9 +318,9 @@ pub fn fetch_builtin_module(
 pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
     global: *mut JSGlobalObject,
-    specifier: bun_string::String,
-    source: bun_string::String,
-    query_string: Option<&mut bun_string::String>,
+    specifier: bun_core::String,
+    source: bun_core::String,
+    query_string: Option<&mut bun_core::String>,
     is_esm: bool,
     is_a_file_path: bool,
     is_user_require_resolve: bool,
@@ -332,7 +332,7 @@ pub fn resolve_maybe_needs_trailing_slash(
         return Ok(());
     };
     let qs = query_string
-        .map(|q| std::ptr::from_mut::<bun_string::String>(q))
+        .map(|q| std::ptr::from_mut::<bun_core::String>(q))
         .unwrap_or(core::ptr::null_mut());
     // SAFETY: hook contract — `global` is the live JS-thread global (Zig
     // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
@@ -360,9 +360,9 @@ pub fn resolve_maybe_needs_trailing_slash(
 pub fn resolve(
     res: &mut ErrorableString,
     global: *mut JSGlobalObject,
-    specifier: bun_string::String,
-    source: bun_string::String,
-    query_string: Option<&mut bun_string::String>,
+    specifier: bun_core::String,
+    source: bun_core::String,
+    query_string: Option<&mut bun_core::String>,
     is_esm: bool,
 ) -> JsResult<()> {
     resolve_maybe_needs_trailing_slash(
@@ -389,8 +389,8 @@ pub fn resolve(
 /// forwards to the real impl in [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
     global: &JSGlobalObject,
-    specifier: bun_string::String,
-    referrer: bun_string::String,
+    specifier: bun_core::String,
+    referrer: bun_core::String,
     log: &mut bun_ast::Log,
     errorable: &mut ErrorableResolvedSource,
     err: bun_core::Error,
@@ -407,9 +407,9 @@ pub fn process_fetch_log(
 pub extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
-    specifier_ptr: *mut bun_string::String,
-    referrer: *mut bun_string::String,
-    type_attribute: *const bun_string::String,
+    specifier_ptr: *mut bun_core::String,
+    referrer: *mut bun_core::String,
+    type_attribute: *const bun_core::String,
     ret: *mut ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
@@ -447,8 +447,8 @@ pub extern "C" fn Bun__transpileFile(
 pub extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
-    specifier: *const bun_string::String,
-    referrer: *const bun_string::String,
+    specifier: *const bun_core::String,
+    referrer: *const bun_core::String,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
@@ -483,7 +483,7 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
-    specifier: *mut bun_string::String,
+    specifier: *mut bun_core::String,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
@@ -515,7 +515,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
-    in_out_str: *mut bun_string::String,
+    in_out_str: *mut bun_core::String,
 ) -> bool {
     jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
@@ -561,7 +561,7 @@ use bun_bundler::transpiler::PluginRunner;
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
-    str: &bun_string::String,
+    str: &bun_core::String,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
     // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
@@ -583,9 +583,9 @@ pub extern "C" fn Bun__getDefaultLoader(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
-    specifier: *const bun_string::String,
-    referrer: *const bun_string::String,
-    source_code: *mut bun_string::ZigString,
+    specifier: *const bun_core::String,
+    referrer: *const bun_core::String,
+    source_code: *mut bun_core::ZigString,
     loader: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
@@ -613,7 +613,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
-    specifier_ptr: *const bun_string::String,
+    specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
     if global.bun_vm().plugin_runner.is_none() {
@@ -636,8 +636,8 @@ pub extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        bun_string::String::init(bun_string::ZigString::init(namespace)),
-        bun_string::String::init(bun_string::ZigString::init(after_namespace)),
+        bun_core::String::init(bun_core::ZigString::init(namespace)),
+        bun_core::String::init(bun_core::ZigString::init(after_namespace)),
         crate::BunPluginTarget::Bun,
     ) {
         // `catch return .zero` / `orelse return .zero`

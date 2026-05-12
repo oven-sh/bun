@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_core::err;
-use bun_string::immutable as strings;
+use bun_core::strings;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;

@@ -5,7 +5,7 @@ use crate::css_values::length::LengthPercentage;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
 use bun_collections::VecExt;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.

@@ -10,7 +10,7 @@ use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
-use bun_str::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, ZigStringSlice};
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
 

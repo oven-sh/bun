@@ -1,6 +1,6 @@
 use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::{self as bstr, strings, OwnedString, String as BunString, ZigString};
-use bun_str::strings::EncodingNonAscii;
+use bun_core::{self as bstr, strings, OwnedString, String as BunString, ZigString};
+use bun_core::strings::EncodingNonAscii;
 use bun_sys::UV_E;
 
 use bun_dotenv::env_loader as envloader;
@@ -51,7 +51,7 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     debug_assert!(value.is_string());
 
     // `defer str.deref()` — `to_bun_string` returns +1; `OwnedString`'s Drop
-    // releases it on every exit path (bun_str::String itself is Copy, no Drop).
+    // releases it on every exit path (bun_core::String itself is Copy, no Drop).
     let str = OwnedString::new(value.to_bun_string(global)?);
 
     match str.encoding() {
@@ -78,7 +78,7 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
     // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
     // — `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
     // the success path after `to_js_array` and any `?` early-return). Raw
-    // `bun_str::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
+    // `bun_core::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
     // leak; `OwnedString` is the RAII wrapper that mirrors Zig's defer loop.
     let mut lines: Vec<OwnedString> = Vec::new();
 

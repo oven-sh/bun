@@ -5,7 +5,7 @@ use bun_core::{Global, OrWriteFailed as _, Output};
 use bun_dotenv as dot_env;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs as Fs;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_which::which;
 
 use crate::api::bun::process::sync;

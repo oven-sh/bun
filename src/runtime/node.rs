@@ -689,7 +689,7 @@ impl MaybeToJs for &[u8] {
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         use bun_jsc::ZigStringJsc as _;
-        Ok(bun_str::ZigString::init(self)
+        Ok(bun_core::ZigString::init(self)
             .with_encoding()
             .to_js(global_object))
     }

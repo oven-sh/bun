@@ -42,9 +42,9 @@ impl PartialEq for KeyframesName {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                bun_string::strings::eql(a.v(), b.v())
+                bun_core::eql(a.v(), b.v())
             }
-            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_string::strings::eql(a, b),
+            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::eql(a, b),
             _ => false,
         }
     }
@@ -53,7 +53,7 @@ impl Eq for KeyframesName {}
 
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        use bun_string::strings;
+        use bun_core::strings;
         #[inline]
         fn write_ident<'a>(dest: &mut Printer<'a>, v: &'a [u8], handle_css_module: bool) -> core::result::Result<(), PrintErr> {
             dest.write_ident(v, handle_css_module)
@@ -105,7 +105,7 @@ impl KeyframesName {
 // ─── KeyframesName parse ──────────────────────────────────────────────────
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
-        use bun_string::strings;
+        use bun_core::strings;
         let tok = match input.next() {
             Ok(v) => v.clone(),
             Err(e) => return Err(e),
@@ -197,9 +197,9 @@ impl KeyframeSelector {
         }
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"from") {
+        if bun_core::eql_case_insensitive_ascii_check_length(ident, b"from") {
             Ok(KeyframeSelector::From)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"to") {
+        } else if bun_core::eql_case_insensitive_ascii_check_length(ident, b"to") {
             Ok(KeyframeSelector::To)
         } else {
             Err(location.new_unexpected_token_error(css::Token::Ident(ident)))

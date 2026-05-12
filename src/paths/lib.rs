@@ -19,6 +19,32 @@ pub mod w_path_buffer_pool {
     #[inline] pub fn put(buf: Box<WPathBuffer>) { PathBufferPoolT::<WPathBuffer>::put(buf) }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `bun.strings.paths` — Windows path-shape transcoders. Hosted here (not in
+// `bun_core::string::immutable`) to avoid a `bun_core → bun_paths` cycle.
+// Exposed as both `bun_paths::string_paths::*` and the flattened
+// `bun_paths::strings::*` (Zig-parity: `bun.strings.toNTPath` etc).
+// ──────────────────────────────────────────────────────────────────────────
+pub mod string_paths;
+/// `bun.strings.*` superset: `bun_core`'s scalar/SIMD string utils plus the
+/// path-shape transcoders that live here. Downstream crates that previously
+/// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
+/// import `bun_paths::strings` instead.
+pub mod strings {
+    pub use bun_core::strings::*;
+    pub use super::string_paths::*;
+    // Disambiguate names that exist in both `bun_core::strings` and
+    // `string_paths` (path-shape transcoders win — they're the canonical
+    // `bun.strings.*` impl that depends on this crate's path helpers).
+    pub use super::string_paths::{
+        remove_leading_dot_slash, starts_with_windows_drive_letter_t, without_trailing_slash,
+    };
+    /// `bun.strings.paths` submodule alias (Zig: `bun.strings.paths.X`).
+    pub use super::string_paths as paths;
+    pub use super::string_paths::from_w_path as from_wpath;
+    pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
+}
+
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
@@ -191,7 +217,7 @@ pub use bun_core::strings::basename;
 
 /// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
 /// final component. `\` is NOT a separator. Generic over `u8`/`u16` so the
-/// `bun_string::immutable::paths` re-exports can serve wide-path callers.
+/// `bun_core::immutable::paths` re-exports can serve wide-path callers.
 pub fn basename_posix<T: PathChar>(p: &[T]) -> &[T] {
     if p.is_empty() { return &[]; }
     let mut end = p.len();
@@ -204,7 +230,7 @@ pub fn basename_posix<T: PathChar>(p: &[T]) -> &[T] {
 
 /// Port of `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a
 /// drive designator (`X:`) as a boundary, then returns the final component.
-/// Generic over `u8`/`u16` so the `bun_string::immutable::paths` re-exports
+/// Generic over `u8`/`u16` so the `bun_core::immutable::paths` re-exports
 /// can serve wide-path callers.
 pub fn basename_windows<T: PathChar>(p: &[T]) -> &[T] {
     if p.is_empty() { return &[]; }

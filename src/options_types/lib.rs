@@ -64,7 +64,7 @@ pub mod standalone_path {
         #[cfg(windows)]
         {
             // On Windows, remove NT path prefixes before checking.
-            let canonicalized = bun_string::strings::paths::without_nt_prefix::<u8>(str_);
+            let canonicalized = bun_paths::string_paths::without_nt_prefix::<u8>(str_);
             return is_bun_standalone_file_path_canonicalized(canonicalized);
         }
         #[cfg(not(windows))]

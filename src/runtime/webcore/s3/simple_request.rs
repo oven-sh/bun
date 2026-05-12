@@ -11,8 +11,8 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{get_sign_error_code_and_message, S3Error};
 use bun_s3_signing::storage_class::StorageClass;
-use bun_str::strings;
-use bun_str::MutableString;
+use bun_core::strings;
+use bun_core::MutableString;
 use bun_threading::thread_pool;
 use bun_url::URL;
 

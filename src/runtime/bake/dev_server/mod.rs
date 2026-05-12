@@ -439,7 +439,7 @@ impl HotReloadEvent {
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
                 let changed_dir =
-                    bun_str::strings::paths::without_trailing_slash_windows_path(changed_dir_with_slash);
+                    bun_paths::string_paths::without_trailing_slash_windows_path(changed_dir_with_slash);
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
@@ -509,7 +509,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_str::strings::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }
@@ -1278,7 +1278,7 @@ impl DirectoryWatchStore {
         // calling self methods that need &mut self.
         let gop = self
             .watches
-            .get_or_put(bun_str::strings::paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
+            .get_or_put(bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 

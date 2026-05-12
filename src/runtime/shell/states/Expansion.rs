@@ -253,7 +253,7 @@ impl Expansion {
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
         let brace_str = &me.current_out[..];
-        let mut lexer_output = if bun_string::strings::is_all_ascii(brace_str) {
+        let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
             bun_core::handle_oom(braces::Lexer::tokenize(brace_str))
         } else {
             bun_core::handle_oom(
@@ -342,7 +342,7 @@ impl Expansion {
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {

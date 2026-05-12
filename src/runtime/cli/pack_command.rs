@@ -29,7 +29,7 @@ use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_str::{ZStr, strings};
+use bun_core::{ZStr, strings};
 use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, FdDirExt as _, File, Dir, CloseOnDrop};
 use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
@@ -3481,7 +3481,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 pub mod bindings {
     use super::*;
     use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
-    use bun_str::String as BunString;
+    use bun_core::String as BunString;
 
     #[bun_jsc::host_fn]
     pub fn js_read_tarball(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

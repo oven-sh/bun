@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_collections::VecExt;
 use bun_core::{self, err};
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast as js_ast;
 use crate::p::P;

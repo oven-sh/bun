@@ -1,5 +1,6 @@
 //! Implements building a Bake application to production
 
+use bun_paths::strings;
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
@@ -27,7 +28,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
-use bun_string::{strings, String as BunString};
+use bun_core::{String as BunString};
 
 use crate::cli::command::{Context, HotReload};
 use bun_options_types::context::MacroOptions;

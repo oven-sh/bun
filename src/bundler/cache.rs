@@ -6,7 +6,7 @@ use bun_parsers::json_parser;
 use bun_js_parser as js_parser;
 use bun_ast as js_ast;
 use bun_resolver::fs as fs_mod;
-use bun_string::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_sys::{self, Fd};
 
 // B-3 UNIFIED: `Define` is now the single canonical `bun_js_parser::defines::Define`

@@ -380,8 +380,8 @@ pub mod streams;
 // force-reference here. Dropped per PORTING.md §Don't translate.
 
 pub enum PathOrFileDescriptor {
-    // PORT NOTE: `jsc.ZigString.Slice` → `bun_str::zig_string::Slice` (= `ZigStringSlice`).
-    Path(bun_str::zig_string::Slice),
+    // PORT NOTE: `jsc.ZigString.Slice` → `bun_core::zig_string::Slice` (= `ZigStringSlice`).
+    Path(bun_core::zig_string::Slice),
     Fd(bun_sys::Fd),
 }
 

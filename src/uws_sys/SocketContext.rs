@@ -41,7 +41,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
     // libuv: open query-only, `GetFileInformationByHandle`, close.
     //
-    // `bun_string::to_w_path_normalized` lives above this crate, so widen
+    // `bun_core::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
     // NUL-terminate. Heap-allocated (cold init path; avoids a 64KB stack
     // `WPathBuffer` and the wrong-unit `MAX_PATH_BYTES` previously used here).

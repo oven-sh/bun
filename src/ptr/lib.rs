@@ -33,9 +33,13 @@ pub type DynamicOwned<T> = Box<T>;
 pub type Shared<T> = std::rc::Rc<T>;
 pub type AtomicShared<T> = std::sync::Arc<T>;
 
-// FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Real impl.
-pub mod external_shared;
-pub use external_shared::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+// FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
+// impl moved down to `bun_core::external_shared` (cycle-break for the
+// `bun_string → bun_core` merge); re-exported here unchanged.
+pub use bun_core::external_shared;
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+// `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
+pub use bun_core::{cast_fn_ptr, RawSlice};
 
 pub mod raw_ref_count;
 pub mod weak_ptr;
@@ -310,155 +314,6 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     view
 }
 
-/// Reinterpret a fn pointer between two ABI-identical signatures.
-///
-/// Rust forbids `as`-casting between fn-pointer types even when the only
-/// difference is the pointee type of a `*mut T` parameter, so the Zig
-/// `@ptrCast` of a comptime fn item has no direct safe spelling. This is the
-/// single audited bit-cast for that pattern; callers state the source and
-/// destination signatures explicitly. The const-assert below catches a
-/// non-pointer-sized `F`/`G` at compile time — it does **not** verify that
-/// `F`/`G` are fn-pointer types or that their arity/ABI match (all fn
-/// pointers are pointer-sized regardless of arity); those remain caller
-/// contract.
-///
-/// # Safety
-/// `F` and `G` must be fn-pointer types with the **same calling convention,
-/// arity, and ABI** — they may differ only in the nominal pointee type of
-/// thin-pointer parameters that the callee casts back before use.
-#[inline(always)]
-pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
-    const {
-        assert!(core::mem::size_of::<F>() == core::mem::size_of::<fn()>());
-        assert!(core::mem::size_of::<G>() == core::mem::size_of::<fn()>());
-        // `read` below pulls a `G` out of a stack slot aligned for `F`; rule
-        // out under-alignment so the bitcast stays defined even if a caller
-        // smuggles in a non-fn-ptr `Copy` type.
-        assert!(core::mem::align_of::<F>() == core::mem::align_of::<fn()>());
-        assert!(core::mem::align_of::<G>() == core::mem::align_of::<fn()>());
-    }
-    // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
-    // `read` of a pointer-sized `Copy` value through a same-size cast is the
-    // bitwise reinterpretation `@ptrCast` performs.
-    unsafe { (&raw const f).cast::<G>().read() }
-}
-
-/// Non-owning borrowed slice whose backing storage outlives the holder.
-///
-/// Runtime sibling of `bun_ast::StoreSlice<T>` for `*const [T]` struct
-/// fields. Same contract as [`BackRef`]: the slice memory is owned elsewhere
-/// (parent struct, leaked `Box`, interned string) and remains valid for the
-/// holder's full lifetime. Stores a fat raw pointer (`*const [T]`, `usize`
-/// len) so it is a byte-for-byte drop-in for the Phase-A `*const [T]` fields
-/// it replaces.
-#[repr(transparent)]
-pub struct RawSlice<T>(*const [T]);
-
-impl<T> RawSlice<T> {
-    /// Empty slice (dangling, len 0). Safe to `.slice()`.
-    pub const EMPTY: Self = RawSlice(core::ptr::slice_from_raw_parts(
-        core::ptr::NonNull::<T>::dangling().as_ptr(),
-        0,
-    ));
-
-    /// Wrap a borrowed slice. Safe: stores the raw pointer; the
-    /// outlives-holder invariant is the caller's structural guarantee.
-    #[inline]
-    pub const fn new(s: &[T]) -> Self {
-        RawSlice(core::ptr::from_ref(s))
-    }
-
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
-    }
-
-    #[inline]
-    pub const fn as_ptr(self) -> *const [T] {
-        self.0
-    }
-
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
-
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.0.len() == 0
-    }
-
-    /// Re-borrow as `&[T]`.
-    ///
-    /// # Safety (encapsulated)
-    /// Sound under the `RawSlice` invariant: backing storage outlives the
-    /// holder, so materialising `&[T]` tied to `&self` is valid. Elements are
-    /// initialized and the data pointer is non-null (`EMPTY` uses a dangling
-    /// non-null pointer with len 0, which `from_raw_parts` accepts).
-    #[inline]
-    pub fn slice(&self) -> &[T] {
-        // SAFETY: RawSlice invariant — pointer is non-null (real allocation or
-        // `NonNull::dangling()` for EMPTY), `len` elements are initialized and
-        // live for at least `'_` (the holder's borrow). No exclusive alias is
-        // live: `RawSlice` only ever vends shared `&[T]`.
-        unsafe { &*self.0 }
-    }
-}
-
-impl<T> Copy for RawSlice<T> {}
-impl<T> Clone for RawSlice<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Default for RawSlice<T> {
-    #[inline]
-    fn default() -> Self {
-        RawSlice::EMPTY
-    }
-}
-
-impl<T> core::ops::Deref for RawSlice<T> {
-    type Target = [T];
-    #[inline]
-    fn deref(&self) -> &[T] {
-        self.slice()
-    }
-}
-
-impl<T> AsRef<[T]> for RawSlice<T> {
-    #[inline]
-    fn as_ref(&self) -> &[T] {
-        self.slice()
-    }
-}
-
-impl<T> From<&[T]> for RawSlice<T> {
-    #[inline]
-    fn from(s: &[T]) -> Self {
-        RawSlice::new(s)
-    }
-}
-
-impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.slice().fmt(f)
-    }
-}
-
-// SAFETY: `RawSlice<T>` only ever vends `&[T]` (never `&mut [T]` / owned `T`),
-// so its auto-trait bounds follow `&[T]` exactly: `&[T]: Send ⇔ T: Sync` and
-// `&[T]: Sync ⇔ T: Sync`. The wrapped raw pointer carries no ownership.
-unsafe impl<T: Sync> Send for RawSlice<T> {}
-unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interned — process-lifetime byte-slice proof type.

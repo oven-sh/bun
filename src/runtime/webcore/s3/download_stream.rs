@@ -10,7 +10,7 @@ use bun_event_loop::{task_tag, TaskTag, Taskable};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);

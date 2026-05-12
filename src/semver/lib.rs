@@ -231,7 +231,7 @@ pub mod semver_string {
 
     use bun_alloc::AllocError;
     use bun_collections::HashMap;
-    use bun_string::strings;
+    use bun_core::strings;
 
     use super::external_string::ExternalString;
     use super::sliced_string::SlicedString;

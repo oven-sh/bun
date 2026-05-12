@@ -12,7 +12,7 @@ use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{package_manager, CommandLineArguments, PackageID, PackageManager, Subcommand};
 use bun_semver as semver;
-use bun_str::strings;
+use bun_core::strings;
 
 use crate::command;
 use crate::package_manager_command::PackageManagerCommand;

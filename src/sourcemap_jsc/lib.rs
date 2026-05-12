@@ -6,7 +6,7 @@
 //! the rest of the module type-checks against the real lower-tier crates.
 
 // Phase-A drafts wrote `bun_str::…`; the workspace crate is `bun_string`.
-extern crate bun_string as bun_str;
+extern crate bun_core as bun_str;
 
 pub mod source_provider;
 pub mod internal_jsc;

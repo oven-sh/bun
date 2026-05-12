@@ -7,7 +7,7 @@ use core::sync::atomic::AtomicU32;
 
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
-use bun_str::{self as bstring, strings, PathString};
+use bun_core::{self as bstring, strings, PathString};
 
 // PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);

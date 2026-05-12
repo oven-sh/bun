@@ -9,8 +9,8 @@ use bun_md::root as md;
 use bun_md::parser::ParserError;
 use crate::node::StringOrBuffer;
 
-// `bun_str::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
-// (tier-6), not on `bun_str::String` itself.
+// `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
+// (tier-6), not on `bun_core::String` itself.
 #[inline]
 fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)

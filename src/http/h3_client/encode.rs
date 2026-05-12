@@ -3,7 +3,7 @@
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
 use bun_core::err;
-use bun_string::immutable as strings;
+use bun_core::strings;
 use bun_uws::quic;
 use bun_uws::quic::header::Class as QpackClass;
 use bun_uws::quic::Qpack;

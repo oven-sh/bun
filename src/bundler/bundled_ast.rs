@@ -31,7 +31,7 @@ pub type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
 pub type CssCol = Option<CssAstRef>;
 
 use bun_ast::import_record;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast::ast_result::{self, Ast};
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};

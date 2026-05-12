@@ -8,9 +8,10 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
+use bun_paths::strings;
 use core::mem::{offset_of, size_of};
 
-use bun_str::{strings, PathString, WStr};
+use bun_core::{PathString, WStr};
 use bun_sys::{self as sys, Fd, SystemErrno, Tag};
 
 // `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.

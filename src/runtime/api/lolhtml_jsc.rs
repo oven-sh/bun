@@ -2,7 +2,7 @@
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_lolhtml_sys::HTMLString;
-use bun_string::{strings, String as BunString};
+use bun_core::{strings, String as BunString};
 
 /// `HTMLString.toString` — port of `lol_html.zig:HTMLString.toString`.
 ///
@@ -35,10 +35,10 @@ pub fn html_string_to_string(this: HTMLString) -> BunString {
 }
 
 pub fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // Zig: `var str = this.toString(); defer str.deref();` — `bun_string::String`
+    // Zig: `var str = this.toString(); defer str.deref();` — `bun_core::String`
     // is `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that releases
     // the +1 ref returned by `html_string_to_string` on scope exit.
-    let str = bun_string::OwnedString::new(html_string_to_string(this));
+    let str = bun_core::OwnedString::new(html_string_to_string(this));
     str.to_js(global)
 }
 

@@ -2,7 +2,7 @@ use std::ffi::CString;
 use std::io::Write as _;
 
 use bun_collections::{VecExt, StringHashMap};
-use bun_str::strings;
+use bun_core::strings;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
@@ -695,7 +695,7 @@ impl ServerConfig {
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
                         // TODO(port): std.fmt.parseInt(u16, port, 10) — using helper
-                        if let Ok(_port) = bun_string::immutable::parse_int::<u16>(port, 10) {
+                        if let Ok(_port) = bun_core::immutable::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }
                     }
@@ -823,7 +823,7 @@ impl ServerConfig {
 
             while let Some(key) = iter.next()? {
                 // PORT NOTE: `to_owned_slice_returning_all_ascii` not yet on
-                // `bun_str::String`; split into `to_owned_slice()` + `is_all_ascii`.
+                // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
                 let path: Box<[u8]> = path_vec.into_boxed_slice();
@@ -882,7 +882,7 @@ impl ServerConfig {
                     ];
                     let mut found = false;
                     for method in METHODS {
-                        let method_name = bun_str::String::static_(method.as_str());
+                        let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) =
                             value.get_own(global, &method_name)?
                         {

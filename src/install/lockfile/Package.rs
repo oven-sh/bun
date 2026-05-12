@@ -8,7 +8,7 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::File;
 
 use crate::{

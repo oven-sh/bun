@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bun_core::{env_var, Global, Output};
 use bun_core::{pretty_errorln, print_errorln, note};
 use bun_paths::{platform, resolve_path, PathBuffer, WPathBuffer};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self, Dir, File, E};
 
 use crate::shell_completions::{self as ShellCompletions, Shell, ShellCompletionsExt as _};
@@ -97,7 +97,7 @@ impl InstallCompletionsCommand {
 
     #[cfg(windows)]
     fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), bun_core::Error> {
-        use bun_str::{w, WStr};
+        use bun_core::{w, WStr};
         use bun_sys::windows;
 
         // Because symlinks are not always allowed on windows,
@@ -173,7 +173,7 @@ impl InstallCompletionsCommand {
 
     #[cfg(windows)]
     fn install_uninstaller_windows() -> Result<(), bun_core::Error> {
-        use bun_str::w;
+        use bun_core::w;
         use bun_sys::windows;
 
         // This uninstaller file is only written if the current exe is within a path
@@ -564,7 +564,7 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
                             let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
+                                bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshrc".len(),
                                 )
@@ -584,7 +584,7 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
                             let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
+                                bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshrc".len(),
                                 )
@@ -604,7 +604,7 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
                             let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
+                                bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshenv".len(),
                                 )

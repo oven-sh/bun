@@ -25,7 +25,7 @@ use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;

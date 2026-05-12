@@ -2,7 +2,7 @@ use core::ffi::{c_uint, CStr};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_str::{self as bstr, strings, String as BunString, ZigString};
+use bun_core::{self as bstr, strings, String as BunString, ZigString};
 
 use crate::jsc::JSGlobalObject;
 
@@ -66,7 +66,7 @@ impl AlgorithmExt for Algorithm {
     }
 
     // TODO(port): Zig built this at comptime via a labeled block iterating
-    // EnumArray. bun_str::String is not const-constructible; use a lazy static.
+    // EnumArray. bun_core::String is not const-constructible; use a lazy static.
     fn names() -> &'static [BunString] {
         static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
         NAMES

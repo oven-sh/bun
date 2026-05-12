@@ -128,7 +128,7 @@ impl<C: WriterContext> NewWriter<C> {
 
     // TODO(port): Zig name is `String` (capital S); snake_cased it collides with
     // `string(&[u8])` above. Renamed to `bun_string`. Update callers in Phase B.
-    pub fn bun_string(self, value: &bun_string::String) -> Result<(), AnyPostgresError> {
+    pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
         if value.is_empty() {
             self.write(&[0u8])?;
             return Ok(());

@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use bun_string::strings;
+use bun_core::strings;
 
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};

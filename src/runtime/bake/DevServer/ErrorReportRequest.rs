@@ -26,7 +26,7 @@ use bun_jsc::{
 };
 use bun_ast::Log;
 use bun_paths::path_buffer_pool;
-use bun_str::{strings, String as BunString};
+use bun_core::{strings, String as BunString};
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 

@@ -1,8 +1,8 @@
 use core::ptr;
 use core::ptr::NonNull;
 
-use bun_string::String as BunString;
-use bun_string::ZigStringSlice;
+use bun_core::String as BunString;
+use bun_core::ZigStringSlice;
 use crate::schema_api as api;
 use bun_url::URL as ZigURL;
 

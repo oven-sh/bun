@@ -122,7 +122,7 @@ impl<'a> Line for &'a [u16] {
 }
 // TODO(port): Zig also accepted `[:0]const u8`, `[:0]u8`, `[]u8`, `[:0]const u16`,
 // `[:0]u16`, `[]u16` — in Rust these all coerce to `&[u8]`/`&[u16]`, so the two
-// slice impls above cover them. Add `&bun_str::ZStr` / `&bun_str::WStr` impls in
+// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls in
 // Phase B if callers pass those directly.
 
 /// diffs two sets of lines, returning the minimal number of edits needed to

@@ -2,7 +2,7 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-use crate::{self as strings_mod, ZStr, String as BunString, StringPointer};
+use crate::string::{self as strings_mod, ZStr, String as BunString, StringPointer};
 use bun_simdutf_sys::simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
@@ -85,7 +85,7 @@ impl StringBuilder {
             // the WTF-8 bytes into the builder's reserved buffer (count16_z reserved
             // enough — simdutf's length estimate is an upper bound for WTF-16) and
             // drop the temporary Vec normally. No `mem::forget`.
-            let out = crate::strings::to_utf8_alloc(slice);
+            let out = crate::string::strings::to_utf8_alloc(slice);
             let len = out.len();
             let avail = self.cap - self.len;
             if len + 1 > avail {
@@ -225,7 +225,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let start = self.len;
-        let written = bun_core::fmt::buf_print_len(self.writable(), args).expect("unreachable");
+        let written = crate::fmt::buf_print_len(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
@@ -238,7 +238,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let off = self.len;
-        let written = bun_core::fmt::buf_print_len(self.writable(), args).expect("unreachable");
+        let written = crate::fmt::buf_print_len(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
@@ -251,7 +251,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let off = self.len;
-        let written = bun_core::fmt::buf_print_z(self.writable(), args).expect("unreachable").len();
+        let written = crate::fmt::buf_print_z(self.writable(), args).expect("unreachable").len();
         self.len += written;
         self.len += 1;
 
@@ -311,7 +311,7 @@ impl StringBuilder {
         // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above;
         // all `cap` bytes have been written iff caller appended everything counted.
         // TODO(port): if not fully written this reads uninit bytes — Zig didn't care.
-        unsafe { bun_core::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
+        unsafe { crate::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
     }
 }
 
@@ -324,7 +324,7 @@ impl Drop for StringBuilder {
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
         // leaked in init_capacity/allocate; reconstruct to free via global allocator.
         unsafe {
-            bun_core::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
+            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
                 slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
             );
         }

@@ -8,7 +8,7 @@ use bun_core::Error;
 use bun_paths::fs;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
-use bun_string::{PathString, String as BunString};
+use bun_core::{PathString, String as BunString};
 use bun_sys::Fd;
 
 use crate::bun_fs::RealFS;

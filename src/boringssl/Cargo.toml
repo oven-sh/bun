@@ -19,7 +19,6 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true
 bun_boringssl_sys.workspace = true
 bun_cares_sys.workspace = true

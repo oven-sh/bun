@@ -2,7 +2,7 @@ use core::ffi::c_int;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSValue, VM};
-use bun_string::{self as bstr, ZigString};
+use bun_core::{self as bstr, ZigString};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for WebCore::DOMURL (C++ side).
@@ -65,7 +65,7 @@ impl DOMURL {
             3 => return Err(ToFileSystemPathError::NotFileUrl),
             _ => {}
         }
-        debug_assert!(path.tag() != bun_string::Tag::Dead);
+        debug_assert!(path.tag() != bun_core::Tag::Dead);
         Ok(path)
     }
 

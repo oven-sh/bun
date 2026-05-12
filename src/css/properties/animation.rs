@@ -7,7 +7,7 @@ use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
 use crate::css_values::easing::EasingFunction;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A list of animations.
 pub type AnimationList = SmallList<Animation, 1>;
@@ -249,7 +249,7 @@ impl AnimationName {
             }
             (AnimationName::String(a), AnimationName::String(b)) => {
                 // SAFETY: arena-owned slices live for the parse session.
-                unsafe { bun_string::strings::eql(&**a, &**b) }
+                unsafe { bun_core::eql(&**a, &**b) }
             }
             _ => false,
         }

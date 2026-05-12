@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str::{strings, PathString, ZStr};
+use bun_core::{strings, PathString, ZStr};
 use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};

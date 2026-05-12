@@ -1,5 +1,5 @@
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ConstantType {

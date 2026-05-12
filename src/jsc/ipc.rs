@@ -11,7 +11,7 @@ use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use crate::js_value::Protected;
-use bun_string::{strings, String as BunString};
+use bun_core::{immutable as strings, String as BunString};
 use bun_sys::FdExt;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -524,7 +524,7 @@ mod json {
                 &raw mut was_ascii_string_freed,
                 json_ipc_data_string_free_cb,
             );
-            if s.tag() == bun_string::Tag::Dead {
+            if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
                 return Err(IPCDecodeError::OutOfMemory);
             }
@@ -534,7 +534,7 @@ mod json {
         };
 
         // Zig: `defer { str.deref(); if (is_ascii && !was_ascii_string_freed) @panic(...) }`.
-        // `bun_string::String` is `Copy` (no `Drop`), so the +1 ref taken by
+        // `bun_core::String` is `Copy` (no `Drop`), so the +1 ref taken by
         // `create_external` / `borrow_utf8` must be released explicitly. The
         // ASCII-path free callback (`json_ipc_data_string_free_cb`) only fires
         // when the WTFStringImpl refcount hits zero — i.e. *during* `deref()` —
@@ -582,13 +582,13 @@ mod json {
                 JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
-        // Zig: `defer out.deref()`. `bun_string::String` is `Copy` (no `Drop`),
+        // Zig: `defer out.deref()`. `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 ref written by `json_stringify_fast` is wrapped in
         // `OwnedString` immediately so every exit path (Dead, OOM in
         // `ensure_unused_capacity`, success) releases it.
-        let out = bun_string::OwnedString::new(out);
+        let out = bun_core::OwnedString::new(out);
 
-        if out.tag() == bun_string::Tag::Dead {
+        if out.tag() == bun_core::Tag::Dead {
             return Err(IPCSerializationError::SerializationFailed);
         }
 

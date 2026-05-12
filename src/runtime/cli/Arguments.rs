@@ -24,8 +24,8 @@ use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptio
 use bun_paths::resolve_path;
 use bun_paths::{platform, PathBuffer};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
-use bun_str::strings;
-use bun_str::ZStr;
+use bun_core::strings;
+use bun_core::ZStr;
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -715,7 +715,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if let Some(name_pattern) = args.option(b"--test-name-pattern") {
             ctx.test_options.test_filter_pattern = Some(name_pattern.into());
             let regex = match RegularExpression::init(
-                bun_str::String::from_bytes(name_pattern),
+                bun_core::String::from_bytes(name_pattern),
                 RegexFlags::None,
             ) {
                 Ok(r) => r,

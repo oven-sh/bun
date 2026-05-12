@@ -3,7 +3,7 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 use crate::SystemError;
 
 use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
@@ -504,12 +504,12 @@ impl fmt::Display for Error {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_string::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_string::Tag::WTFStringImpl);
+        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
+        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
         that.path = BunString::borrow_utf8(&self.path);
         that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_string::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_string::Tag::WTFStringImpl);
+        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
+        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
 
         fmt::Display::fmt(&that, f)
     }

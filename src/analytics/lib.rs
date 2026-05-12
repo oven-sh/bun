@@ -10,7 +10,7 @@ use bun_semver as semver;
 use crate::schema::analytics;
 
 #[allow(unused_imports)]
-use bun_string::slice_to_nul;
+use bun_core::slice_to_nul;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -555,7 +555,7 @@ pub mod generate_header {
             #[cfg(not(target_os = "android"))]
             {
                 // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
-                if bun_string::strings::index_of(release, b"microsoft").is_some() {
+                if bun_core::strings::index_of(release, b"microsoft").is_some() {
                     return analytics::Platform {
                         os: analytics::OperatingSystem::wsl,
                         version: release,

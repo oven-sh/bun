@@ -7,7 +7,7 @@ use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::parser::{ImportItemForNamespaceMap, JsxT, Ref};
 use bun_crash_handler::handle_oom::handle_oom;
 use bun_ast::{import_record, ImportRecord};
-use bun_string::strings;
+use bun_core::strings;
 
 // PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.

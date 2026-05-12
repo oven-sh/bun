@@ -11,7 +11,7 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, VecExt, MapEntry};
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_ast::{Log};
-use bun_string::strings;
+use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
 //

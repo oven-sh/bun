@@ -15,7 +15,7 @@ use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer};
-use bun_str::{self as strings_mod, strings};
+use bun_core::{self as strings_mod, strings};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -422,15 +422,15 @@ impl Listener {
             UnixOrHost::Fd(fd) => {
                 let err = jsc::SystemError {
                     errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_str::String::static_("EINVAL"),
-                    message: bun_str::String::static_(
+                    code: bun_core::String::static_("EINVAL"),
+                    message: bun_core::String::static_(
                         "Bun does not support listening on a file descriptor.",
                     ),
-                    syscall: bun_str::String::static_("listen"),
+                    syscall: bun_core::String::static_("listen"),
                     fd: fd.uv(),
-                    path: bun_str::String::empty(),
-                    hostname: bun_str::String::empty(),
-                    dest: bun_str::String::empty(),
+                    path: bun_core::String::empty(),
+                    hostname: bun_core::String::empty(),
+                    dest: bun_core::String::empty(),
                 };
                 return Err(global.throw_value(err.to_error_instance(global)));
             }

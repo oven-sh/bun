@@ -13,7 +13,7 @@ use std::sync::Arc;
 use bun_collections::HashMap;
 use bun_http_types::MimeType::MimeType;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_str::{strings, PathString, ZigString};
+use bun_core::{strings, PathString, ZigString};
 use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::node::fs as node_fs;
@@ -269,7 +269,7 @@ impl FileExt for File {
                 // directly (mimalloc aborts on OOM), so no `?`.
                 let encoded_slice = match path_like {
                     PathLike::EncodedSlice(slice) => {
-                        bun_str::ZigStringSlice::Owned(slice.slice().to_vec())
+                        bun_core::ZigStringSlice::Owned(slice.slice().to_vec())
                     }
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
                 };

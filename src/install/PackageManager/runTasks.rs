@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bun_core::{self as bun, Environment, Output};
-use bun_str::strings;
+use bun_core::strings;
 use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
 use bun_http::{self as http, AsyncHTTP};
 

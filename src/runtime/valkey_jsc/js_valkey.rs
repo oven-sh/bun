@@ -13,7 +13,7 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_event_loop::EventLoopTimer as Timer;
-use bun_str::{self as strings, String as BunString};
+use bun_core::{strings, String as BunString};
 use bun_uws as uws;
 
 use super::js_valkey_functions as fns;
@@ -511,7 +511,7 @@ impl JSValkeyClient {
                 None => BunString::static_(b"valkey://localhost:6379"),
             }
         };
-        // `defer url_str.deref();` — bun_str::String drops on scope exit.
+        // `defer url_str.deref();` — bun_core::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];
 
         // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
@@ -530,7 +530,7 @@ impl JSValkeyClient {
                 );
             }
 
-            if strings::strings::contains(url_byte_slice, b"://") {
+            if strings::contains(url_byte_slice, b"://") {
                 break 'get_url match URL::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
@@ -672,7 +672,7 @@ impl JSValkeyClient {
             || !password_utf8.slice().is_empty()
             || !hostname_slice.is_empty()
         {
-            let mut b = bun_string::StringBuilder::default();
+            let mut b = bun_core::StringBuilder::default();
             b.count(username_utf8.slice());
             b.count(password_utf8.slice());
             b.count(hostname_slice);

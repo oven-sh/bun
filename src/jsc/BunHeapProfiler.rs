@@ -1,6 +1,6 @@
 use bun_core::{err, Error, Output, Timespec, TimespecMockMode};
 use bun_paths::{resolve_path, AutoAbsPath, PathBuffer};
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 use bun_sys::{self as sys, Fd, FdDirExt, E};
 
 use crate::VM;
@@ -23,7 +23,7 @@ unsafe extern "C" {
 }
 
 pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Result<(), Error> {
-    // `defer profile_string.deref()` — `bun_string::String` is `Copy` (no Drop);
+    // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {
         Bun__generateHeapProfile(vm)
@@ -49,7 +49,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
     #[cfg(windows)]
     let mut path_buf_os = bun_paths::OSPathBuffer::uninit();
     #[cfg(windows)]
-    let output_path_os: &bun_core::WStr = bun_string::strings::convert_utf8_to_utf16_in_buffer_z(
+    let output_path_os: &bun_core::WStr = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(
         &mut path_buf_os,
         path_buf.slice_z().as_bytes(),
     );

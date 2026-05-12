@@ -15,7 +15,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::host_fn::to_js_host_call;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_uws::Loop as UwsLoop;
 
 use super::{
@@ -359,7 +359,7 @@ impl All {
                 // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
                 // a +1 ref and there are several early `return Ok(())` exits below.
                 let string =
-                    bun_str::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
+                    bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string
@@ -398,7 +398,7 @@ impl All {
                             }
                         }};
                     }
-                    // PORT NOTE: bun_str::String has no `encoding()` accessor;
+                    // PORT NOTE: bun_core::String has no `encoding()` accessor;
                     // dispatch on `is_utf16()` and treat the 8-bit case via
                     // `latin1()` (digit chars are in the ASCII range either way).
                     if string.is_utf16() {

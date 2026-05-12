@@ -163,7 +163,7 @@ pub struct PropertyRuleDeclarationParser {
 // namespaces are structural duck-typing for RuleBodyParser; in Rust these
 // become trait impls.
 const _: () = {
-    use bun_string::strings;
+    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };

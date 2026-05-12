@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
@@ -499,7 +499,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_string::String::from_bytes(p.source.path.text);
+                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );

@@ -4,7 +4,7 @@ use core::fmt::Display;
 
 use bun_alloc::AllocError;
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 /// `this` is `&css::Err<T>` for any `T`; only `.kind` is accessed.
 // Zig `!JSValue` (inferred set) — only fallible call is `create_format` (OOM), so AllocError.
@@ -17,7 +17,7 @@ where
     T: Display,
 {
     let str = BunString::create_format(format_args!("{}", this.kind));
-    // `defer str.deref()` — `bun_string::String` is `Copy` and has no `Drop`, so deref explicitly.
+    // `defer str.deref()` — `bun_core::String` is `Copy` and has no `Drop`, so deref explicitly.
     let js = bun_jsc::bun_string_jsc::to_error_instance(&str, global_this);
     str.deref();
     Ok(js)

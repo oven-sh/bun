@@ -1,5 +1,5 @@
 use bun_paths;
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {

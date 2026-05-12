@@ -132,11 +132,11 @@ impl<'a> CopyFile<'a> {
             && system_error.path.is_empty()
         {
             system_error.path =
-                bun_str::String::clone_utf8(self.source_file_store.pathlike.path().slice());
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
         }
 
         if system_error.message.is_empty() {
-            system_error.message = bun_str::String::static_("Failed to copy file");
+            system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
         let instance = to_jsc_system_error(system_error)
@@ -253,7 +253,7 @@ impl<'a> CopyFile<'a> {
                     n
                 };
                 // SAFETY: path_buf1[dest_len] == 0 written above.
-                let dest: &bun_str::ZStr = bun_str::ZStr::from_buf(&path_buf1[..], dest_len);
+                let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf1[..], dest_len);
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
@@ -573,7 +573,7 @@ impl<'a> CopyFile<'a> {
                 .slice_z(&mut dest_buf)
                 .len();
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
-            let dest = bun_str::ZStr::from_buf(&dest_buf[..], dest_len);
+            let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
             match bun_sys::clonefile(
                 self.source_file_store.pathlike.path().slice_z(&mut source_buf),
                 dest,
@@ -1380,7 +1380,7 @@ impl<'a> CopyFileWindows<'a> {
         let destination_file_store = &mut self.destination_file_store.data.as_file();
         let source_file_store = &mut self.source_file_store.data.as_file();
 
-        let new_path: &bun_str::ZStr = 'brk: {
+        let new_path: &bun_core::ZStr = 'brk: {
             match &destination_file_store.pathlike {
                 PathOrFileDescriptor::Path(_) => {
                     break 'brk destination_file_store.pathlike.path().slice_z(&mut pathbuf1);
@@ -1418,14 +1418,14 @@ impl<'a> CopyFileWindows<'a> {
                                 let len = out.len();
                                 pathbuf1[len] = 0;
                                 // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk bun_str::ZStr::from_buf(&pathbuf1[..], len);
+                                break 'brk bun_core::ZStr::from_buf(&pathbuf1[..], len);
                             }
                         },
                     }
                 }
             }
         };
-        let old_path: &bun_str::ZStr = 'brk: {
+        let old_path: &bun_core::ZStr = 'brk: {
             match &source_file_store.pathlike {
                 PathOrFileDescriptor::Path(_) => {
                     break 'brk source_file_store.pathlike.path().slice_z(&mut pathbuf2);
@@ -1463,7 +1463,7 @@ impl<'a> CopyFileWindows<'a> {
                                 let len = out.len();
                                 pathbuf2[len] = 0;
                                 // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk bun_str::ZStr::from_buf(&pathbuf2[..], len);
+                                break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
                             }
                         },
                     }
@@ -1799,8 +1799,8 @@ pub enum IOWhich {
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
-        message: bun_str::String::static_("That doesn't work on folders"),
-        syscall: bun_str::String::static_("fstat"),
+        message: bun_core::String::static_("That doesn't work on folders"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }
@@ -1808,8 +1808,8 @@ fn unsupported_directory_error() -> SystemError {
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
-        message: bun_str::String::static_("Non-regular files aren't supported yet"),
-        syscall: bun_str::String::static_("fstat"),
+        message: bun_core::String::static_("Non-regular files aren't supported yet"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }

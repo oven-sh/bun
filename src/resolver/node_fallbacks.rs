@@ -4,7 +4,7 @@ use bun_options_types::bundle_enums::ModuleType;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
-// Ensure that checking for the prefix should be a cheap lookup (bun_str::strings::has_prefix)
+// Ensure that checking for the prefix should be a cheap lookup (bun_core::has_prefix)
 // because 24 bytes == 8 * 3 --> read and compare three u64s
 const _: () = assert!(IMPORT_PATH.len() % 8 == 0);
 

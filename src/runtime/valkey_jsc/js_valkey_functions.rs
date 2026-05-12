@@ -3,7 +3,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 use crate::node::BlobOrStringOrBuffer as JSArgument;
-use bun_str::{strings, OwnedString};
+use bun_core::{strings, OwnedString};
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
 use super::protocol_jsc as protocol;

@@ -4,7 +4,7 @@
 
 use core::ptr::NonNull;
 
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::HTTPClient;
 use crate::NewHTTPContext;

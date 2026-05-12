@@ -31,7 +31,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_options_types::schema::api;
-use bun_str::{String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 use bun_collections::ArrayHashMapExt;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -317,7 +317,7 @@ impl Config {
                 }
                 let kind = tsconfig.js_type();
                 let mut out = BunString::empty();
-                // `defer out.deref()` → Drop on bun_str::String
+                // `defer out.deref()` → Drop on bun_core::String
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(

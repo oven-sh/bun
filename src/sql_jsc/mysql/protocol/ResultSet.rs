@@ -1,8 +1,8 @@
 use core::ptr;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
-use bun_string::strings::parse_int;
-use bun_string::String as BunString;
+use bun_core::parse_int;
+use bun_core::String as BunString;
 
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
@@ -91,7 +91,7 @@ impl<'a> Row<'a> {
         use bun_sql::mysql::protocol::FieldType::*;
         match column.column_type {
             MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => {
-                let val: f64 = bun_string::parse_double(value.slice()).unwrap_or(f64::NAN);
+                let val: f64 = bun_core::parse_double(value.slice()).unwrap_or(f64::NAN);
                 *cell = SQLDataCell { tag: Tag::Float8, value: Value { float8: val }, ..SQLDataCell::default() };
             }
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
@@ -345,7 +345,7 @@ impl<'a> Drop for Row<'a> {
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 #[inline]
-fn clone_wtf_string_or_null(slice: &[u8]) -> bun_string::WTFStringImpl {
+fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
     // Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
     // WTFStringImpl* from a freshly-cloned bun.String (ownership transferred to the cell,
     // freed via `free_value = 1`).

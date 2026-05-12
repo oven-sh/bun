@@ -8,7 +8,7 @@ use crate::values::resolution::Resolution;
 use crate::values::url::Url;
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
 // TODO(port): `parse`/`to_css` were `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`

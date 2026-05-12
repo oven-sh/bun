@@ -197,7 +197,7 @@ impl ErrorLocation {
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once
         // `bun_ast::Location` grows a real lifetime.
-        let line_text = bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
+        let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
             .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),

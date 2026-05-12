@@ -1,9 +1,9 @@
 //! Prefer using bun.String instead of ZigString in new code.
 //!
 //! DEDUP NOTE: this module formerly defined a second `#[repr(C)] struct ZigString`
-//! mirror with ~70 inherent methods that duplicated `bun_string::ZigString`. The
+//! mirror with ~70 inherent methods that duplicated `bun_core::ZigString`. The
 //! struct definition and all pure (non-JSC) methods now live canonically in
-//! `bun_string`; this file re-exports the type and surfaces the JSC-only
+//! `bun_core`; this file re-exports the type and surfaces the JSC-only
 //! conversions (`to_js`, `to_*_error_instance`, `to_external_value`, …) via the
 //! [`crate::ZigStringJsc`] extension trait. Both crates share the identical
 //! `#[repr(C)] { *const u8, usize }` layout, so the `extern "C"` `ZigString__*`
@@ -12,18 +12,18 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
-/// Canonical `ZigString` lives in `bun_string`; re-exported here so existing
+/// Canonical `ZigString` lives in `bun_core`; re-exported here so existing
 /// `bun_jsc::zig_string::ZigString` import paths keep resolving.
-pub use bun_string::ZigString;
+pub use bun_core::ZigString;
 /// `ZigString.as_()` return type — re-exported alongside the struct.
-pub use bun_string::ByteString;
+pub use bun_core::ByteString;
 /// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
-pub use bun_string::ZigStringSlice as Slice;
+pub use bun_core::ZigStringSlice as Slice;
 /// `ZigString.githubAction()` return type — re-exported for parity with the
 /// pre-dedup local `GithubActionFormatter` struct.
-pub use bun_string::ZigStringGithubActionFormatter as GithubActionFormatter;
+pub use bun_core::ZigStringGithubActionFormatter as GithubActionFormatter;
 
 /// JSC-side conversions on `ZigString` are provided by the [`ZigStringJsc`]
 /// extension trait (canonical impl in `crate::lib`). Re-exported here so
@@ -111,7 +111,7 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `NullableAllocator`-backed `Slice` struct port — the `#[repr(C)]`-shaped
-// counterpart to the enum-based `bun_string::ZigStringSlice` (re-exported as
+// counterpart to the enum-based `bun_core::ZigStringSlice` (re-exported as
 // `super::Slice`). Kept for FFI surfaces that need the raw `{allocator, ptr,
 // len}` layout; the enum form is preferred for pure-Rust callers.
 // ──────────────────────────────────────────────────────────────────────────

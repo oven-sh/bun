@@ -71,7 +71,7 @@ pub struct PluginRunner;
 impl PluginRunner {
     /// Spec PluginRunner.zig:14 `extractNamespace`.
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = bun_string::strings::index_of_char(specifier, b':') else {
+        let Some(colon) = bun_core::index_of_char(specifier, b':') else {
             return b"";
         };
         let colon = colon as usize;
@@ -90,7 +90,7 @@ impl PluginRunner {
     /// Spec PluginRunner.zig:22 `couldBePlugin` — cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_string::strings::last_index_of_char(specifier, b'.') {
+        if let Some(last_dot) = bun_core::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
@@ -102,7 +102,7 @@ impl PluginRunner {
             }
         }
         !bun_paths::is_absolute(specifier)
-            && bun_string::strings::index_of_char(specifier, b':').is_some()
+            && bun_core::index_of_char(specifier, b':').is_some()
     }
 }
 
@@ -484,13 +484,13 @@ impl<'a> Transpiler<'a> {
                         if !dir.is_empty() {
                             // Normalized with trailing slash
                             let buster_name =
-                                bun_string::strings::paths::normalize_slashes_only(
+                                bun_paths::string_paths::normalize_slashes_only(
                                     &mut cache_bust_buf[..],
                                     dir,
                                     bun_paths::SEP,
                                 );
                             break 'name self.resolver.bust_dir_cache(
-                                bun_string::strings::paths::without_trailing_slash_windows_path(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(
                                     buster_name,
                                 ),
                             );
@@ -507,7 +507,7 @@ impl<'a> Transpiler<'a> {
                         top_level_dir, &mut cache_bust_buf[..], &parts
                     );
                     self.resolver.bust_dir_cache(
-                        bun_string::strings::paths::without_trailing_slash_windows_path(
+                        bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),
                         ),
                     )
@@ -805,7 +805,7 @@ impl<'a> Transpiler<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_sys::Fd as FD;
-use bun_string::strings;
+use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use crate::entry_points as EntryPoints;
 use bun_ast::RuntimeTranspilerCache;
@@ -1898,7 +1898,7 @@ impl<'a> Transpiler<'a> {
                                 *visited.value_ptr = count as u32;
 
                                 symbols[count] = bun_ast::Symbol {
-                                    original_name: match bun_string::MutableString::ensure_valid_identifier(name) {
+                                    original_name: match bun_core::MutableString::ensure_valid_identifier(name) {
                                         // Spec transpiler.zig:1049 calls
                                         // `MutableString.ensureValidIdentifier(name, arena)`
                                         // — the identifier lives in the

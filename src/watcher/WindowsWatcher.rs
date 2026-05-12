@@ -230,7 +230,7 @@ impl WindowsWatcher {
     // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
     // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
-        use bun_string::strings::paths;
+        use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
         let path_len_bytes: u16 = (wpath.len() * 2) as u16;

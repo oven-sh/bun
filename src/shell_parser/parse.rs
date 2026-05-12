@@ -12,7 +12,7 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use bun_string::{self as bun_str, strings, String as BunString};
+use bun_core::{self as bun_str, immutable as strings, String as BunString};
 
 // PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
 // Phase-A draft referenced it as `CodepointCursor`; alias here so the body
@@ -2980,7 +2980,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     #[cold]
     fn append_unicode_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
         let mut bytes = [0u8; 4];
-        let n = strings::encode_wtf8_rune(&mut bytes, char);
+        let n = bun_core::encode_wtf8_rune(&mut bytes, char);
         self.j += n as u32;
         self.strpool.extend_from_slice(&bytes[..n]);
         Ok(())
@@ -3206,7 +3206,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                     }
 
-                    let num = match strings::parse_int::<usize>(&buf[..count], 10) {
+                    let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
                         Ok(n) => n,
                         // This means the number was really large, meaning it
                         // probably was supposed to be a string
@@ -3317,7 +3317,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return None;
         }
 
-        let num = match strings::parse_int::<usize>(&buf[..count], 10) {
+        let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
             Ok(n) => n,
             Err(_) => {
                 self.backtrack(snap);
@@ -3360,9 +3360,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // ArrayList. The Rust transcoding helpers in bun_core take
             // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
             // and copy. PERF(port): re-unify once a bumpalo-aware transcoder
-            // lands in bun_string.
+            // lands in bun_core.
             let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
-            strings::convert_utf16_to_utf8_append(&mut scratch, utf16);
+            bun_core::convert_utf16_to_utf8_append(&mut scratch, utf16);
             self.strpool.extend_from_slice(&scratch);
         } else if bunstr.is_utf8() {
             self.strpool.extend_from_slice(bunstr.byte_slice());
@@ -3371,7 +3371,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if is_all_ascii(bytes) {
                 self.strpool.extend_from_slice(bytes);
             } else {
-                let non_ascii_idx = strings::first_non_ascii(bytes).unwrap_or(0) as usize;
+                let non_ascii_idx = bun_core::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
@@ -3497,7 +3497,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
 
-            let idx = match strings::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10) {
+            let idx = match bun_core::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10) {
                 Ok(n) => n,
                 Err(_) => {
                     let mut e = Vec::new();
@@ -4046,7 +4046,7 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
 
 #[inline]
 fn is_all_ascii(s: &[u8]) -> bool {
-    strings::is_all_ascii(s)
+    bun_core::is_all_ascii(s)
 }
 
 // ───────────────────────────── escaping ─────────────────────────────
@@ -4136,7 +4136,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
         outbuf.push(b'"');
     }
 
-    let non_ascii = strings::first_non_ascii16(str).unwrap_or(0);
+    let non_ascii = bun_core::first_non_ascii16(str).unwrap_or(0);
     let mut cp_buf = [0u8; 4];
 
     let mut i: usize = 0;
@@ -4161,7 +4161,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
             }
         }
 
-        let len = strings::encode_wtf8_rune(&mut cp_buf, char);
+        let len = bun_core::encode_wtf8_rune(&mut cp_buf, char);
         outbuf.extend_from_slice(&cp_buf[..len]);
     }
     if ADD_QUOTES {

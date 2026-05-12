@@ -6,7 +6,7 @@ use bstr::BStr;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
 pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -30,7 +30,7 @@ pub extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> 
 }
 
 // TODO(port): C++ callers pass `in_str` by value without transferring a ref; verify
-// `bun_string::String` Drop semantics match (Zig callee did not `deref`).
+// `bun_core::String` Drop semantics match (Zig callee did not `deref`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 pub extern "C" fn node_module_paths_js_value(
     in_str: BunString,

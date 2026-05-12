@@ -14,7 +14,7 @@ use bun_collections::VecExt;
 use bun_core::{self, declare_scope, scoped_log, err, Error as AnyError, FeatureFlags};
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_ast::ImportRecord;
-use bun_string::{self, strings};
+use bun_core::strings;
 use bun_sys::Fd;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; the draft used the
 // struct alias which made `ThreadPoolLib::Task` unresolvable. Import the module.
@@ -1902,12 +1902,12 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         let result_ptr = core::ptr::addr_of_mut!(wrapper.result);
         let namespace_str;
         let namespace = if self.file_path.namespace == b"file" {
-            &bun_string::String::EMPTY
+            &bun_core::String::EMPTY
         } else {
-            namespace_str = bun_string::String::init(self.file_path.namespace);
+            namespace_str = bun_core::String::init(self.file_path.namespace);
             &namespace_str
         };
-        let path_str = bun_string::String::init(self.file_path.text);
+        let path_str = bun_core::String::init(self.file_path.text);
         // Copy the `&Cell<i32>` out so passing it to FFI doesn't go through
         // `&mut self` after `self_ptr` is derived.
         let should_continue_running = self.should_continue_running;

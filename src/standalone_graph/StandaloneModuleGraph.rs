@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::{self as bun, Environment, Error as BunError, Output, err};
-use bun_paths::{self as path, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
-use bun_str::{strings, String as BunString, ZStr, StringPointer};
+use bun_paths::{self as path, strings, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
+use bun_str::{String as BunString, ZStr, StringPointer};
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 use bun_ast::Loader;
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
@@ -1536,7 +1536,7 @@ pub fn download_to_path(
 
         // TODO: This is way too much code necessary to send a single HTTP request...
         let mut compressed_archive_bytes =
-            Box::new(bun_string::MutableString::init(24 * 1024 * 1024)?);
+            Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
         let mut url_buffer = [0u8; 2048];
         let url_str = match target.to_npm_registry_url(&mut url_buffer) {
             Ok(s) => s,

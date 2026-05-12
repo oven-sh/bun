@@ -17,12 +17,7 @@
 //! `src/runtime/api/bun/subprocess/StaticPipeWriter.zig`.
 
 #![allow(dead_code)]
-
-// PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
-// workspace crate is named `bun_string`. Alias here so the moved-down
-// `process.rs` body compiles unmodified.
 #![warn(unreachable_pub)]
-extern crate bun_string as bun_str;
 
 use core::ffi::c_char;
 

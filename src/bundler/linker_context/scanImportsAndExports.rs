@@ -592,7 +592,7 @@ pub fn scan_imports_and_exports(
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
             // the arena reclaims the storage on reset, matching Zig's implicit
             // no-destructor semantics.
-            let mut builder = core::mem::ManuallyDrop::new(bun_string::StringBuilder {
+            let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
                 ptr: core::ptr::NonNull::new(string_buffer.as_mut_ptr()),

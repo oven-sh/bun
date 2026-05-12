@@ -1,6 +1,5 @@
 use bun_alloc::AllocError;
-use bun_collections::VecExt as _;
-use crate::{strings, ZStr};
+use crate::string::{strings, ZStr};
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
 /// `bun_ast::E::String`). Low tier defines the interface; high tier
@@ -34,16 +33,10 @@ pub struct MutableString {
     pub list: Vec<u8>,
 }
 
-/// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
-/// (src/install/npm.zig). Init = `init2048`; reuse = `.reset()`.
-impl bun_collections::pool::ObjectPoolType for MutableString {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-        Some(|| MutableString::init2048().map_err(Into::into));
-    #[inline]
-    fn reset(&mut self) {
-        MutableString::reset(self);
-    }
-}
+// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
+// (src/install/npm.zig). The `bun_collections::pool::ObjectPoolType` impl
+// lives in `bun_collections` (trait owner) to avoid a `bun_core →
+// bun_collections` dep cycle now that `MutableString` is in `bun_core`.
 
 impl MutableString {
     pub fn init2048() -> Result<MutableString, AllocError> {
@@ -107,7 +100,7 @@ impl MutableString {
 
     pub fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
         // SAFETY: caller fully writes the returned slice (Zig contract).
-        unsafe { self.list.writable_slice_assume_capacity(amount) }
+        unsafe { crate::vec::writable_slice_assume_capacity(&mut self.list, amount) }
     }
 
     /// Increases the length of the buffer by `amount` bytes, expanding the capacity if necessary.
@@ -183,8 +176,8 @@ impl MutableString {
         }
 
         // TODO(b0): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
-        use crate::lexer_tables as js_lexer_tables;
-        use crate::lexer as js_lexer;
+        use crate::string::lexer_tables as js_lexer_tables;
+        use crate::string::lexer as js_lexer;
 
         // Common case: no gap necessary. No allocation necessary.
         needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
@@ -355,9 +348,9 @@ impl MutableString {
 }
 
 /// Growable string sink. Zig: `MutableString.writer()`.
-impl bun_core::io::Write for MutableString {
+impl crate::io::Write for MutableString {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
         self.append(buf)?;
         Ok(())
     }
@@ -371,7 +364,7 @@ impl MutableString {
     #[inline]
     pub fn append_int(&mut self, int: u64) -> Result<(), AllocError> {
         let mut b = [0u8; 20];
-        self.list.extend_from_slice(bun_core::fmt::int_as_bytes(&mut b, int));
+        self.list.extend_from_slice(crate::fmt::int_as_bytes(&mut b, int));
         Ok(())
     }
 
@@ -569,7 +562,7 @@ impl<'a> BufferedWriter<'a> {
             // TODO(port): confirm and fix upstream.
             let old = self.context.list.len();
             // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
-            let tail = unsafe { self.context.list.writable_slice(bytes.len() * 2) };
+            let tail = unsafe { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
             let decoded = strings::copy_utf16_into_utf8(tail, bytes);
             self.context.list.truncate(old + decoded.written as usize);
             return Ok(pending.len());

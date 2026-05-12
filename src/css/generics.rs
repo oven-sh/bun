@@ -309,14 +309,14 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 impl CssEql for [u8] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        bun_string::strings::eql(self, other)
+        bun_core::eql(self, other)
     }
 }
 
 impl CssEql for str {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        bun_string::strings::eql(self.as_bytes(), other.as_bytes())
+        bun_core::eql(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -376,7 +376,7 @@ mod ident_eql {
                 #[inline]
                 fn eql(&self, other: &Self) -> bool {
                     // `.v()` borrows the parser arena (see `crate::arena_str`).
-                    bun_string::strings::eql(self.v(), other.v())
+                    bun_core::eql(self.v(), other.v())
                 }
             }
         )*};

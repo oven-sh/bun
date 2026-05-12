@@ -6,7 +6,7 @@
 
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;
 

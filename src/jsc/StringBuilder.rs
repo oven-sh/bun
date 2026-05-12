@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_string::String;
+use bun_core::String;
 
 const SIZE: usize = 24;
 // alignment = 8 is encoded in #[repr(align(8))] below.

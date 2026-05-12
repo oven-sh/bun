@@ -26,5 +26,5 @@ pub mod MimeType;
 /// bun_http / bun_runtime::server / s3. Backed by the std.fmt.parseInt port.
 #[inline]
 pub fn parse_content_length(value: &[u8]) -> usize {
-    bun_string::strings::parse_int::<usize>(value, 10).unwrap_or(0)
+    bun_core::parse_int::<usize>(value, 10).unwrap_or(0)
 }

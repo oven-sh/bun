@@ -7,7 +7,7 @@ use bun_bundler::options;
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
 use bun_jsc::ComptimeStringMapExt as _;
-use bun_string::ZigString;
+use bun_core::ZigString;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 

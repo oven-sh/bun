@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use bun_ast::Log;
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 
 use crate::JsResult;
 

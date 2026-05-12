@@ -15,7 +15,7 @@ use bun_http_types::Method::Method;
 use bun_ast::Log;
 use bun_ast::Loader;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
-use bun_string::strings;
+use bun_core::strings;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{

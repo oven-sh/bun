@@ -271,7 +271,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let long_text = if before.len() > after.len() { before } else { after };
         let short_text = if before.len() > after.len() { after } else { before };
 
-        if let Some(index) = bun_str::strings::index_of_t(long_text, short_text) {
+        if let Some(index) = bun_core::index_of_t(long_text, short_text) {
             let mut diffs: DiffList<Unit> = Vec::with_capacity(3);
             // Shorter text is inside the longer text (speedup).
             let op: Operation = if before.len() > after.len() {
@@ -420,7 +420,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let mut best_short_text_b: &[Unit] = &[];
 
         while (j as i128) < i128::try_from(short_text.len()).unwrap() && {
-            match bun_str::strings::index_of_t(&short_text[usize::try_from(j + 1).unwrap()..], seed) {
+            match bun_core::index_of_t(&short_text[usize::try_from(j + 1).unwrap()..], seed) {
                 Some(found) => {
                     j = isize::try_from(found).unwrap() + j + 1;
                     true
@@ -878,7 +878,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     // TODO this can be handled with a Reader, avoiding all the manual splitting
     while line_end < isize::try_from(text.len()).unwrap() - 1 {
         line_end = 'b: {
-            match bun_str::strings::index_of_t(&text_u8[usize::try_from(line_start).unwrap()..], b"\n") {
+            match bun_core::index_of_t(&text_u8[usize::try_from(line_start).unwrap()..], b"\n") {
                 Some(idx) => break 'b isize::try_from(idx).unwrap() + line_start,
                 None => break 'b isize::try_from(text.len()).unwrap() - 1,
             }
@@ -1432,7 +1432,7 @@ fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> 
     let mut length: usize = 1;
     loop {
         let pattern = &text1[text_length - length..];
-        let found = match bun_str::strings::index_of_t(text2, pattern) {
+        let found = match bun_core::index_of_t(text2, pattern) {
             Some(f) => f,
             None => return best,
         };

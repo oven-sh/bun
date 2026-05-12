@@ -878,7 +878,7 @@ impl All {
 // ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
 // `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the
 // host_fn export thunks all need `JSGlobalObject::bun_vm()`,
-// `JSValue::to_number()`, `bun_str::String::transfer_to_js()`, etc.
+// `JSValue::to_number()`, `bun_core::String::transfer_to_js()`, etc.
 // Kept gated until `bun_jsc.workspace = true` is re-enabled.
 
 // TODO(port): JS-facing surface (`set_timeout`/`set_interval`/...) lives in

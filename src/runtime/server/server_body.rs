@@ -29,7 +29,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::response::HeadersRef;
 use bun_paths as paths;
 use bun_ptr::{IntrusiveRc, RefPtr};
-use bun_str::{self as bstr, strings, String as BunString, ZStr, ZigString};
+use bun_core::{self as bstr, strings, String as BunString, ZStr, ZigString};
 use bun_sys as sys;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
@@ -539,7 +539,7 @@ impl AnyRoute {
         );
         // PORT NOTE: Zig `defer path_string.deref()`. `from_bun_string` clones
         // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
-        // release the source ref immediately — `bun_str::String` has no `Drop`.
+        // release the source ref immediately — `bun_core::String` has no `Drop`.
         path_string.deref();
         // path is dropped at scope end
 
@@ -1645,7 +1645,7 @@ where
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_jsc::HTTPHeaderName;
-        use bun_str::ZigStringSlice;
+        use bun_core::ZigStringSlice;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1805,9 +1805,9 @@ where
 
         // Owned backing storage for sec_websocket_* — see server.zig:910 comment.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
-        let mut sec_websocket_key_owned = bun_str::ZigStringSlice::empty();
-        let mut sec_websocket_protocol_owned = bun_str::ZigStringSlice::empty();
-        let mut sec_websocket_extensions_owned = bun_str::ZigStringSlice::empty();
+        let mut sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
+        let mut sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
+        let mut sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
 
         // PORT NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a

@@ -110,7 +110,7 @@ mod _impl {
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::zig_string::ZigString;
-use bun_str::{String as BunString, strings};
+use bun_core::{String as BunString, strings};
 use bun_sys as Syscall;
 use bun_paths::{PathBuffer, SEP};
 use bun_core::env_var;
@@ -138,7 +138,7 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
     // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
     // returning. `String` is `Copy`, so read it out by value and let
     // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
-    let newvalue = bun_str::OwnedString::new(unsafe { *newvalue });
+    let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
 
     // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
     // the Zig OOM-throw path is unreachable here.
@@ -461,7 +461,7 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
             // so a `process.chdir()` before `new Glob(...).scan()` is observed.
             bun_core::set_top_level_dir(fs.top_level_dir);
             #[cfg(windows)]
-            let without_trailing_slash = bun_string::immutable::paths::without_trailing_slash_windows_path;
+            let without_trailing_slash = bun_paths::string_paths::without_trailing_slash_windows_path;
             #[cfg(not(windows))]
             let without_trailing_slash = strings::without_trailing_slash;
             let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
@@ -481,7 +481,7 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
 #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
 pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
     const _: () = assert!(cfg!(windows));
-    if k.tag() == bun_str::Tag::Empty {
+    if k.tag() == bun_core::Tag::Empty {
         return;
     }
     // Zig: `k.value.WTFStringImpl` — `value` is a private union field in Rust;
@@ -500,9 +500,9 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
     buf1[len1] = 0;
 
     static EMPTY_W: [u16; 1] = [0];
-    let str2: Option<*const u16> = if v.tag() != bun_str::Tag::Dead {
+    let str2: Option<*const u16> = if v.tag() != bun_core::Tag::Dead {
         Some('str_: {
-            if v.tag() == bun_str::Tag::Empty {
+            if v.tag() == bun_core::Tag::Empty {
                 break 'str_ EMPTY_W.as_ptr();
             }
             let len2: usize = if v.is_8bit() {

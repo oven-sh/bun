@@ -143,7 +143,7 @@ pub struct Debug {
     /// RAII: deref-on-drop. `exit()` just `take()`s; if `Debug` is dropped
     /// without `exit()` running, the +1 from the last `run_callback` no
     /// longer leaks.
-    pub last_fn_name: bun_string::OwnedString,
+    pub last_fn_name: bun_core::OwnedString,
     pub track_last_fn_name: bool,
 }
 

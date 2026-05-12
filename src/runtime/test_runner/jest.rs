@@ -13,7 +13,7 @@ use bun_jsc::{
 #[allow(unused_imports)]
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
-use bun_str as strings;
+use bun_core::strings;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
@@ -648,7 +648,7 @@ pub fn format_label(
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
                     // TODO(port): move to *_jsc
-                    bun_str::String::init(var_path).to_js(global_this)?,
+                    bun_core::String::init(var_path).to_js(global_this)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
                     // For primitive strings, use toString() to avoid adding quotes
@@ -725,7 +725,7 @@ pub fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    let mut str = bun_str::String::empty();
+                    let mut str = bun_core::String::empty();
                     // PORT NOTE: `defer str.deref()` — Drop handles this.
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     current_arg.json_stringify_fast(global_this, &mut str)?;

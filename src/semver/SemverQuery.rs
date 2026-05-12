@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::range::{Comparator, Op as RangeOp};
 use crate::{version, Range, SlicedString, Version};

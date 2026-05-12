@@ -1,4 +1,4 @@
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_core::{env_var, Output};
 use bun_paths::{self as Path, PathBuffer};
 use bun_url::URL;
@@ -618,7 +618,7 @@ impl Options {
 
         if let Some(retry_count) = env.get(b"BUN_CONFIG_HTTP_RETRY_COUNT") {
             // PORT NOTE: Zig `parseInt(u16, str, 10) catch null` — `Result` → `.ok()`.
-            if let Ok(int) = bun_str::strings::parse_int::<u16>(retry_count, 10) {
+            if let Ok(int) = bun_core::parse_int::<u16>(retry_count, 10) {
                 self.max_retry_count = int;
             }
         }

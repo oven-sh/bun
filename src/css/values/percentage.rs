@@ -52,9 +52,9 @@ impl Percentage {
             let buf = fbs.get_written();
             if self.v < 0.0 {
                 dest.write_char(b'-')?;
-                dest.write_str(bun_string::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
+                dest.write_str(bun_core::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
             } else {
-                dest.write_str(bun_string::strings::trim_leading_char(&buf, b'0'))?;
+                dest.write_str(bun_core::trim_leading_char(&buf, b'0'))?;
             }
             Ok(())
         } else {

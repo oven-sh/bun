@@ -5,7 +5,7 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_string::{strings, SliceWithUnderlyingString, String, Tag, ZigStringSlice};
+use bun_core::{strings, SliceWithUnderlyingString, String, Tag, ZigStringSlice};
 
 use crate::zig_string::{self, ZigString};
 use crate::{CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
@@ -294,7 +294,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
 
     // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
     // only fail on OOM.
-    if bun_string::escape_reg_exp::escape_reg_exp(input.slice(), &mut buf).is_err() {
+    if bun_core::escape_reg_exp::escape_reg_exp(input.slice(), &mut buf).is_err() {
         return Err(JsError::OutOfMemory);
     }
 
@@ -321,7 +321,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
 
     // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
     // only fail on OOM.
-    if bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching(input.slice(), &mut buf)
+    if bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching(input.slice(), &mut buf)
         .is_err()
     {
         return Err(JsError::OutOfMemory);

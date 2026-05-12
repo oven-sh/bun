@@ -12,7 +12,7 @@ use bun_http::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
-use bun_str::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;

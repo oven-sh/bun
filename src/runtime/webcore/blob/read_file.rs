@@ -17,7 +17,7 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::Lifetime;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_sys::{self, Fd, Stat};
 #[cfg(windows)]
 use bun_sys::windows::libuv;

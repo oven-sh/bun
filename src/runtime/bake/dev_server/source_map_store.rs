@@ -13,7 +13,7 @@ use core::mem::offset_of;
 use bun_collections::{linear_fifo::StaticBuffer, ArrayHashMap, LinearFifo};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
-use bun_str::string_joiner::StringJoiner;
+use bun_core::string_joiner::StringJoiner;
 
 use crate::bake::{self, Side};
 use crate::bake::dev_server_body::map_log;
@@ -187,12 +187,12 @@ impl Entry {
                 source_map_strings.extend_from_slice(b"\"");
             } else {
                 source_map_strings.extend_from_slice(b"\"bun://");
-                match bun_str::strings::percent_encode_write(path, &mut source_map_strings) {
+                match bun_core::percent_encode_write(path, &mut source_map_strings) {
                     Ok(()) => {}
-                    Err(bun_str::strings::PercentEncodeError::IncompleteUTF8) => {
+                    Err(bun_core::PercentEncodeError::IncompleteUTF8) => {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
-                    Err(bun_str::strings::PercentEncodeError::OutOfMemory) => {
+                    Err(bun_core::PercentEncodeError::OutOfMemory) => {
                         return Err(bun_core::err!("OutOfMemory"))
                     }
                 }
@@ -266,7 +266,7 @@ impl Entry {
     ) -> Result<(), EncodeSourceMapPathError> {
         // On the client, percent encode everything so it works in the browser
         if side == Side::Client {
-            return bun_str::strings::percent_encode_write(utf8_input, out)
+            return bun_core::percent_encode_write(utf8_input, out)
                 .map_err(EncodeSourceMapPathError::from);
         }
         // PORT NOTE: Zig `array_list.writer()` + `writePreQuotedString(..., @TypeOf(writer), writer, ...)`
@@ -382,11 +382,11 @@ pub enum EncodeSourceMapPathError {
     OutOfMemory,
     IncompleteUTF8,
 }
-impl From<bun_str::strings::PercentEncodeError> for EncodeSourceMapPathError {
-    fn from(e: bun_str::strings::PercentEncodeError) -> Self {
+impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
+    fn from(e: bun_core::PercentEncodeError) -> Self {
         match e {
-            bun_str::strings::PercentEncodeError::IncompleteUTF8 => Self::IncompleteUTF8,
-            bun_str::strings::PercentEncodeError::OutOfMemory => Self::OutOfMemory,
+            bun_core::PercentEncodeError::IncompleteUTF8 => Self::IncompleteUTF8,
+            bun_core::PercentEncodeError::OutOfMemory => Self::OutOfMemory,
         }
     }
 }

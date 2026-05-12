@@ -13,7 +13,7 @@ use core::cell::Cell;
 
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
-use bun_str::strings;
+use bun_core::strings;
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
 
@@ -44,7 +44,7 @@ pub(crate) mod ci_info_generated {
     macro_rules! env_contains {
         ($k:literal, $needle:literal) => {
             getenv_z(zstr!($k)).map_or(false, |v| {
-                bun_string::immutable::index_of(v, $needle.as_bytes()).is_some()
+                bun_core::immutable::index_of(v, $needle.as_bytes()).is_some()
             })
         };
     }
@@ -924,7 +924,7 @@ pub mod command {
             if let Some(fd_str) = bun_core::env_var::BUN_INTERNAL_WEBVIEW_HOST::get() {
                 // Zig: `std.fmt.parseInt(u31, fd_str, 10)` — parse base-10 directly
                 // from bytes; env var values are `&[u8]`, not assumed UTF-8.
-                let fd: u32 = match bun_string::strings::parse_int::<u32>(fd_str, 10).ok() {
+                let fd: u32 = match bun_core::parse_int::<u32>(fd_str, 10).ok() {
                     Some(v) if v <= i32::MAX as u32 => v,
                     _ => Output::panic(format_args!(
                         "Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {}",
@@ -1429,7 +1429,7 @@ pub mod command {
     fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
-        use bun_str::ZStr;
+        use bun_core::ZStr;
 
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.

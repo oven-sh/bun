@@ -4,7 +4,7 @@ use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;

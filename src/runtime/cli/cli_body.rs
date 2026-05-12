@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::ffi::c_int;
 
 use bun_core::{self as bun, Global, Output};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_clap as clap;
 use bun_options_types::schema::api;
 use bun_sys::File;
@@ -695,7 +695,7 @@ pub mod command {
             if let Some(fd_str) = bun_core::env_var::BUN_INTERNAL_WEBVIEW_HOST::get() {
                 // Zig: `std.fmt.parseInt(u31, fd_str, 10)` — parse base-10 directly
                 // from bytes; env var values are `&[u8]`, not assumed UTF-8.
-                let fd: u32 = match bun_string::strings::parse_int::<u32>(fd_str, 10).ok() {
+                let fd: u32 = match bun_core::parse_int::<u32>(fd_str, 10).ok() {
                     Some(v) if v <= i32::MAX as u32 => v,
                     _ => Output::panic(format_args!(
                         "Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {}",

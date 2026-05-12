@@ -7,7 +7,8 @@ use bun_collections::{StringHashMap, StringSet};
 use bun_core::{self as core_, Output};
 use bun_resolver::fs::{self as Fs, FileSystem, PathName};
 use bun_paths::{self, PathBuffer, SEP};
-use bun_string::{strings, ZStr};
+use bun_core::ZStr;
+use bun_paths::strings;
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
@@ -1163,7 +1164,7 @@ where
                                 if loader != bun_ast::Loader::File {
                                     // Zig leaves these `undefined` / overwritten; both arms
                                     // of `'brk` assign before any read.
-                                    let path_string: bun_string::PathString;
+                                    let path_string: bun_core::PathString;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) =

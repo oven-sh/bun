@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use bun_sql::mysql::mysql_param::Param;
 use bun_sql::mysql::mysql_request as mysql_request;
@@ -341,7 +341,7 @@ impl MySQLQuery {
         binding_value: JSValue,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let mut query_str: Option<bun_string::zig_string::Slice> = None;
+        let mut query_str: Option<bun_core::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
         if self.statement.is_null() {

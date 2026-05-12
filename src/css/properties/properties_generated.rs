@@ -1345,7 +1345,7 @@ impl PropertyId {
     /// `PropertyId`. Returns `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
     pub fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
-        use bun_string::strings;
+        use bun_core::strings;
         // PORT NOTE: Zig used a comptime perfect-hash map; linear scan here is
         // a placeholder — replace with a phf / match-on-len when un-gated.
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-color") {

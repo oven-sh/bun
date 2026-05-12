@@ -1,5 +1,5 @@
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's JSModuleLoader.

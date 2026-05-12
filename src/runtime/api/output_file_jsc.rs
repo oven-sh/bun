@@ -12,7 +12,7 @@ use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
-use bun_string::{PathString, ZigStringSlice};
+use bun_core::{PathString, ZigStringSlice};
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};

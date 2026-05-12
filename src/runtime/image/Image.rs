@@ -24,7 +24,7 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::blob::store as blob_store;
 use crate::webcore::node_types::PathOrFileDescriptor;
-use bun_str::{self as strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_core::ZBox;
 use bun_sys as sys;
 
@@ -353,13 +353,13 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         // anyway) and decode base64 here. Non-base64 data URLs aren't useful
         // for image bytes.
         if s.starts_with(b"data:") {
-            let Some(comma) = strings::strings::index_of_char(s, b',') else {
+            let Some(comma) = strings::index_of_char(s, b',') else {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Image(): malformed data: URL (no comma)")));
             };
             let meta = &s[5..comma as usize];
             let payload = &s[comma as usize + 1..];
-            if strings::strings::index_of(meta, b";base64").is_none() {
+            if strings::index_of(meta, b";base64").is_none() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): only base64 data: URLs are supported",
                 )));
@@ -771,7 +771,7 @@ impl Image {
             1 => codecs::Backend::Bun,
             n => unreachable!("invalid image Backend {n}"),
         };
-        bun_str::String::static_(<&'static str>::from(&b)).to_js(global)
+        bun_core::String::static_(<&'static str>::from(&b)).to_js(global)
     }
 
     pub fn set_backend(

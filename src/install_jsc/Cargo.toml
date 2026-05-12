@@ -30,5 +30,4 @@ bun_ast_jsc.workspace = true
 bun_url.workspace = true
 bun_paths.workspace = true
 bun_semver.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true

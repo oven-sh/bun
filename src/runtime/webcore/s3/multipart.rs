@@ -106,7 +106,7 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
 use bun_s3_signing::storage_class::StorageClass;
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 
 // PORT NOTE: file-level mods are declared flat in `webcore.rs` via `#[path]`, so
 // `super` here is `crate::webcore`, not the `s3` directory. Route through the

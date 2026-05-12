@@ -75,7 +75,7 @@ impl Composes {
     fn parse_one_ident(input: &mut Parser) -> css::Result<CustomIdent> {
         let name: CustomIdent = CustomIdent::parse(input)?;
 
-        if bun_string::strings::eql_case_insensitive_ascii_check_length(name.v(), b"from") {
+        if bun_core::eql_case_insensitive_ascii_check_length(name.v(), b"from") {
             return Err(input.new_error_for_next_token());
         }
 

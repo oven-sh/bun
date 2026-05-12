@@ -10,7 +10,7 @@ use bun_semver::String;
 // PORT NOTE: Zig `String.Buf` → `bun_semver::string::Buf<'_>`.
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::dependency::{self, DependencyExt as _, TagExt as _};
 use crate::repository::{Repository, RepositoryExt as _};

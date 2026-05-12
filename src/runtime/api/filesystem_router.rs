@@ -7,11 +7,11 @@ pub mod kind_enum {
     pub const DYNAMIC: &[u8] = b"dynamic";
 
     pub fn classify(name: &[u8]) -> &'static [u8] {
-        if bun_str::strings::contains(name, b"[[...") {
+        if bun_core::contains(name, b"[[...") {
             OPTIONAL_CATCH_ALL
-        } else if bun_str::strings::contains(name, b"[...") {
+        } else if bun_core::contains(name, b"[...") {
             CATCH_ALL
-        } else if bun_str::strings::contains(name, b"[") {
+        } else if bun_core::contains(name, b"[") {
             DYNAMIC
         } else {
             EXACT
@@ -19,6 +19,7 @@ pub mod kind_enum {
     }
 }
 
+use bun_paths::strings;
 use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
@@ -30,10 +31,10 @@ use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::BackRef;
-use bun_str::{ZigString, ZigStringSlice};
+use bun_core::{ZigString, ZigStringSlice};
 use bun_ast as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
-use bun_str::strings;
+
 
 use bun_http_types::URLPath;
 use bun_resolver::fs as Fs;
@@ -673,7 +674,7 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_str::String::static_("nextjs").to_js(global_this)
+        bun_core::String::static_("nextjs").to_js(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]

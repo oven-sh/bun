@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::shared::Data;
 use super::new_reader::{NewReader, ReaderContext};

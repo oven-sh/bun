@@ -9,7 +9,7 @@ use crate::{
 use bun_bundler::transpiler::PluginResolver;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 // Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
 // Handled below by `#[cfg(windows)]` on the fn definition itself.

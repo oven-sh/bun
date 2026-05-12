@@ -9,7 +9,7 @@ use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc as _,
 };
-use bun_str::{OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
 use bun_core::Output;
 use bun_jsc::StringJsc as _;
 use bun_http_types::Method::Method;
@@ -381,7 +381,7 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_utf8_url(&self) -> bun_str::ZigStringSlice {
+    pub fn get_utf8_url(&self) -> bun_core::ZigStringSlice {
         self.url.get().to_utf8()
     }
 
@@ -961,7 +961,7 @@ impl Response {
             }
 
             if !str.is_empty() {
-                // PORT NOTE: `bun_str::String.value` is private; use
+                // PORT NOTE: `bun_core::String.value` is private; use
                 // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
                 // `*mut WTFStringImplStruct`. `String` is intentionally
                 // non-`Drop`, so consuming it here is the same as Zig's

@@ -2,7 +2,7 @@ use crate as css;
 use crate::VendorPrefix;
 
 use bun_core;
-use bun_string::strings;
+use bun_core::strings;
 
 /// Target browsers and features to compile.
 #[derive(Debug, Clone, Copy, Default)]

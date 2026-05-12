@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_core::{Error, Output};
-use bun_string::MutableString;
+use bun_core::MutableString;
 
 use crate::{
     CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,

@@ -6,7 +6,7 @@ use bun_paths::{
     WPathBuffer, DELIMITER, MAX_PATH_BYTES, SEP, SEP_STR,
 };
 use bun_paths::resolve_path::{posix_to_platform_in_place, PosixToWinNormalizer};
-use bun_string::{strings, w, WStr, ZStr};
+use bun_core::{strings, w, WStr, ZStr};
 
 #[allow(non_upper_case_globals)]
 mod scope {

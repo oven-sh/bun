@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub struct PercentEncoding;
@@ -102,7 +102,7 @@ impl PercentEncoding {
 // PORT NOTE: `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
-    pub url: bun_string::String,
+    pub url: bun_core::String,
     pub mime_type: &'a [u8],
     pub data: &'a [u8],
     pub is_base64: bool,
@@ -124,7 +124,7 @@ impl<'a> DataURL<'a> {
             .ok_or(bun_core::err!("InvalidDataURL"))? as usize;
 
         let mut parsed = DataURL {
-            url: bun_string::String::empty(),
+            url: bun_core::String::empty(),
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,

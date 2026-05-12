@@ -5,7 +5,7 @@ use crate::VM;
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
 use bun_paths::PathBuffer;
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -79,7 +79,7 @@ pub fn stop_and_write_profile(
         config.json_format.then_some(&mut json_string),
         config.md_format.then_some(&mut text_string),
     );
-    // C++ handed back +1 refs into json_string/text_string. `bun_string::String`
+    // C++ handed back +1 refs into json_string/text_string. `bun_core::String`
     // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()` —
     // the Rust spelling of Zig's `defer json_string.deref(); defer text_string.deref();`.
     let json_string = OwnedString::new(json_string);
@@ -117,7 +117,7 @@ fn write_profile_to_file(
     let mut path_buf_os = OSPathBuffer::uninit();
     #[cfg(windows)]
     let output_path_os =
-        bun_string::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
+        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
     #[cfg(not(windows))]
     let output_path_os = path_buf.slice_z();
 

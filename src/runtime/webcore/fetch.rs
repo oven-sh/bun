@@ -55,7 +55,7 @@ use bun_core::Output;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
 use bun_jsc::{StringJsc as _, SysErrorJsc as _, HTTPHeaderName};
 use bun_sys::FdExt as _;
-use bun_str::{strings, String as BunString, ZigString, ZigStringSlice, Tag as BunStringTag};
+use bun_core::{strings, String as BunString, ZigString, ZigStringSlice, Tag as BunStringTag};
 use bun_paths::{self, PathBuffer};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_types::Method::Method;
@@ -89,8 +89,8 @@ use self::fetch_tasklet::{HTTPRequestBody, FetchOptions};
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.String.hasPrefixComptime` — upstream `bun_str::String` only exposes
-/// `eql_comptime`; prefix matching is in `bun_str::strings::has_prefix_comptime`
+/// `bun.String.hasPrefixComptime` — upstream `bun_core::String` only exposes
+/// `eql_comptime`; prefix matching is in `bun_core::has_prefix_comptime`
 /// (free fn over `&[u8]`). Bridge via the encoding-aware byte view.
 trait FetchBunStringExt {
     fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool;

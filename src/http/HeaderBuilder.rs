@@ -1,5 +1,5 @@
 use bun_alloc::AllocError;
-use bun_string::StringBuilder;
+use bun_core::StringBuilder;
 
 use crate::headers::{api, Entry, EntryList};
 

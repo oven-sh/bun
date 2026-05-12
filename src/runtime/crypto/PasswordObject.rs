@@ -6,11 +6,11 @@ use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
-use bun_string::ZigString;
+use bun_core::ZigString;
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;
-// JSC-side ZigString carries `to_js` (the `bun_string::ZigString` repr-twin
+// JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::ZigStringJsc as _;
@@ -227,7 +227,7 @@ impl AlgorithmValue {
 }
 
 /// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
-/// `bun_string::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
 fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {

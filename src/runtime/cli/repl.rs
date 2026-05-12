@@ -22,7 +22,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_paths::{self as path, PathBuffer};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self as sys, Fd};
 
 // ============================================================================
@@ -1179,7 +1179,7 @@ impl<'a> Repl<'a> {
         if resolved_result.is_object() {
             // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
             // but if it does, propagate as a REPL error.
-            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
+            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);
@@ -1306,7 +1306,7 @@ impl<'a> Repl<'a> {
         // Unwrap the { value: expr } wrapper produced by transform_for_repl
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
+            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);
@@ -1448,7 +1448,7 @@ impl<'a> Repl<'a> {
 
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
-            let maybe_value = match resolved_result.get_own(global, &bun_str::String::static_("value")) {
+            let maybe_value = match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                 Ok(v) => v,
                 Err(err) => {
                     let exc = global.take_exception(err);

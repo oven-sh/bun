@@ -131,7 +131,7 @@ impl BuildMessage {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 4);
-        object.put(global, b"name", bun_string::String::static_str(b"BuildMessage").to_js(global)?);
+        object.put(global, b"name", bun_core::String::static_str(b"BuildMessage").to_js(global)?);
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
         object.put(global, b"level", self.get_level(global)?);

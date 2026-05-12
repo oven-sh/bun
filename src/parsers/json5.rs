@@ -12,7 +12,7 @@
 use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
-// `is_identifier_start/_part` landed in `bun_string::lexer`; route through there.
+// `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
 use bun_str::lexer as identifier;
 use bun_ast::{E, Expr, G};
 use bun_ast::{Loc, Log, Source};

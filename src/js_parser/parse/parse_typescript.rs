@@ -17,7 +17,7 @@ use bun_ast::flags;
 use crate::lexer::{self as js_lexer, T};
 use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
 use bun_ast::op::Level;
-use bun_string::strings;
+use bun_core::strings;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;

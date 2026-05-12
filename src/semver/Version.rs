@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::ExternalString;
 use crate::SlicedString;

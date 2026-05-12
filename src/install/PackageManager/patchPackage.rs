@@ -7,7 +7,7 @@ use bun_core::output::ErrName as _;
 use bun_paths::{PathBuffer, Platform, SEP};
 use bun_paths::resolve_path;
 use bun_paths::platform;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Dir, Fd, FdExt as _, FdDirExt as _};
 
 use crate::{

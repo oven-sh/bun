@@ -19,7 +19,7 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         );
     }
 
-    let error_message: &[u8] = bun_str::slice_to_nul(&outbuf[..]);
+    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
     if error_message.len() == PREFIX.len() {
         // TODO(port): globalThis.ERR(.BORINGSSL, ...) builder — confirm bun_jsc API shape
         return global

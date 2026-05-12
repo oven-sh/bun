@@ -24,6 +24,5 @@ bun_event_loop.workspace = true
 bun_paths.workspace = true
 # bun_spawn is a workspace member but not in [workspace.dependencies] yet.
 bun_spawn = { path = "../spawn" }
-bun_string.workspace = true
 bun_sys.workspace = true
 bun_which.workspace = true

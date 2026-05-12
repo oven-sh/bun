@@ -80,12 +80,12 @@ impl BaselinePosition {
 
         // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
         // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"baseline", true) {
+        if bun_core::eql_case_insensitive_ascii(ident, b"baseline", true) {
             return Ok(BaselinePosition::First);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"first", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"first", true) {
             input.expect_ident_matching(b"baseline")?;
             return Ok(BaselinePosition::First);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"last", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"last", true) {
             input.expect_ident_matching(b"baseline")?;
             return Ok(BaselinePosition::Last);
         } else {
@@ -165,9 +165,9 @@ impl JustifyContent {
         let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifyContent::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifyContent::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -327,9 +327,9 @@ impl JustifySelf {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifySelf::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifySelf::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -490,9 +490,9 @@ impl JustifyItems {
         let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifyItems::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
             Ok(JustifyItems::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -551,25 +551,25 @@ impl LegacyJustify {
         let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"legacy", true) {
+        if bun_core::eql_case_insensitive_ascii(ident, b"legacy", true) {
             let inner_location = input.current_source_location();
             let inner_ident = input.expect_ident_cloned()?;
-            if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"left", true) {
+            if bun_core::eql_case_insensitive_ascii(inner_ident, b"left", true) {
                 return Ok(LegacyJustify::Left);
-            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"right", true) {
+            } else if bun_core::eql_case_insensitive_ascii(inner_ident, b"right", true) {
                 return Ok(LegacyJustify::Right);
-            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"center", true) {
+            } else if bun_core::eql_case_insensitive_ascii(inner_ident, b"center", true) {
                 return Ok(LegacyJustify::Center);
             } else {
                 return Err(inner_location.new_unexpected_token_error(Token::Ident(inner_ident)));
             }
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"left", true) {
             input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Left);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"right", true) {
             input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Right);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"center", true) {
+        } else if bun_core::eql_case_insensitive_ascii(ident, b"center", true) {
             input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Center);
         }

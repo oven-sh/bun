@@ -9,7 +9,7 @@
 //! crate's `schema` module — so the type sits cleanly at this tier.
 
 use crate::schema::api;
-use bun_string::strings;
+use bun_core::strings;
 use std::borrow::Cow;
 
 /// Port of `options.JSX.Runtime` (options.zig:1359 — `pub const Runtime =

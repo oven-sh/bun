@@ -127,7 +127,7 @@ use super::{Flags, VersionFlag};
 
 use core::mem::size_of;
 
-use bun_str::strings;
+use bun_core::strings;
 use bun_simdutf_sys::simdutf;
 
 #[inline]
@@ -184,13 +184,13 @@ enum ExtensionType {
 
 // Zig used `std.StaticStringMap` keyed by the UTF-16LE *byte* reinterpretation of
 // each extension (via `wU8`). Here we match directly on the `&[u16]` extension
-// using `bun_str::w!` literals — semantically identical, drops the byte cast.
+// using `bun_core::w!` literals — semantically identical, drops the byte cast.
 // PERF(port): was comptime StaticStringMap (perfect hash) — profile in Phase B
 fn bun_extensions_get(ext: &[u16]) -> Option<ExtensionType> {
     use ExtensionType::*;
     macro_rules! w {
         ($s:literal) => {
-            bun_str::w!($s)
+            bun_core::w!($s)
         };
     }
     match ext {

@@ -24,7 +24,7 @@ use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value 
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_jsc::AbortSignalRef;
 use super::response::HeadersRef;
-use bun_str::{strings, OwnedStringCell, String as BunString, ZigString};
+use bun_core::{strings, OwnedStringCell, String as BunString, ZigString};
 use bun_uws as uws;
 use bun_jsc::StringJsc as _;
 use bun_http_jsc::method_jsc::MethodJsc as _;
@@ -82,7 +82,7 @@ const _: () = {
 /// `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
-    pub url: bun_string::OwnedStringCell,
+    pub url: bun_core::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
     // PORT NOTE: Zig `?*AbortSignal` with manual `ref()`/`unref()`. AbortSignal
@@ -444,12 +444,12 @@ impl Request {
         Ok(None)
     }
 
-    pub fn get_content_type(&self) -> JsResult<Option<bun_str::ZigStringSlice>> {
+    pub fn get_content_type(&self) -> JsResult<Option<bun_core::ZigStringSlice>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(value)));
+                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(value)));
             }
         }
 
@@ -462,7 +462,7 @@ impl Request {
         if let BodyValue::Blob(blob) = self.body_value() {
             let ct = blob.content_type_slice();
             if !ct.is_empty() {
-                return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(ct)));
+                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(ct)));
             }
         }
 

@@ -12,7 +12,7 @@ use bun_uws::{self as uws, us_bun_verify_error_t};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_boringssl_sys as boringssl;
 use bun_paths::PathBuffer;
-use bun_str::ZStr;
+use bun_core::ZStr;
 use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{WindowsNamedPipe, Handlers as NamedPipeHandlers};
 use crate::api::{TCPSocket, TLSSocket};

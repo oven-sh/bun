@@ -10,7 +10,7 @@ pub trait HostedGitInfoJsc {
 
 impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue> {
-        use bun_string::String as BunString;
+        use bun_core::String as BunString;
         let obj = JSValue::create_empty_object(go, 6);
         obj.put(
             go,
@@ -93,7 +93,7 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     };
 
     // `parsed.url` is `Box<WhatwgUrl>` (C++-owned WTF::URL); `href()` yields a
-    // `bun_string::String`. `defer parsed.url.deinit()` deleted — Box Drop frees.
+    // `bun_core::String`. `defer parsed.url.deinit()` deleted — Box Drop frees.
     parsed.url.href().to_js(go)
 }
 

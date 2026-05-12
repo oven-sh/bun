@@ -2,7 +2,7 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::encode_length_int;
 use super::packet_header::PacketHeader;
 use crate::mysql::mysql_types::{MySQLInt32, MySQLInt64};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 bun_core::declare_scope!(NewWriter, hidden);
 

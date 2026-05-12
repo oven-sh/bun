@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 use bun_url::PercentEncoding;
 
 // TODO(port): lifetime — every `&'static [u8]` field below actually borrows from

@@ -1,14 +1,14 @@
 use bun_alloc::AllocError;
 
-use crate::strings::{
+use crate::string::strings::{
     self, utf16_codepoint, AsciiU16Vector, AsciiVector, ASCII_U16_VECTOR_SIZE, ASCII_VECTOR_SIZE,
 };
-use crate::w;
+use crate::string::w;
 
 // TODO(port): Environment.enableSIMD — Zig gates SIMD paths behind a comptime
 // build flag. Mirror with a cargo feature or a `const ENABLE_SIMD: bool` in
-// `crate::strings`. For now reference it as a const so Phase B can wire it.
-use crate::strings::ENABLE_SIMD;
+// `crate::string::strings`. For now reference it as a const so Phase B can wire it.
+use crate::string::strings::ENABLE_SIMD;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Escaped<T>

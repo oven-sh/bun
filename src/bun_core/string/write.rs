@@ -4,17 +4,17 @@
 //! DAG: `bun_io → bun_string` already exists, and `bun_string` already depends
 //! on `bun_core` (error type), `bun_alloc` (`ArenaVec`), and `bun_collections`
 //! (`BoundedArray`). The trait body itself was pushed one level lower into
-//! `bun_core::io` (that crate has zero upward deps) so even `bun_collections`
+//! `crate::io` (that crate has zero upward deps) so even `bun_collections`
 //! can implement it; this module re-exports it verbatim and adds the
 //! big-endian integer helper. `bun_io` re-exports this module
-//! (`pub use bun_string::write::*;`) and layers its sink types
+//! (`pub use bun_core::write::*;`) and layers its sink types
 //! (`FixedBufferStream`, `BufWriter`, `FmtAdapter`, `DiscardingWriter`) on top,
 //! so the existing `bun_io::Write` importers are unaffected.
 
-/// `Result<T>` over `bun_core::Error` so `?` composes everywhere.
-pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
+/// `Result<T>` over `crate::Error` so `?` composes everywhere.
+pub type Result<T = ()> = core::result::Result<T, crate::Error>;
 
-pub use bun_core::io::{IntLe, Write};
+pub use crate::io::{IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // IntBe — big-endian (network-order) integer encoding helper

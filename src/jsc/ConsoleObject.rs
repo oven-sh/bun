@@ -19,7 +19,7 @@ use crate::{
     ZigException, ZigString,
 };
 use crate::virtual_machine::VirtualMachine;
-use bun_string::{self as strings, OwnedString, String as BunString};
+use bun_core::{strings, OwnedString, String as BunString};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
@@ -1146,7 +1146,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
-    let mut source_code_slice: Option<bun_string::ZigStringSlice> = None;
+    let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
     let err = ZigString::init(b"trace output").to_error_instance(global);
     {
@@ -5284,7 +5284,7 @@ pub mod formatter {
 
             if self.format_buffer_as_text
                 && js_type == jsc::JSType::Uint8Array
-                && bun_string::immutable::is_valid_utf8(slice)
+                && bun_core::immutable::is_valid_utf8(slice)
             {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());

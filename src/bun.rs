@@ -146,7 +146,7 @@ pub use bun_crash_handler::handle_error_return_trace as handleErrorReturnTrace;
 pub use bun_crash_handler::handle_oom::handle_oom as handleOom;
 
 pub use bun_jsc::uuid as UUID;
-pub use bun_str::ZigString;
+pub use bun_core::ZigString;
 // TODO(port): move to *_jsc — `bun_js` re-exports
 pub use crate::bun_js::{jsc, webcore, api};
 pub mod bun_js {
@@ -391,7 +391,7 @@ pub fn free_all_threadlocal_buffers() {
 //   `bun.cast(*T, p)`       → `p.cast::<T>()` / `p as *mut T`
 //   `bun.len(p)`            → `slice.len()` / `bun_core::ffi::cstr(p).to_bytes().len()`
 //   `bun.span(p)`           → `bun_core::ffi::cstr(p).to_bytes()` / `core::slice::from_raw_parts`
-//   `bun.sliceTo(p, 0)`     → `bun_str::slice_to_nul(p)` / `bun_core::ffi::cstr(p)`
+//   `bun.sliceTo(p, 0)`     → `bun_core::slice_to_nul(p)` / `bun_core::ffi::cstr(p)`
 // TODO(port): comptime reflection — replace 22 callers with idioms above
 
 #[inline]
@@ -548,7 +548,7 @@ pub fn slice_in_buffer<'a>(stable: &'a [u8], value: &'a [u8]) -> &'a [u8] {
     if bun_alloc::is_slice_in_buffer(stable, value) {
         return value;
     }
-    if let Some(index) = bun_str::strings::index_of(stable, value) {
+    if let Some(index) = bun_core::strings::index_of(stable, value) {
         return &stable[index..][..value.len()];
     }
     value
@@ -575,7 +575,7 @@ pub enum OpenMode {
     ReadWrite,
 }
 
-pub fn open_file_z(path_z: &bun_str::ZStr, mode: OpenMode) -> Result<bun_sys::File, bun_core::Error> {
+pub fn open_file_z(path_z: &bun_core::ZStr, mode: OpenMode) -> Result<bun_sys::File, bun_core::Error> {
     let mut flags: i32 = 0;
     match mode {
         OpenMode::ReadOnly => flags |= O::RDONLY,
@@ -606,7 +606,7 @@ pub fn open_file(path_: &[u8], mode: OpenMode) -> Result<bun_sys::File, bun_core
     }
 }
 
-pub fn open_dir(dir: bun_sys::Dir, path_: &bun_str::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
+pub fn open_dir(dir: bun_sys::Dir, path_: &bun_core::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
     #[cfg(windows)]
     {
         let res = sys::open_dir_at_windows_a(
@@ -633,7 +633,7 @@ pub fn open_dir(dir: bun_sys::Dir, path_: &bun_str::ZStr) -> Result<bun_sys::Dir
 #[cfg(windows)]
 pub fn open_dir_no_renaming_or_deleting_windows(
     dir: FD,
-    path_: &bun_str::ZStr,
+    path_: &bun_core::ZStr,
 ) -> Result<bun_sys::Dir, bun_core::Error> {
     let res = sys::open_dir_at_windows_a(
         dir,
@@ -766,7 +766,7 @@ impl StringArrayHashMapContext {
         bun_wyhash::hash(s) as u32
     }
     pub fn eql(&self, a: &[u8], b: &[u8], _: usize) -> bool {
-        bun_str::strings::eql_long(a, b, true)
+        bun_core::strings::eql_long(a, b, true)
     }
     pub fn pre(input: &[u8]) -> StringArrayPrehashed<'_> {
         StringArrayPrehashed { value: Self.hash(input), input }
@@ -784,7 +784,7 @@ impl<'a> StringArrayPrehashed<'a> {
         bun_wyhash::hash(s) as u32
     }
     pub fn eql(&self, a: &[u8], b: &[u8], _: usize) -> bool {
-        bun_str::strings::eql_long(a, b, true)
+        bun_core::strings::eql_long(a, b, true)
     }
 }
 
@@ -869,7 +869,7 @@ fn get_fd_path_via_cwd(fd: bun_sys::RawFd, buf: &mut PathBuffer) -> Result<&mut 
         }
     }
 
-    let prev_fd = bun_sys::openat_z(FD::cwd().native(), bun_str::zstr!("."), O::DIRECTORY, 0)?;
+    let prev_fd = bun_sys::openat_z(FD::cwd().native(), bun_core::zstr!("."), O::DIRECTORY, 0)?;
     let mut guard = CwdRestore { prev_fd, restore: false };
     bun_sys::fchdir(fd)?;
     guard.restore = true;
@@ -878,10 +878,10 @@ fn get_fd_path_via_cwd(fd: bun_sys::RawFd, buf: &mut PathBuffer) -> Result<&mut 
 
 pub use bun_sys::getcwd;
 
-pub fn getcwd_alloc() -> Result<Box<bun_str::ZStr>, bun_core::Error> {
+pub fn getcwd_alloc() -> Result<Box<bun_core::ZStr>, bun_core::Error> {
     let mut temp = PathBuffer::uninit();
     let temp_slice = getcwd(&mut temp)?;
-    Ok(bun_str::ZStr::from_bytes(temp_slice))
+    Ok(bun_core::ZStr::from_bytes(temp_slice))
 }
 
 /// TODO: move to bun.sys and add a method onto FD
@@ -891,7 +891,7 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
     {
         let mut wide_buf = WPathBuffer::uninit();
         let wide_slice = bun_sys::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), &mut wide_buf[..])?;
-        let res = bun_str::strings::copy_utf16_into_utf8(&mut buf[..], wide_slice);
+        let res = bun_core::strings::copy_utf16_into_utf8(&mut buf[..], wide_slice);
         return Ok(&mut buf[..res.written]);
     }
 
@@ -928,11 +928,11 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
 }
 
 /// TODO: move to bun.sys and add a method onto FD
-pub fn get_fd_path_z<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut bun_str::ZStr, bun_core::Error> {
+pub fn get_fd_path_z<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut bun_core::ZStr, bun_core::Error> {
     let len = get_fd_path(fd, buf)?.len();
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
-    Ok(unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
+    Ok(unsafe { bun_core::ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
 }
 
 /// TODO: move to bun.sys and add a method onto FD
@@ -946,7 +946,7 @@ pub fn get_fd_path_w<'a>(_fd: FD, _buf: &'a mut WPathBuffer) -> Result<&'a mut [
 }
 
 // lenSliceTo / SliceTo / sliceTo are comptime-reflection helpers; see comment
-// above `slice_to`. Callers use `bun_str::slice_to_nul` or `slice_to` directly.
+// above `slice_to`. Callers use `bun_core::slice_to_nul` or `slice_to` directly.
 // TODO(port): comptime reflection — sliceTo type machinery dropped
 
 pub fn concat<T: Copy>(dest: &mut [T], src: &[&[T]]) {
@@ -1054,7 +1054,7 @@ impl StringMapExt for StringMap {
 // namespace stays addressable.
 pub use bun_collections::{HiveRef, hive_array::HiveAllocator};
 
-pub fn open_file_for_path(file_path: &bun_str::ZStr) -> Result<bun_sys::File, bun_core::Error> {
+pub fn open_file_for_path(file_path: &bun_core::ZStr) -> Result<bun_sys::File, bun_core::Error> {
     #[cfg(windows)]
     {
         return bun_sys::Dir::cwd().open_file_z(file_path, Default::default());
@@ -1071,7 +1071,7 @@ pub fn open_file_for_path(file_path: &bun_str::ZStr) -> Result<bun_sys::File, bu
     }
 }
 
-pub fn open_dir_for_path(file_path: &bun_str::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
+pub fn open_dir_for_path(file_path: &bun_core::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
     #[cfg(windows)]
     {
         return bun_sys::Dir::cwd().open_dir_z(file_path, Default::default());
@@ -1093,22 +1093,22 @@ pub type Generation = u16;
 pub use schema::api::StringPointer;
 
 // ─── string re-exports ────────────────────────────────────────────────────────
-pub use bun_str as string;
-pub use bun_str::String;
-pub use bun_str::StringJoiner;
-pub use bun_str::SliceWithUnderlyingString;
-pub use bun_str::PathString;
-pub use bun_str::HashedString;
-pub use bun_str::MutableString;
-pub use bun_str::StringBuilder;
+pub use bun_core::string;
+pub use bun_core::String;
+pub use bun_core::StringJoiner;
+pub use bun_core::SliceWithUnderlyingString;
+pub use bun_core::PathString;
+pub use bun_core::HashedString;
+pub use bun_core::MutableString;
+pub use bun_core::StringBuilder;
 /// Utilities for immutable strings
-pub use bun_str::strings;
-pub use bun_str::strings::CodePoint;
+pub use bun_core::strings;
+pub use bun_core::strings::CodePoint;
 
 pub mod WTF {
     /// The String type from WebKit's WTF library.
-    pub use bun_str::WTFStringImpl as StringImpl;
-    pub use bun_str::WTFStringImplStruct as _StringImplStruct;
+    pub use bun_core::WTFStringImpl as StringImpl;
+    pub use bun_core::WTFStringImplStruct as _StringImplStruct;
 }
 
 bun_output::declare_scope!(TODO, visible);
@@ -1174,11 +1174,11 @@ pub type StatFS = bun_sys::windows::libuv::uv_statfs_t;
 // Initialized once in `init_argv()` during single-threaded startup, then read
 // freely. `RacyCell` (not `OnceLock`) because the BUN_OPTIONS path mutates it
 // twice (set, take, set again) before the program goes multi-threaded.
-static ARGV: bun_core::RacyCell<Vec<Box<bun_str::ZStr>>> = bun_core::RacyCell::new(Vec::new());
+static ARGV: bun_core::RacyCell<Vec<Box<bun_core::ZStr>>> = bun_core::RacyCell::new(Vec::new());
 /// Number of arguments injected by BUN_OPTIONS environment variable.
 pub use bun_core::{bun_options_argc, set_bun_options_argc};
 
-pub fn argv() -> &'static [Box<bun_str::ZStr>] {
+pub fn argv() -> &'static [Box<bun_core::ZStr>] {
     // SAFETY: ARGV is initialized once in init_argv() during single-threaded
     // startup and never resized after.
     unsafe { &*ARGV.get() }
@@ -1191,11 +1191,11 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
     #[cfg(unix)]
     {
         let os_argv = bun_sys::os_argv();
-        let mut out: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(os_argv.len());
+        let mut out: Vec<Box<bun_core::ZStr>> = Vec::with_capacity(os_argv.len());
         for &p in os_argv {
             // SAFETY: os argv entries are NUL-terminated
             let s = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
-            out.push(bun_str::ZStr::from_bytes(s));
+            out.push(bun_core::ZStr::from_bytes(s));
         }
         // SAFETY: single-threaded init
         unsafe { *ARGV.get() = out };
@@ -1216,15 +1216,15 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
         }
         let argvu16 =
             unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
-        let mut out_argv: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(argvu16.len());
+        let mut out_argv: Vec<Box<bun_core::ZStr>> = Vec::with_capacity(argvu16.len());
         let mut string_builder = StringBuilder::default();
         for &argraw in argvu16 {
-            let arg = unsafe { bun_str::WStr::from_ptr(argraw) };
+            let arg = unsafe { bun_core::WStr::from_ptr(argraw) };
             string_builder.count16_z(arg);
         }
         string_builder.allocate()?;
         for &argraw in argvu16 {
-            let arg = unsafe { bun_str::WStr::from_ptr(argraw) };
+            let arg = unsafe { bun_core::WStr::from_ptr(argraw) };
             let s = string_builder
                 .append16(arg)
                 .unwrap_or_else(|| panic!("Failed to allocate memory for argv"));
@@ -1240,7 +1240,7 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             let argv = &mut *ARGV.get();
             let original_len = argv.len();
             let mut argv_list = core::mem::take(argv);
-            append_options_env::<Box<bun_str::ZStr>>(opts, &mut argv_list);
+            append_options_env::<Box<bun_core::ZStr>>(opts, &mut argv_list);
             *argv = argv_list;
             set_bun_options_argc(argv.len() - original_len);
         }
@@ -1307,7 +1307,7 @@ pub fn make_path(dir: bun_sys::Dir, sub_path: &[u8]) -> Result<(), bun_core::Err
                 path_buf2[..component.path.len()].copy_from_slice(component.path);
                 path_buf2[component.path.len()] = 0;
                 // SAFETY: NUL written above
-                let path_to_use = bun_str::ZStr::from_buf(&path_buf2[..], component.path.len());
+                let path_to_use = bun_core::ZStr::from_buf(&path_buf2[..], component.path.len());
                 let result = sys::lstat(path_to_use).unwrap()?;
                 let is_dir = S::ISDIR(result.mode as u32);
                 // dangling symlink
@@ -1368,7 +1368,7 @@ macro_rules! os_path_literal {
         #[cfg(windows)]
         {
             // TODO(port): comptime UTF-16 path literal with sep rewrite
-            bun_str::w!(const_format::str_replace!($lit, "/", "\\"))
+            bun_core::w!(const_format::str_replace!($lit, "/", "\\"))
         }
     }};
 }
@@ -1846,7 +1846,7 @@ pub type mach_port = u32;
 pub use bun_cpp_sys as cpp;
 
 pub fn contains<T: PartialEq + Copy>(item: T, list: &Vec<T>) -> bool {
-    // TODO(port): u8 specialization → bun_str::strings::contains_char
+    // TODO(port): u8 specialization → bun_core::strings::contains_char
     list.iter().any(|&x| x == item)
 }
 

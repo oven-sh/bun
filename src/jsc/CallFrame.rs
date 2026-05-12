@@ -5,7 +5,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};
 use bun_collections::IntegerBitSet;
-use bun_string::ZStr;
+use bun_core::ZStr;
 
 #[allow(deprecated)]
 use crate::c_api::JSValueRef;
@@ -170,7 +170,7 @@ impl CallFrame {
     }
 
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
-        let mut str = bun_string::String::default();
+        let mut str = bun_core::String::default();
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
         Bun__CallFrame__getCallerSrcLoc(self, global_this, &mut str, &mut line, &mut column);
@@ -254,7 +254,7 @@ impl<const MAX: usize> Arguments<MAX> {
 }
 
 pub struct CallerSrcLoc {
-    pub str: bun_string::String,
+    pub str: bun_core::String,
     pub line: c_uint,
     pub column: c_uint,
 }
@@ -421,7 +421,7 @@ unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
         global: &JSGlobalObject,
-        out_str: &mut bun_string::String,
+        out_str: &mut bun_core::String,
         out_line: &mut c_uint,
         out_column: &mut c_uint,
     );

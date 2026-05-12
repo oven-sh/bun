@@ -11,7 +11,8 @@ use bun_core::{env_var, fmt as bun_fmt, FeatureFlags, Generation, Output, ZStr};
 use bun_paths::{resolve_path as path_handler, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_paths::resolve_path::{is_sep_any, last_index_of_sep, platform};
 use bun_collections::VecExt as _;
-use bun_string::{strings, MutableString, PathString};
+use bun_core::{MutableString, PathString};
+use bun_paths::strings;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -22,7 +23,7 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 
 // ── BOM ──────────────────────────────────────────────────────────────────────
 // Port of `bun.strings.BOM` from `src/string/immutable.zig`. The Rust port
-// lives in `bun_string::immutable::unicode_draft` but that module is private
+// lives in `bun_core::immutable::unicode_draft` but that module is private
 // (`mod unicode_draft` — no `pub use` of `BOM` yet); the resolver needs it for
 // `read_file_with_handle_and_allocator` so the enum is re-ported here. The
 // UTF-16→UTF-8 transcode goes through `strings::to_utf8_alloc` (re-exported

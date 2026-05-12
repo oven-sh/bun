@@ -8,7 +8,7 @@ use bun_core::fmt::quote;
 use bun_core::{err, Error};
 use bun_ast::Loc;
 use bun_paths::{self as paths, PathBuffer};
-use bun_string::{strings, PathString, String as BunString};
+use bun_core::{immutable as strings, PathString, String as BunString};
 use bun_wyhash::hash;
 
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -346,7 +346,7 @@ pub fn write_output_files_to_disk(
                     ));
                     source_provider_url.ref_();
                     // `defer source_provider_url.deref()` handled by Drop on OwnedString.
-                    let mut source_provider_url = bun_string::OwnedString::new(source_provider_url);
+                    let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,

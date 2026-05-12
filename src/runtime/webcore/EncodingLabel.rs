@@ -1,4 +1,4 @@
-use bun_str::strings;
+use bun_core::strings;
 
 /// https://encoding.spec.whatwg.org/encodings.json
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

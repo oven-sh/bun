@@ -28,7 +28,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ast::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
-use bun_str::{self as str, strings, OwnedString, String as BunString, ZStr};
+use bun_core::{self as str, strings, OwnedString, String as BunString, ZStr};
 use bun_jsc::StringJsc as _;
 use bun_sys as sys;
 use bun_watcher::WatchItemColumns as _;
@@ -5195,8 +5195,8 @@ pub fn dump_bundle_for_chunk(
     let rel_path = paths::resolve_path::relative_buf_z(&mut a, cwd, key);
     let from = const_format::concatcp!("..", paths::SEP_STR);
     let to = const_format::concatcp!("_.._", paths::SEP_STR);
-    let size = bun_str::strings::replacement_size(rel_path, from.as_bytes(), to.as_bytes());
-    let _ = bun_str::strings::replace(rel_path, from.as_bytes(), to.as_bytes(), &mut b);
+    let size = bun_core::replacement_size(rel_path, from.as_bytes(), to.as_bytes());
+    let _ = bun_core::replace(rel_path, from.as_bytes(), to.as_bytes(), &mut b);
     let rel_path_escaped = &b[..size];
     if let Err(err) = dump_bundle(
         dump_dir,
@@ -5877,7 +5877,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
             "incremental-graph-crash-dump.{}.html\0",
             bun_core::time::timestamp()
         );
-        bun_str::slice_to_nul(&filepath_buf)
+        bun_core::slice_to_nul(&filepath_buf)
     };
     // TODO(port): std.fs.cwd().createFileZ — use bun_sys
     let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {

@@ -15,7 +15,7 @@ use bun_collections::VecExt;
 use bun_core::Output;
 use bun_ast::{Loc, Log, Range, Source};
 use bun_ast::{import_record, ImportKind, ImportRecord};
-use bun_string::{strings, MutableString};
+use bun_core::{strings, MutableString};
 
 use bun_ast as js_ast;
 use bun_ast::ast_result::{NamedExports, NamedImports, TopLevelSymbolToParts};

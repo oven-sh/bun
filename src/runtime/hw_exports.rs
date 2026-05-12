@@ -124,9 +124,9 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
         // Zig: `specifier.toBunString(this.global) catch @panic("unexpected exception")`
-        // followed by `defer specifier_str.deref()`. `bun_string::String` is
+        // followed by `defer specifier_str.deref()`. `bun_core::String` is
         // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
-        let specifier_str = bun_string::OwnedString::new(
+        let specifier_str = bun_core::OwnedString::new(
             bun_jsc::bun_string_jsc::from_js(specifier, global)
                 .expect("unexpected exception"),
         );
@@ -335,7 +335,7 @@ pub fn on_reject_entry_point_result(
 #[unsafe(no_mangle)]
 pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
-    arg_str: *const bun_string::String,
+    arg_str: *const bun_core::String,
     out: *mut i32,
 ) -> bool {
     // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
@@ -349,13 +349,13 @@ pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 // HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
 pub fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
-    arg_input: *const bun_string::String,
+    arg_input: *const bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
     // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals (see
     // GeneratedBindings.zig:203 call site).
     // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle,
-    // **no** refcount bump). `bun_string::String` is `Copy` with no `Drop`, so
+    // **no** refcount bump). `bun_core::String` is `Copy` with no `Drop`, so
     // a plain deref matches that exactly; `braces` only borrows the bytes via
     // `to_utf8()` and never derefs the handle.
     let input = unsafe { *arg_input };
@@ -387,9 +387,9 @@ pub fn bindgen_bunobject_dispatch_gc(
 // HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
 pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
-    arg_code: *const bun_string::String,
+    arg_code: *const bun_core::String,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
-    out: *mut bun_string::String,
+    out: *mut bun_core::String,
 ) -> bool {
     // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
     // (see GeneratedBindings.cpp call site).
@@ -533,7 +533,7 @@ pub fn bindgen_node_os_dispatch_get_priority(
 // HOST_EXPORT(bindgen_Node_os_dispatchHomedir1, c)
 pub fn bindgen_node_os_dispatch_homedir(
     global: &JSGlobalObject,
-    out: *mut bun_string::String,
+    out: *mut bun_core::String,
 ) -> bool {
     bindgen_out(global, out, node_os::homedir(global))
 }
@@ -556,7 +556,7 @@ pub fn bindgen_node_os_network_interfaces(global: &JSGlobalObject) -> bun_jsc::J
 #[unsafe(no_mangle)]
 pub extern "C" fn bindgen_Node_os_dispatchRelease1(
     _global: *mut JSGlobalObject,
-    out: *mut bun_string::String,
+    out: *mut bun_core::String,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack out-param. `release()` is infallible.
     unsafe { out.write(node_os::release()) };
@@ -592,7 +592,7 @@ pub fn bindgen_node_os_dispatch_user_info(
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)
 pub fn bindgen_node_os_dispatch_version(
     global: &JSGlobalObject,
-    out: *mut bun_string::String,
+    out: *mut bun_core::String,
 ) -> bool {
     bindgen_out(global, out, node_os::version())
 }
@@ -647,13 +647,13 @@ bun_jsc::jsc_abi_extern! {
 
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
 pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
-    let name = bun_string::ZigString::init_utf8(b"fmtString");
+    let name = bun_core::ZigString::init_utf8(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(global, Some(&name), 3, bindgen_Fmt_jsc_jsFmtString, false, None)
 }
 
 // HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)
 pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
-    let name = bun_string::ZigString::init_utf8(b"getDeinitCountForTesting");
+    let name = bun_core::ZigString::init_utf8(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),

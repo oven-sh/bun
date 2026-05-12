@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 use bun_core::Output;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
-use bun_string::strings;
+use bun_core::strings;
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
 
@@ -47,7 +47,7 @@ mod api {
 
 type CoreError = bun_core::Error;
 
-use bun_string::{HashedString, PathString};
+use bun_core::{HashedString, PathString};
 
 /// Every `PathString` stored on a [`Route`] wraps bytes interned in
 /// `FileSystem::dirname_store()` (process-lifetime arena — `append` returns
@@ -148,7 +148,7 @@ impl RouteConfig {
     }
 
     pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
-        use bun_string::strings::{trim_left, trim_right};
+        use bun_core::strings::{trim_left, trim_right};
 
         let mut router = Self::zero();
 
@@ -1227,7 +1227,7 @@ impl Route {
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_string::PathString::init(abs_path_str));
+                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
             }
 
             #[cfg(windows)]

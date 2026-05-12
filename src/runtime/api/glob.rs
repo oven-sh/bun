@@ -10,7 +10,7 @@ use bun_jsc::{
 use bun_jsc::bun_string_jsc;
 use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};
 use bun_paths::resolve_path::join_string_buf;
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the

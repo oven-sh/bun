@@ -1,7 +1,7 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
 use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::data::Data;
-use bun_string::strings;
+use bun_core::strings;
 
 // TODO(port): lifetime — `offset`/`message_start` are `*usize` fields not present in
 // LIFETIMES.tsv; classified here as BORROW_PARAM by inspection (struct is named

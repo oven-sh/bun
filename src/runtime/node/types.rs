@@ -1,10 +1,11 @@
+use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
 use bun_paths::{self as path_handler, PathBuffer, WPathBuffer, OSPathBuffer, OSPathSliceZ, MAX_PATH_BYTES};
-use bun_str::{self, strings, ZStr, WStr, ZigString};
-use bun_str::zig_string::Slice as ZigStringSlice;
+use bun_core::{ZStr, WStr, ZigString};
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_sys::{self, Fd, Mode, O};
 use bun_core::{self, fmt as bun_fmt};
 
@@ -12,7 +13,7 @@ use crate::webcore::{Blob, Request, Response};
 use crate::webcore::BlobExt as _;
 use crate::node::util::validators;
 
-pub use bun_str::SliceWithUnderlyingString;
+pub use bun_core::SliceWithUnderlyingString;
 
 pub use jsc::MarkedArrayBuffer as Buffer;
 
@@ -261,7 +262,7 @@ impl Drop for StringOrBuffer {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
                 // `SliceWithUnderlyingString` has no `Drop` (its `underlying:
-                // bun_str::String` is `Copy`); take ownership and consume via
+                // bun_core::String` is `Copy`); take ownership and consume via
                 // `deinit()` so the WTF refcount is released.
                 core::mem::take(str).deinit();
             }
@@ -333,7 +334,7 @@ impl StringOrBuffer {
             return Ok(bytes.to_vec());
         }
 
-        let str = bun_str::String::from_js(value, global_object)?;
+        let str = bun_core::String::from_js(value, global_object)?;
         scopeguard::defer! { str.deref(); }
 
         let result = str.to_owned_slice();
@@ -390,7 +391,7 @@ impl StringOrBuffer {
                 // PORT NOTE: reshaped for borrowck — `scopeguard::defer!` would borrow
                 // `str` immutably for the whole scope, blocking `to_slice(&mut self)`.
                 let mut str = scopeguard::guard(
-                    bun_str::String::from_js(value, global)?,
+                    bun_core::String::from_js(value, global)?,
                     |s| s.deref(),
                 );
                 if is_async {
@@ -468,7 +469,7 @@ impl StringOrBuffer {
         }
 
         if value.is_string() {
-            let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global)?);
+            let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
             if str.is_empty() {
                 return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
             }
@@ -545,7 +546,7 @@ pub enum Encoding {
 // `Encoding::from` below. The case-insensitive entry points lowercase into a
 // stack buffer first.
 
-impl From<Encoding> for bun_str::NodeEncoding {
+impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
         // Both enums are `#[repr(u8)]` with identical discriminant order
         // (Utf8, Ucs2, Utf16le, Latin1, Ascii, Base64, Base64url, Hex, Buffer).
@@ -563,21 +564,21 @@ impl From<Encoding> for bun_str::NodeEncoding {
     }
 }
 
-impl From<bun_str::NodeEncoding> for Encoding {
-    fn from(e: bun_str::NodeEncoding) -> Self {
+impl From<bun_core::NodeEncoding> for Encoding {
+    fn from(e: bun_core::NodeEncoding) -> Self {
         // Reverse of the impl above — both enums are `#[repr(u8)]` with identical
         // discriminant order; required so `webcore::encoding::{to_string,to_bun_string}`'s
-        // `impl Into<Encoding>` bound accepts `bun_str::NodeEncoding` directly.
+        // `impl Into<Encoding>` bound accepts `bun_core::NodeEncoding` directly.
         match e {
-            bun_str::NodeEncoding::Utf8 => Self::Utf8,
-            bun_str::NodeEncoding::Ucs2 => Self::Ucs2,
-            bun_str::NodeEncoding::Utf16le => Self::Utf16le,
-            bun_str::NodeEncoding::Latin1 => Self::Latin1,
-            bun_str::NodeEncoding::Ascii => Self::Ascii,
-            bun_str::NodeEncoding::Base64 => Self::Base64,
-            bun_str::NodeEncoding::Base64url => Self::Base64url,
-            bun_str::NodeEncoding::Hex => Self::Hex,
-            bun_str::NodeEncoding::Buffer => Self::Buffer,
+            bun_core::NodeEncoding::Utf8 => Self::Utf8,
+            bun_core::NodeEncoding::Ucs2 => Self::Ucs2,
+            bun_core::NodeEncoding::Utf16le => Self::Utf16le,
+            bun_core::NodeEncoding::Latin1 => Self::Latin1,
+            bun_core::NodeEncoding::Ascii => Self::Ascii,
+            bun_core::NodeEncoding::Base64 => Self::Base64,
+            bun_core::NodeEncoding::Base64url => Self::Base64url,
+            bun_core::NodeEncoding::Hex => Self::Hex,
+            bun_core::NodeEncoding::Buffer => Self::Buffer,
         }
     }
 }
@@ -600,7 +601,7 @@ impl Encoding {
         if len < 3 || len > 9 {
             return None;
         }
-        let (buf, _) = bun_core::strings::ascii_lowercase_buf::<9>(slice)?;
+        let (buf, _) = bun_core::ascii_lowercase_buf::<9>(slice)?;
         let s = &buf[..len];
         match len {
             3 if s == b"hex" => Some(Encoding::Hex),
@@ -634,7 +635,7 @@ impl Encoding {
     /// narrows UTF-16/Latin-1 code units into a stack buffer (rejecting any
     /// non-ASCII unit — no encoding name contains one) and dispatches to
     /// [`Encoding::from`].
-    pub fn from_bun_string(s: &bun_str::String) -> Option<Encoding> {
+    pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
         // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
         // safe — no encoding name is non-ASCII, downstream match would miss anyway.
         let mut buf = [0u8; 9];
@@ -647,7 +648,7 @@ impl Encoding {
         // PORT NOTE: ComptimeStringMap::fromJSCaseInsensitive — emulated via
         // `from_bun_string` (stack-buffer narrow + length-gated match; no
         // `to_utf8()` allocation needed for a ≤9-byte ASCII key).
-        let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global)?);
+        let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
         Ok(Self::from_bun_string(&str))
     }
 
@@ -671,7 +672,7 @@ impl Encoding {
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Option<Encoding>> {
-        let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global_object)?);
+        let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global_object)?);
         if str.is_empty() {
             return Ok(Some(default));
         }
@@ -729,7 +730,7 @@ impl Encoding {
                 let mut base64_buf =
                     vec![0u8; bun_core::base64::standard_encoder_calc_size(max_size * 4)];
                 let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
-                let (mut encoded, bytes) = bun_str::String::create_uninitialized_latin1(encoded_len);
+                let (mut encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
                 bytes.copy_from_slice(&base64_buf[..encoded_len]);
                 encoded.transfer_to_js(global_object)
             }
@@ -743,7 +744,7 @@ impl Encoding {
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
                 let (mut encoded, bytes) =
-                    bun_str::String::create_uninitialized_latin1(input.len() * 2);
+                    bun_core::String::create_uninitialized_latin1(input.len() * 2);
                 if encoded.is_dead() {
                     // WTF OOM — match webcore::encoding pattern; transfer the
                     // Dead string (becomes JS empty) rather than indexing a
@@ -784,7 +785,7 @@ pub fn js_assert_encoding_valid(global: &JSGlobalObject, call_frame: &CallFrame)
 
 #[allow(dead_code)]
 pub enum PathOrBuffer {
-    Path(bun_str::PathString),
+    Path(bun_core::PathString),
     Buffer(Buffer),
 }
 
@@ -880,7 +881,7 @@ pub trait PathLikeExt {
     ) -> JsResult<Option<PathLike>> where Self: Sized;
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_str::String,
+        str: &mut bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> where Self: Sized;
 }
@@ -1068,7 +1069,7 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let mut str = bun_str::OwnedString::new(arg.to_bun_string(ctx)?);
+                let mut str = bun_core::OwnedString::new(arg.to_bun_string(ctx)?);
 
                 arguments.eat();
 
@@ -1077,7 +1078,7 @@ impl PathLikeExt for PathLike {
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
                     use jsc::dom_url::ToFileSystemPathError;
-                    let mut str = bun_str::OwnedString::new(match domurl.file_system_path() {
+                    let mut str = bun_core::OwnedString::new(match domurl.file_system_path() {
                         Ok(s) => s,
                         Err(ToFileSystemPathError::NotFileUrl) => {
                             return Err(ctx
@@ -1124,7 +1125,7 @@ impl PathLikeExt for PathLike {
 
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_str::String,
+        str: &mut bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
         // TODO(port): narrow error set
@@ -1182,7 +1183,7 @@ impl Valid {
                 let mut system_error = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                     .with_path(zig_str.slice())
                     .to_system_error();
-                system_error.syscall = bun_str::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1194,7 +1195,7 @@ impl Valid {
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
-                system_error.syscall = bun_str::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1212,7 +1213,7 @@ impl Valid {
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open).to_system_error();
-                system_error.syscall = bun_str::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1639,8 +1640,8 @@ fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
 /// closed after the iterator exits.
 /// @since v12.12.0
 pub struct Dirent {
-    pub name: bun_str::String,
-    pub path: bun_str::String,
+    pub name: bun_core::String,
+    pub path: bun_core::String,
     // not publicly exposed
     pub kind: DirentKind,
 }
@@ -1649,7 +1650,7 @@ pub struct Dirent {
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys
-// `&JSGlobalObject` / `&mut bun_str::String` are ABI-identical to non-null
+// `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
 // pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
 // (`*mut *mut JSString`), so the validity proof lives in the type signature.
 unsafe extern "C" {
@@ -1657,8 +1658,8 @@ unsafe extern "C" {
     safe fn Bun__Dirent__toJS(
         global: &JSGlobalObject,
         kind: i32,
-        name: &mut bun_str::String,
-        path: &mut bun_str::String,
+        name: &mut bun_core::String,
+        path: &mut bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
 }

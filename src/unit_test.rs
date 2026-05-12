@@ -6,12 +6,12 @@
 
 #[cfg(test)]
 mod tests {
-    use bun_str::{String, Tag};
+    use bun_core::{String, Tag};
 
     #[test]
     fn basic_string_usage() {
         let s = String::clone_utf8(b"hi");
-        // `defer s.deref()` deleted — `impl Drop for bun_str::String` decrements the refcount.
+        // `defer s.deref()` deleted — `impl Drop for bun_core::String` decrements the refcount.
         assert!(s.tag() != Tag::Dead && s.tag() != Tag::Empty);
         assert_eq!(s.length(), 2);
         assert_eq!(s.as_utf8().unwrap(), b"hi");

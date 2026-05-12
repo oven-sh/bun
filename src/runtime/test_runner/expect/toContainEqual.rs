@@ -3,7 +3,7 @@ use core::ffi::c_void;
 
 use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
-use bun_str::strings;
+use bun_core::strings;
 
 use super::{get_signature, Expect};
 

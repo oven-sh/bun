@@ -11,7 +11,7 @@ use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 // TODO(b0): SSLConfig arrives from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::{self, SSLConfig};
-use bun_string::strings;
+use bun_core::strings;
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);

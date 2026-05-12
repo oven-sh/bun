@@ -9,7 +9,7 @@ use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
-use bun_str::{ZigString, ZigStringSlice};
+use bun_core::{ZigString, ZigStringSlice};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 

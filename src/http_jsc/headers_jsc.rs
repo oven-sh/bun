@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
 use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
-use bun_string::{StringPointer, ZigString};
+use bun_core::{StringPointer, ZigString};
 
 /// Port of `Headers.from` (Headers.zig). Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.

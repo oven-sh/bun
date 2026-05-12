@@ -151,7 +151,7 @@ impl Hardlinker {
                             >(
                                 &mut destfile_path_buf[..], dest_parts
                             );
-                            let destfile_path = bun_str::strings::add_nt_path_prefix_if_needed(
+                            let destfile_path = bun_paths::strings::add_nt_path_prefix_if_needed(
                                 &mut destfile_path_buf2[..],
                                 joined,
                             );
@@ -182,7 +182,7 @@ impl Hardlinker {
                                                 bun_paths::path_buffer_pool::get();
 
                                             let Ok(delete_tree_path) =
-                                                bun_str::strings::convert_utf16_to_utf8_in_buffer(
+                                                bun_core::convert_utf16_to_utf8_in_buffer(
                                                     &mut delete_tree_buf[..],
                                                     self.dest.slice(),
                                                 )

@@ -58,7 +58,7 @@ impl FileCopier {
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
-        let dest_subpath_u8: &[u8] = bun_str::strings::paths::from_w_path(
+        let dest_subpath_u8: &[u8] = bun_paths::string_paths::from_w_path(
             &mut dest_u8_buf[..],
             self.dest_subpath.slice(),
         )

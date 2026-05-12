@@ -18,7 +18,7 @@ use bun_jsc::{
 use crate::napi;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs as Fs;
-use bun_str::{strings, ZStr, ZigString};
+use bun_core::{strings, ZStr, ZigString};
 use bun_sys::{self, Fd};
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
@@ -107,7 +107,7 @@ fn create_object_2(
 }
 
 /// `bun.String.toJSArray` — local shim over `JSValue::create_empty_array`.
-fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_str::String]) -> JsResult<JSValue> {
+fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
     let arr = JSValue::create_empty_array(global, strs.len())?;
     for (i, s) in strs.iter().enumerate() {
         let v = jsc::bun_string_jsc::to_js(s, global)?;
@@ -1045,7 +1045,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, &bun_str::String::borrow_utf8(b"symbols"))?
+            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if !global_this.has_exception() && (symbols_object.is_empty() || !symbols_object.is_object())
         {
@@ -1076,7 +1076,7 @@ impl FFI {
             return Err(global_this.throw(format_args!("Expected at least one exported symbol")));
         }
 
-        if let Some(library_value) = object.get_own(global_this, &bun_str::String::borrow_utf8(b"library"))? {
+        if let Some(library_value) = object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))? {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
 
@@ -1170,7 +1170,7 @@ impl FFI {
             return Err(JsError::Thrown);
         }
 
-        if let Some(source_value) = object.get_own(global_this, &bun_str::String::borrow_utf8(b"source"))? {
+        if let Some(source_value) = object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))? {
             if source_value.is_array() {
                 compile_c.source = Source::Files(Vec::new());
                 let mut iter = source_value.array_iterator(global_this)?;
@@ -1454,7 +1454,7 @@ impl FFI {
             return Ok(val);
         }
         jsc::mark_binding();
-        let mut strs: Vec<bun_str::String> = Vec::with_capacity(symbols.len());
+        let mut strs: Vec<bun_core::String> = Vec::with_capacity(symbols.len());
         // PERF(port): was initCapacity assume_capacity
         for function in symbols.values_mut() {
             let mut arraylist: Vec<u8> = Vec::new();
@@ -1464,7 +1464,7 @@ impl FFI {
                     ZigString::init(b"Error while printing code").to_error_instance(global)
                 );
             }
-            strs.push(bun_str::String::clone_utf8(&arraylist));
+            strs.push(bun_core::String::clone_utf8(&arraylist));
             // PERF(port): was appendAssumeCapacity
         }
 
@@ -1566,14 +1566,14 @@ impl FFI {
                             )
                             .ok();
                             let system_error = SystemError {
-                                code: bun_str::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_str::String::clone_utf8(&msg),
-                                syscall: bun_str::String::clone_utf8(b"dlopen"),
+                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+                                message: bun_core::String::clone_utf8(&msg),
+                                syscall: bun_core::String::clone_utf8(b"dlopen"),
                                 errno: 0,
-                                path: bun_str::String::EMPTY,
-                                hostname: bun_str::String::EMPTY,
+                                path: bun_core::String::EMPTY,
+                                hostname: bun_core::String::EMPTY,
                                 fd: -1,
-                                dest: bun_str::String::EMPTY,
+                                dest: bun_core::String::EMPTY,
                             };
                             return system_error.to_error_instance(global);
                         }
@@ -1767,7 +1767,7 @@ pub fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_str::String::borrow_utf8(b"args"))? {
+    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
                 ZigString::static_(b"Expected an object with \"args\" as an array")

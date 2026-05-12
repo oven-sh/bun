@@ -1362,7 +1362,7 @@ impl ErrorCode {
     /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
-        let mut message = bun_string::String::create_format(args);
+        let mut message = bun_core::String::create_format(args);
         // SAFETY: `global` is a live `JSC::JSGlobalObject*`; `message` is a
         // valid `bun.String` borrowed for the call. C++ clones the impl into a
         // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
@@ -1396,7 +1396,7 @@ unsafe extern "C" {
     fn Bun__createErrorWithCode(
         global: *mut c_void,
         code: ErrorCode,
-        message: *mut bun_string::String,
+        message: *mut bun_core::String,
     ) -> JSValue;
 }
 

@@ -43,7 +43,7 @@ use bun_js_printer::Encoding;
 use bun_ast::Source;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::Graph::{Graph, InputFileColumns as _};
 use crate::chunk::{Content, Flags};

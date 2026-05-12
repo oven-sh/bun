@@ -8,7 +8,7 @@ use core::sync::atomic::Ordering;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{err, Error};
-use bun_string::immutable as strings;
+use bun_core::strings;
 
 use super::bridge::socket_is_closed_or_has_error;
 use super::stream::{State as StreamState, Stream};

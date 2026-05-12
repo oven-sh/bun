@@ -11,7 +11,7 @@ use bun_js_printer as js_printer;
 use bun_parsers::json;
 use bun_paths::{self, path_buffer_pool, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_str::{strings, MutableString, ZStr};
+use bun_core::{strings, MutableString, ZStr};
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;

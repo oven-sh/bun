@@ -8,7 +8,7 @@ use bun_sys::FdDirExt as _;
 use bun_core::Progress::{Progress, Node as ProgressNode};
 use bun_threading::Futex;
 use crate::api::bun_process::sync as spawn_sync;
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_paths::{self as resolve_path, PathBuffer, OSPathSlice};
 use bun_ast as js_ast;
 use bun_parsers::json as JSON;
@@ -56,14 +56,14 @@ const SKIP_FILES: &[&OSPathSlice] = &[
 ];
 #[cfg(windows)]
 const SKIP_DIRS: &[&OSPathSlice] = &[
-    bun_str::w!("node_modules"),
-    bun_str::w!(".git"),
+    bun_core::w!("node_modules"),
+    bun_core::w!(".git"),
 ];
 #[cfg(windows)]
 const SKIP_FILES: &[&OSPathSlice] = &[
-    bun_str::w!("package-lock.json"),
-    bun_str::w!("yarn.lock"),
-    bun_str::w!("pnpm-lock.yaml"),
+    bun_core::w!("package-lock.json"),
+    bun_core::w!("yarn.lock"),
+    bun_core::w!("pnpm-lock.yaml"),
 ];
 
 const NEVER_CONFLICT: &[&[u8]] = &[
@@ -103,7 +103,7 @@ impl UnsupportedPackages {
 // PORTING.md §Global mutable state: single-threaded CLI usage; currently
 // write-once / never read (Zig parity placeholder). RacyCell.
 #[allow(dead_code)]
-static BUN_PATH: bun_core::RacyCell<Option<&'static bun_str::ZStr>> =
+static BUN_PATH: bun_core::RacyCell<Option<&'static bun_core::ZStr>> =
     bun_core::RacyCell::new(None);
 
 fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
@@ -477,7 +477,7 @@ impl CreateCommand {
                 #[cfg(not(windows))]
                 let package_json_lit: &OSPathSlice = b"package.json";
                 #[cfg(windows)]
-                let package_json_lit: &OSPathSlice = bun_str::w!("package.json");
+                let package_json_lit: &OSPathSlice = bun_core::w!("package.json");
                 let pluckers: Vec<archiver::Plucker> = if !create_options.skip_package_json {
                     vec![archiver::Plucker::init(package_json_lit, 2048)?]
                 } else {
@@ -1502,10 +1502,10 @@ impl CreateCommand {
         if example_tag == ExampleTag::GithubRepository {
             let mut display_name = template;
 
-            if let Some(first_slash) = bun_str::strings::index_of_char(display_name, b'/') {
+            if let Some(first_slash) = bun_core::index_of_char(display_name, b'/') {
                 let first_slash = first_slash as usize;
                 if let Some(second_slash) =
-                    bun_str::strings::index_of_char(&display_name[first_slash + 1..], b'/')
+                    bun_core::index_of_char(&display_name[first_slash + 1..], b'/')
                 {
                     display_name = &template[0..first_slash + 1 + second_slash as usize];
                 }
@@ -1564,7 +1564,7 @@ impl CreateCommand {
                 // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
                 // SAFETY: literal is NUL-terminated; len excludes the sentinel.
                 crate::cli::open::open_url(unsafe {
-                    bun_str::ZStr::from_raw(
+                    bun_core::ZStr::from_raw(
                         b"http://localhost:3000/\0".as_ptr(),
                         b"http://localhost:3000/".len(),
                     )
@@ -1627,7 +1627,7 @@ impl CreateCommand {
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
-                let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
+                let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                 if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                     break 'outer;
                 }
@@ -1658,7 +1658,7 @@ impl CreateCommand {
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
+                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
@@ -1675,7 +1675,7 @@ impl CreateCommand {
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
-                    let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
+                    let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                     if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                         break 'outer;
                     }
@@ -1693,7 +1693,7 @@ impl CreateCommand {
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
+                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
@@ -1720,9 +1720,9 @@ impl CreateCommand {
                 }
 
                 if repo_begin == usize::MAX && positional[0] != b'/' {
-                    if let Some(first_slash_index) = bun_str::strings::index_of_char(positional, b'/') {
+                    if let Some(first_slash_index) = bun_core::index_of_char(positional, b'/') {
                         let first_slash_index = first_slash_index as usize;
-                        if let Some(last_slash_index) = bun_str::strings::index_of_char(positional, b'/') {
+                        if let Some(last_slash_index) = bun_core::index_of_char(positional, b'/') {
                             let last_slash_index = last_slash_index as usize;
                             if first_slash_index == last_slash_index
                                 && !positional[last_slash_index..].is_empty()
@@ -1736,11 +1736,11 @@ impl CreateCommand {
 
                 if repo_begin != usize::MAX {
                     let remainder = &positional[repo_begin..];
-                    if let Some(i) = bun_str::strings::index_of_char(remainder, b'/') {
+                    if let Some(i) = bun_core::index_of_char(remainder, b'/') {
                         let i = i as usize;
                         if i > 0 && !remainder[i + 1..].is_empty() {
                             if let Some(last_slash) =
-                                bun_str::strings::index_of_char(&remainder[i + 1..], b'/')
+                                bun_core::index_of_char(&remainder[i + 1..], b'/')
                             {
                                 let last_slash = last_slash as usize;
                                 example_tag = ExampleTag::GithubRepository;
@@ -1788,12 +1788,12 @@ fn file_copier_copy(
             dst_buf[dst_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             dst_buf[dst_base_len + entry.path.len()] = 0;
             // SAFETY: NUL written at [dst_base_len + entry.path.len()]
-            let dst = bun_str::WStr::from_buf(&dst_buf[..], dst_base_len + entry.path.len());
+            let dst = bun_core::WStr::from_buf(&dst_buf[..], dst_base_len + entry.path.len());
 
             src_buf[src_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             src_buf[src_base_len + entry.path.len()] = 0;
             // SAFETY: NUL written at [src_base_len + entry.path.len()]
-            let src = bun_str::WStr::from_buf(&src_buf[..], src_base_len + entry.path.len());
+            let src = bun_core::WStr::from_buf(&src_buf[..], src_base_len + entry.path.len());
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
@@ -2120,7 +2120,7 @@ impl Example {
 
                                 // SAFETY: NUL written at [entry_name.len() + 1 + "package.json".len()]
                                 let path = unsafe {
-                                    bun_str::ZStr::from_raw_mut(
+                                    bun_core::ZStr::from_raw_mut(
                                         home_dir_buf.as_mut_ptr(),
                                         entry_name.len() + 1 + b"package.json".len(),
                                     )
@@ -2158,11 +2158,11 @@ impl Example {
         refresher: &mut Progress,
         progress: &mut ProgressNode,
     ) -> Result<MutableString, bun_core::Error> {
-        let owner_i = bun_str::strings::index_of_char(name, b'/').unwrap() as usize;
+        let owner_i = bun_core::index_of_char(name, b'/').unwrap() as usize;
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
 
-        if let Some(i) = bun_str::strings::index_of_char(repository, b'/') {
+        if let Some(i) = bun_core::index_of_char(repository, b'/') {
             repository = &repository[0..i as usize];
         }
 
@@ -2561,7 +2561,7 @@ impl Example {
                 for (i, property) in q.expr.data.e_object().expect("infallible: variant checked").properties.slice().iter().enumerate() {
                     let name = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data.slice();
                     list[i] = Example {
-                        name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {
+                        name: if let Some(slash) = bun_core::index_of_char(name, b'/') {
                             &name[slash as usize + 1..]
                         } else {
                             name

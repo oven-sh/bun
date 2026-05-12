@@ -9,7 +9,7 @@ use bun_ast::{self as js_ast, E, Expr, ExprData, G};
 use bun_js_printer as js_printer;
 use bun_ast::{Loc, Log, Source};
 use bun_paths::{self as path, PathBuffer};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys;
 
 pub struct PmPkgCommand;

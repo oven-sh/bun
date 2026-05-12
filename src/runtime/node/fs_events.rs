@@ -585,7 +585,7 @@ impl FSEventsLoop {
 
                     if path.is_empty() {
                         // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
-                        let basename = bun_str::strings::last_index_of_char(handle_path, b'/')
+                        let basename = bun_core::last_index_of_char(handle_path, b'/')
                             .unwrap_or(handle_path.len());
                         path = &handle_path[basename..];
                         // Created and Removed seem to be always set, but don't make sense
@@ -600,7 +600,7 @@ impl FSEventsLoop {
 
                 // Do not emit events from subdirectories (without option set)
                 if path.is_empty()
-                    || (bun_str::strings::index_of_char(path, b'/').is_some() && !handle.recursive)
+                    || (bun_core::index_of_char(path, b'/').is_some() && !handle.recursive)
                 {
                     continue;
                 }

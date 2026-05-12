@@ -14,7 +14,7 @@
 //! are sometimes literals, sometimes `allocator.dupe` results, sometimes slices
 //! into `Source.contents` or a `StringBuilder` arena. Phase A keeps them as
 //! `&'static [u8]` to mirror the Zig `[]const u8` shape without lifetime params;
-//! Phase B must decide on a real ownership story (likely `bun_str::String` or a
+//! Phase B must decide on a real ownership story (likely `bun_core::String` or a
 //! `'source` lifetime threaded through `Location`/`Data`/`Msg`).
 
 #![warn(unreachable_pub)]
@@ -26,7 +26,7 @@ use std::borrow::Cow;
 #[allow(unused_imports)]
 use bun_core::Output;
 
-// TODO(b1): swap to `bun_string::StringBuilder` once `clone_with_builder` is
+// TODO(b1): swap to `bun_core::StringBuilder` once `clone_with_builder` is
 // reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
@@ -905,7 +905,7 @@ impl Location {
                 // instead. `full_line` is bounded (≤ ~120 bytes) and only
                 // materialized on diagnostic paths.
                 line_text: Some(Cow::Owned(
-                    bun_string::strings::trim_left(full_line, b"\n\r").to_vec(),
+                    bun_core::trim_left(full_line, b"\n\r").to_vec(),
                 )),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
@@ -1056,9 +1056,9 @@ impl Data {
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed =
-                    bun_string::strings::trim_right(line_text_, b" \r\n\t");
+                    bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text =
-                    bun_string::strings::trim_left(line_text_right_trimmed, b"\n\r");
+                    bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1).expect("int cast");
@@ -1197,7 +1197,7 @@ impl BabyString {
     }
 
     pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
-        // TODO(b1): bun_str::strings::index_of missing — inline bstr fallback.
+        // TODO(b1): bun_core::index_of missing — inline bstr fallback.
         let off = bstr::ByteSlice::find(parent, text).expect("unreachable");
         BabyString::new(off as u16, text.len() as u16) // @truncate
     }
@@ -2666,7 +2666,7 @@ impl Source {
         }
 
         debug_assert!(!self.path.text.is_empty());
-        let name = bun_string::MutableString::ensure_valid_identifier(
+        let name = bun_core::MutableString::ensure_valid_identifier(
             self.path.name.non_unique_name_string_base(),
         )?;
         self.identifier_name = Cow::Owned(name.into_vec());
@@ -2732,7 +2732,7 @@ impl Source {
 
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[0..loc.i()];
-        let index = bun_string::strings::index(text, op);
+        let index = bun_core::immutable::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
@@ -2776,7 +2776,7 @@ impl Source {
 
     pub fn range_of_operator_after(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[loc.i()..];
-        let index = bun_string::strings::index(text, op);
+        let index = bun_core::immutable::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
@@ -2788,7 +2788,7 @@ impl Source {
     }
 
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        use bun_string::strings::{CodepointIterator, Cursor};
+        use bun_core::immutable::{CodepointIterator, Cursor};
         debug_assert!(!offset_loc.is_empty());
         let mut prev_code_point: i32 = 0;
         let offset: usize =
@@ -2863,7 +2863,7 @@ impl Source {
         line: u64,
         col: u64,
     ) -> Option<usize> {
-        use bun_string::strings::{CodepointIterator, Cursor};
+        use bun_core::immutable::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(source_contents);
         let mut iter = Cursor::default();
 
@@ -2937,7 +2937,7 @@ pub type ToSourceOpts = ToSourceOptions;
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
 /// `src/sys/File.zig:toSource`.
 pub fn source_from_file(
-    path: &bun_string::ZStr,
+    path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
@@ -2949,7 +2949,7 @@ pub fn source_from_file(
 /// `src/sys/File.zig:toSourceAt`.
 pub fn source_from_file_at(
     dir_fd: bun_sys::Fd,
-    path: &bun_string::ZStr,
+    path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
     let mut bytes = match bun_sys::file::File::read_from(dir_fd, path) {
@@ -2957,7 +2957,7 @@ pub fn source_from_file_at(
         Ok(bytes) => bytes,
     };
     if opts.convert_bom {
-        if let Some(bom) = bun_string::strings::BOM::detect(&bytes) {
+        if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
             bytes = bun_core::handle_oom(bom.remove_and_convert_to_utf8_and_free(bytes));
         }
     }
@@ -2970,14 +2970,14 @@ pub fn source_from_file_at(
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 pub fn to_source_at(
     dir_fd: bun_sys::Fd,
-    path: &bun_string::ZStr,
+    path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Result<Source> {
     source_from_file_at(dir_fd, path, opts)
 }
 
 /// `to_source_at` rooted at the process CWD.
-pub fn to_source(path: &bun_string::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
+pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file(path, opts)
 }
 

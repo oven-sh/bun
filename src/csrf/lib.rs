@@ -8,10 +8,10 @@
 #![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
 use bun_sha_hmac::hmac;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_sha_hmac::evp::Algorithm;
-use bun_string::NodeEncoding;
+use bun_core::NodeEncoding;
 
 /// Default expiration time for tokens (24 hours)
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;

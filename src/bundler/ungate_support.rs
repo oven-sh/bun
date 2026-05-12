@@ -10,7 +10,7 @@
 #![warn(unused_must_use)]
 
 use bun_collections::VecExt;
-use bun_string::strings;
+use bun_core::strings;
 // `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
 // is intentionally folded into that to avoid duplicate-import errors.
 
@@ -23,7 +23,7 @@ use crate::{options, Index, IndexInt};
 // resolves. The Phase-A drafts wrote bare extern-crate paths; un-gated
 // modules import from here via `use crate::ungate_support::… as …`.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_string as bun_str;
+pub use bun_core as bun_str;
 pub use bun_resolver::fs as bun_fs;
 pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
@@ -431,7 +431,7 @@ impl ContentHasher {
 /// (lower-tier crate shared with `css::printer`). Re-exported here so the
 /// existing `crate::cheap_prefix_normalizer` chain in `bundle_v2.rs` and the
 /// bundler call-sites keep working unchanged.
-pub use bun_string::cheap_prefix_normalizer;
+pub use bun_core::cheap_prefix_normalizer;
 
 /// `bundle_v2.zig:targetFromHashbang`.
 pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
@@ -585,7 +585,7 @@ pub(crate) use bun_ast::{Part, Ref, Symbol};
 /// namespaces, so `use crate::EntryPoint` imports both.
 pub mod entry_point {
     use bun_collections::MultiArrayList;
-    use bun_string::PathString;
+    use bun_core::PathString;
 
     #[derive(Default)]
     pub struct EntryPoint {

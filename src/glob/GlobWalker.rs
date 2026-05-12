@@ -30,8 +30,8 @@ use bun_core::Error;
 use bun_core::{declare_scope, scoped_log};
 use bun_paths::{resolve_path, PathBuffer, MAX_PATH_BYTES};
 use bun_sys::dir_iterator as DirIterator;
-use bun_string::strings::{self, UnsignedCodepointIterator as CodepointIterator};
-use bun_string::{String as BunString, ZStr};
+use bun_core::strings::{self, UnsignedCodepointIterator as CodepointIterator};
+use bun_core::{String as BunString, ZStr};
 use bun_sys::{self as Syscall, Fd, FdExt, Result as Maybe, Stat, Error as SysError, E, O, S};
 
 // const Codepoint = u32;
@@ -384,7 +384,7 @@ pub struct MatchedMapContext;
 // TODO(port): ArrayHashMap context trait shape — Phase B wires the actual trait.
 impl MatchedMapContext {
     pub fn hash(&self, this: &BunString) -> u32 {
-        debug_assert!(this.tag() == bun_string::Tag::ZigString);
+        debug_assert!(this.tag() == bun_core::Tag::ZigString);
         let slice = this.byte_slice();
         // For SENTINEL the slice includes trailing NUL; hash excludes it.
         // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.

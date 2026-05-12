@@ -309,19 +309,19 @@ impl ShellMkdirTask {
         use bun_paths::{platform, resolve_path, Platform};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
-        let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
                 this.filepath.push(0);
             }
-            bun_str::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
+            bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
             resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
         };
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_string::PathString::init(filepath.as_bytes())),
+            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -387,7 +387,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         #[cfg(windows)]
         {
             let mut buf = bun_paths::PathBuffer::uninit();
-            let str = bun_string::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
+            let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');
         }

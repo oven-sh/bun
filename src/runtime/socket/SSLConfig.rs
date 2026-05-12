@@ -266,7 +266,7 @@ pub fn from_generated(
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
-    string: &bun_str::String,
+    string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
@@ -373,7 +373,7 @@ fn handle_file_array(
 
 // PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
 enum SingleFile<'a> {
-    String(bun_str::String),
+    String(bun_core::String),
     Buffer(&'a mut jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }

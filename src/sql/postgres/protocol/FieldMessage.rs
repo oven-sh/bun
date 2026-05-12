@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bun_string::String;
+use bun_core::String;
 
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
@@ -54,7 +54,7 @@ impl fmt::Display for FieldMessage {
 }
 
 // Zig `deinit` called `.deref()` on the payload `bun.String`. In Rust,
-// `bun_string::String`'s own `Drop` performs the deref, so no explicit `Drop`
+// `bun_core::String`'s own `Drop` performs the deref, so no explicit `Drop`
 // impl is needed here — dropping the enum drops the payload.
 
 impl FieldMessage {

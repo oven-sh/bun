@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::{self as jsc, JSValue, Strong};
 use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
-use bun_string::wtf::{WTFString, WTFStringImplStruct};
+use bun_core::{WTFString, WTFStringImplStruct};
 
 // `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
 // them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.

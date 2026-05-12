@@ -8,7 +8,7 @@ use bun_ast::{Loc, Log};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_string::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_core::ZBox;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;

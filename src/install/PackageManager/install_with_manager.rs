@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 use bun_core::{Global, Output, Progress};
 use bun_core::time::nano_timestamp;
 
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_semver::String as SemverString;
 use crate::bun_fs::FileSystem;
 use bun_paths as Path;

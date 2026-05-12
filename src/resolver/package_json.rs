@@ -10,7 +10,7 @@ use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
@@ -696,7 +696,7 @@ impl PackageJSON {
 
         if let Some(asset_prefix) = framework_object.expr.as_property(b"assetPrefix") {
             if let Some(_str) = asset_prefix.expr.as_string(bump) {
-                let str = bun_string::strings::trim(&_str, b" ");
+                let str = bun_core::trim(&_str, b" ");
                 if !str.is_empty() {
                     pair.router.asset_prefix_path = Box::from(str);
                 }
@@ -2065,10 +2065,10 @@ enum ReverseKind {
     Prefix,
 }
 
-// ── Local string helpers (TODO(b2-blocked): bun_string::strings::{replacement_size, replace}) ──
+// ── Local string helpers (TODO(b2-blocked): bun_core::{replacement_size, replace}) ──
 // Minimal local impls so the ESModule resolution algorithm compiles; replace with the
-// canonical bun_string versions once they land. Recorded in blocked_on.
-use bun_string::strings::trim_right;
+// canonical bun_core versions once they land. Recorded in blocked_on.
+use bun_core::trim_right;
 
 /// Port of `std.mem.replacementSize` — total bytes after replacing every `needle` in
 /// `input` with `replacement`.

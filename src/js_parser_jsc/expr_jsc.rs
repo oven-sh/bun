@@ -5,7 +5,7 @@
 use bun_collections::VecExt;
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError};
-use bun_string::{strings, String as BunString};
+use bun_core::{strings, String as BunString};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use

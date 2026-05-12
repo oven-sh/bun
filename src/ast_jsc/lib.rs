@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 
 use bun_ast::{Data, Level, Location, Log, Metadata, Msg};
-use bun_string::ZigString;
+use bun_core::ZigString;
 
 use bun_jsc::{
     self as jsc, comptime_string_map_jsc, BuildMessage, JSGlobalObject, JSValue, JsError, JsResult,
@@ -88,7 +88,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
 }
 
 /// unlike `to_js`, this always produces an AggregateError object
-pub fn log_to_js_aggregate_error(this: &Log, global: &JSGlobalObject, message: bun_string::String) -> JsResult<JSValue> {
+pub fn log_to_js_aggregate_error(this: &Log, global: &JSGlobalObject, message: bun_core::String) -> JsResult<JSValue> {
     global.create_aggregate_error_with_array(message, log_to_js_array(this, global)?)
 }
 

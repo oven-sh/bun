@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 
 bun_output::declare_scope!(S3Stat, visible);
 
@@ -26,7 +26,7 @@ impl S3Stat {
         last_modified: &[u8],
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
-        // `bun_str::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
+        // `bun_core::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
         // Zig `defer date_str.deref()` runs on both the `Ok` and `?`-error paths.
         let mut date_str = OwnedString::new(BunString::init(last_modified));
         let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
@@ -60,7 +60,7 @@ impl S3Stat {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // `bun_str::String` is `#[derive(Copy)]` with NO `Drop` impl
+        // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
         // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.

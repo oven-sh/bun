@@ -6,7 +6,7 @@
 use crate::jsc::{
     bun_string_jsc, ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult,
 };
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
 
 #[allow(unused_imports)]

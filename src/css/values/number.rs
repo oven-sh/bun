@@ -29,9 +29,9 @@ impl CSSNumberFns {
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
             if number < 0.0 {
                 dest.write_char(b'-')?;
-                dest.write_str(bun_string::strings::trim_leading_pattern2(str, b'-', b'0'))
+                dest.write_str(bun_core::strings::trim_leading_pattern2(str, b'-', b'0'))
             } else {
-                dest.write_str(bun_string::strings::trim_leading_char(str, b'0'))
+                dest.write_str(bun_core::trim_leading_char(str, b'0'))
             }
         } else {
             css::to_css::float32(number, dest)

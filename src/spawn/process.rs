@@ -1834,7 +1834,7 @@ pub fn spawn_process_windows(
     cwd_buf[..options.cwd.len()].copy_from_slice(&options.cwd);
     cwd_buf[options.cwd.len()] = 0;
     // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
-    let cwd = bun_str::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
+    let cwd = bun_core::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
 
     // PORT NOTE: Zig spec passes `cwd.ptr` unconditionally, but every Zig
     // `bun.spawnSync` Windows caller sets `.cwd` explicitly so the latent
@@ -2804,7 +2804,7 @@ pub mod sync {
         let envp: *const *const c_char =
             options.envp.unwrap_or_else(|| bun_sys::environ_ptr());
         let argv = &options.argv;
-        let mut string_builder = bun_str::StringBuilder::default();
+        let mut string_builder = bun_core::StringBuilder::default();
         for arg in argv {
             string_builder.count_z(arg);
         }

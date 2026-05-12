@@ -35,8 +35,8 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     CompileResult, Flags as StandaloneFlags,
 };
 use bun_options_types::WindowsOptions;
-use bun_string::String as BunString;
-use bun_str::strings;
+use bun_core::String as BunString;
+use bun_core::strings;
 use bun_sys::{self as sys, Dir, Fd, OpenDirOptions};
 use bun_jsc::WorkPool;
 
@@ -500,11 +500,11 @@ impl JSBundleCompletionTask {
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_str::PathString::init(write_path),
+                            bun_core::PathString::init(write_path),
                         )),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
-                            bun_str::zig_string::Slice::from_utf8_never_free(bytes),
+                            bun_core::zig_string::Slice::from_utf8_never_free(bytes),
                         ),
                         dirfd: root_dir.0.fd,
                         signal: None,

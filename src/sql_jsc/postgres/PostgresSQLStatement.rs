@@ -201,7 +201,7 @@ impl PostgresSQLStatement {
             match &field.name_or_index {
                 ColumnIdentifier::Name(name) => {
                     out.value.name =
-                        ManuallyDrop::new(bun_string::String::create_atom_if_possible(name.slice()));
+                        ManuallyDrop::new(bun_core::String::create_atom_if_possible(name.slice()));
                 }
                 ColumnIdentifier::Index(index) => {
                     out.value.index = *index;

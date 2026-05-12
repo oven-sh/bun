@@ -23,7 +23,7 @@
 // THE SOFTWARE.
 
 use bun_collections::BoundedArray;
-use bun_string::strings;
+use bun_core::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces

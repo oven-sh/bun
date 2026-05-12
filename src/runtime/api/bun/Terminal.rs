@@ -23,7 +23,7 @@ use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
 };
-use bun_string::ZigString;
+use bun_core::ZigString;
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
@@ -1025,11 +1025,11 @@ fn create_overlapped_pipe_pair(
         &name_utf8_buf[..written]
     };
     let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
+    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
     name_w_buf[name_w_len] = 0;
     // SAFETY: name_w_buf[name_w_len] == 0 written above.
     let name_w =
-        bun_str::WStr::from_buf(&name_w_buf[..], name_w_len);
+        bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {

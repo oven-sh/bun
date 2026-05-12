@@ -13,7 +13,7 @@ use core::mem::offset_of;
 use std::io::Write as _;
 
 use bun_collections::{bit_set::DynamicBitSetUnmanaged, ArrayHashMap, StringArrayHashMap};
-use bun_str::strings;
+use bun_core::strings;
 
 use super::{
     packed_map, route_bundle, serialized_failure, source_map_store, ChunkKind, DevServer,
@@ -1627,7 +1627,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_str::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
+                code: bun_core::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
                 line_count: 1,
             },
         };
@@ -1743,7 +1743,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_str::ZStr::from_static(b"({\0"),
+                code: bun_core::ZStr::from_static(b"({\0"),
                 line_count: 0,
             },
         };

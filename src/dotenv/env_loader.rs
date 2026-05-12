@@ -7,7 +7,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
-use bun_string::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;

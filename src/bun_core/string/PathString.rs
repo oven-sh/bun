@@ -1,7 +1,7 @@
 use core::fmt;
 
-use bun_paths::MAX_PATH_BYTES;
-use crate::ZStr;
+use crate::MAX_PATH_BYTES;
+use crate::string::ZStr;
 
 // const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
 // Compute the number of bits needed to hold 0..=MAX_PATH_BYTES.
@@ -115,7 +115,7 @@ impl PathString {
         // capacity separately. `heap::alloc` (not `leak`) is the explicit
         // ownership-transfer-to-raw API; the matching `heap::take` lives
         // in `deinit_owned`.
-        let raw: *mut [u8] = bun_core::heap::into_raw(bytes.into_boxed_slice());
+        let raw: *mut [u8] = crate::heap::into_raw(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
         // ptr+len into the backing int.
         Self::init(unsafe { &*raw })
@@ -137,7 +137,7 @@ impl PathString {
         }
         // SAFETY: caller contract — (ptr,len) is exactly the `Box<[u8]>` that
         // `init_owned` released via `into_raw`.
-        drop(unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
+        drop(unsafe { crate::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
     }
 
     #[inline]

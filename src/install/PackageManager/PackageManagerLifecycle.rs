@@ -10,7 +10,7 @@ use bun_core::fmt::PathSep;
 use bun_paths::{self as Path, AutoAbsPath, EnvPath};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_semver::string::Builder as SemverStringBuilder;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys as Syscall;
 use bun_threading::Mutex;
 

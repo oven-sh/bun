@@ -1,7 +1,7 @@
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 /// Trait capturing the methods `NewReaderWrap` expected as comptime fn params.
 /// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`

@@ -5,7 +5,7 @@ use std::fmt::Write;
 use bstr::BStr;
 
 use super::diff_match_patch;
-use bun_str::strings;
+use bun_core::strings;
 
 type Dmp = diff_match_patch::DiffMatchPatch<u8>;
 type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;

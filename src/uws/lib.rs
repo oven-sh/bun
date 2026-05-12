@@ -4,7 +4,7 @@
 #![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-use bun_string::ZStr;
+use bun_core::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Thin re-exports from uws_sys / runtime

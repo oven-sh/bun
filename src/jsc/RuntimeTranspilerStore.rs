@@ -28,7 +28,7 @@ use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_string::{strings, MutableString, String};
+use bun_core::{strings, MutableString, String};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::Guarded;
@@ -40,7 +40,7 @@ use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::resolved_source::OwnedResolvedSource;
-use bun_string::OwnedString;
+use bun_core::OwnedString;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
@@ -431,7 +431,7 @@ pub enum Fetcher {
 }
 
 // PORT NOTE: Zig `Fetcher.deinit` called `.deref()` on the contained `bun.String`.
-// In the Rust port `bun_string::String` is `Copy` with manual `.deref()`; matching
+// In the Rust port `bun_core::String` is `Copy` with manual `.deref()`; matching
 // Zig, decrement explicitly when replacing the enum value.
 impl Fetcher {
     fn deinit(&mut self) {

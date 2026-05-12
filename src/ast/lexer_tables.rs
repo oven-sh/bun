@@ -1,4 +1,4 @@
-use bun_string::strings::CodePoint;
+use bun_core::CodePoint;
 use enum_map::Enum;
 use phf::{phf_map, phf_set};
 
@@ -964,18 +964,18 @@ mod tests {
 
 // ── identifier predicates ──────────────────────────────────────────────────
 // Shared by `bun_ast::E::EString::is_identifier`, `bun_js_printer::renamer`,
-// and the parser's lexer. Data-only (codepoint tables live in `bun_string`).
+// and the parser's lexer. Data-only (codepoint tables live in `bun_core`).
 
 #[inline]
 pub fn is_identifier_start(codepoint: i32) -> bool {
-    bun_string::identifier::is_identifier_start(codepoint)
+    bun_core::identifier::is_identifier_start(codepoint)
 }
 #[inline]
 pub fn is_identifier_continue(codepoint: i32) -> bool {
-    bun_string::identifier::is_identifier_part(codepoint)
+    bun_core::identifier::is_identifier_part(codepoint)
 }
 
-pub use bun_string::identifier::{is_identifier, is_identifier_utf16};
+pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
     // Zig `isLatin1Identifier(comptime Buffer, name)` is generic over `[]const u8`

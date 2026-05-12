@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 use bun_options_types::Format;
 
 bun_opaque::opaque_ffi! {

@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
@@ -490,7 +490,7 @@ pub trait StringEnum: Sized {
     /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
     const VALUES_INFO: &'static str;
     /// Match `s` against variant names exactly (Zig: `str.eqlComptime(field.name)`).
-    fn from_bun_string(s: &bun_str::String) -> Option<Self>;
+    fn from_bun_string(s: &bun_core::String) -> Option<Self>;
 }
 
 pub fn validate_string_enum<T: StringEnum>(
@@ -498,9 +498,9 @@ pub fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // Zig: `defer str.deref()`. `bun_str::String` is `Copy` with no `Drop`;
+    // Zig: `defer str.deref()`. `bun_core::String` is `Copy` with no `Drop`;
     // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
-    let str = bun_str::OwnedString::new(value.to_bun_string(global_this)?);
+    let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }

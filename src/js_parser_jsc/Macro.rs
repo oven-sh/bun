@@ -15,7 +15,7 @@ use bun_resolver::package_json::{
 use bun_resolver::Resolver;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_bundler::{entry_points::MacroEntryPoint, Transpiler};
-use bun_string::strings;
+use bun_core::strings;
 
 // PORT NOTE: Zig spec aliases `const js = bun.jsc.C;` (Macro.zig:642) — the
 // C-API surface is intentionally `#[deprecated]` upstream but is the spec'd
@@ -1157,8 +1157,8 @@ fn expr_from_blob(
         || mime_type == b"application/xml";
 
     if is_text_like {
-        let mut output = bun_string::MutableString::init_empty();
-        bun_string::quote_for_json(bytes, &mut output, true)?;
+        let mut output = bun_core::MutableString::init_empty();
+        bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();
         // strip the surrounding quotes; copy into the bump arena so the
         // `E.String` data outlives `owned`.

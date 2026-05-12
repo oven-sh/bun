@@ -5,7 +5,7 @@
 //! back-edge into the schema crate). `to_mime_type` / `from_mime_type` live in
 //! `bun_http_types` (would back-edge into `bun_http::MimeType`).
 
-use bun_string::strings;
+use bun_core::strings;
 use enum_map::Enum;
 use phf;
 
@@ -235,7 +235,7 @@ impl Loader {
         };
         // Zig: names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength)
         // TODO(port): phf is case-sensitive; Phase B may need a lowercase pass or
-        // bun_str::strings::eql_case_insensitive_ascii lookup over NAMES.entries().
+        // bun_core::eql_case_insensitive_ascii lookup over NAMES.entries().
         Self::NAMES.get(slice).copied().or_else(|| {
             Self::NAMES
                 .entries()

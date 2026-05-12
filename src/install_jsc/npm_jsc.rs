@@ -88,7 +88,7 @@ impl ManifestBindings {
             b"parseManifest",
             JSFunction::create(
                 global,
-                bun_string::String::static_(b"parseManifest"),
+                bun_core::String::static_(b"parseManifest"),
                 // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_manifest,
@@ -108,7 +108,7 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use std::io::Write as _;
     use bstr::BStr;
     use bun_jsc::JsError;
-    use bun_string::{strings, String as BunString};
+    use bun_core::{strings, String as BunString};
     use bun_install::npm;
 
     let args = frame.arguments_old::<2>();
@@ -120,7 +120,7 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     }
 
     // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
-    // returned by `toBunString`; `bun_string::String` has no `Drop` impl.
+    // returned by `toBunString`; `bun_core::String` has no `Drop` impl.
     let manifest_filename_str =
         scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
     let manifest_filename = manifest_filename_str.to_utf8();

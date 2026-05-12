@@ -4,7 +4,7 @@ use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
 use bun_jsc::{ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _, JsError, JsResult};
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};

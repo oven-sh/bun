@@ -1,6 +1,6 @@
 use bun_core::fmt as bun_fmt;
 use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
@@ -216,7 +216,7 @@ pub fn write_bind<Context: WriterContext>(
 
             _ => {
                 let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-                if str.tag() == bun_string::Tag::Dead {
+                if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
                 let slice = str.to_utf8_without_ref();

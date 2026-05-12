@@ -3,7 +3,7 @@
 #![allow(unused, dead_code)]
 #![warn(unused_must_use)]
 
-use bun_string::{String as BunString, Tag};
+use bun_core::{String as BunString, Tag};
 use bun_url::{OwnedURL, URL};
 
 // ── bun_jsc surface ──────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,
     StringJsc, VirtualMachineRef as VirtualMachine,
 };
-use bun_string::{strings, OwnedString, String as BunString};
+use bun_core::{strings, OwnedString, String as BunString};
 
 // `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
 // Mirrored as a transparent `u8` because the schema enum is *open* in Zig
@@ -96,7 +96,7 @@ fn find_path_inner(
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
     let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // `bun_string::String` is `Copy` — passing by value here mirrors Zig's
+    // `bun_core::String` is `Copy` — passing by value here mirrors Zig's
     // by-value struct copy with no refcount change.
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         &mut errorable,

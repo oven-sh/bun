@@ -26,7 +26,8 @@ use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
-use bun_string::{strings, MutableString};
+use bun_core::MutableString;
+use bun_paths::strings;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_threading::Channel;
 use bun_which::which;
@@ -1950,7 +1951,7 @@ impl RunCommand {
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
             let new_len = w_len + b".bunx".len() - b".exe".len();
-            let bunx = bun_string::w!("bunx");
+            let bunx = bun_core::w!("bunx");
             buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
             buf[new_len] = 0;
 
@@ -2493,7 +2494,7 @@ impl RunCommand {
                 unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
-            let root = bun_string::w!("\\??\\");
+            let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
             let cwd_len = unsafe {
                 sys::windows::kernel32::GetCurrentDirectoryW(
@@ -2506,13 +2507,13 @@ impl RunCommand {
                     break 'try_bunx_file;
                 }
                 let mut ptr = root.len() + cwd_len;
-                let prefix = bun_string::w!("\\node_modules\\.bin\\");
+                let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
                 ptr += prefix.len();
                 let encoded =
                     strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
                 ptr += encoded.len();
-                let ext = bun_string::w!(".bunx");
+                let ext = bun_core::w!(".bunx");
                 buf[ptr..ptr + ext.len()].copy_from_slice(ext);
                 ptr += ext.len();
                 buf[ptr] = 0;
@@ -2947,7 +2948,7 @@ struct RemoteImageDownload {
     // has a stable address once the owning struct is live).
     // Self-referential: borrows from `url: Box<[u8]>` below.
     async_http: bun_http::AsyncHTTP<'static>,
-    response_buffer: bun_string::MutableString,
+    response_buffer: bun_core::MutableString,
     url: Box<[u8]>,
     done: *const DoneChannel,
 }
@@ -3090,7 +3091,7 @@ impl RunCommand {
         // them concurrently.
         let mut batch = bun_threading::thread_pool::Batch::default();
         for raw_url in remote_urls.into_iter() {
-            let Ok(response_buffer) = bun_string::MutableString::init(8 * 1024) else {
+            let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
             // PORT NOTE: Zig wrote `.async_http = undefined` then overwrote it.
@@ -3115,7 +3116,7 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
-            let response_buffer_ptr: *mut bun_string::MutableString =
+            let response_buffer_ptr: *mut bun_core::MutableString =
                 unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(

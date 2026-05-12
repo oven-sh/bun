@@ -1,11 +1,18 @@
-#![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-#![warn(unused_must_use, unreachable_pub)]
-//! `bun_string` — port of `src/string/string.zig` (`bun.String` and friends).
+//! `bun_core::string` (formerly the `bun_string` crate) — port of
+//! `src/string/string.zig` (`bun.String` and friends).
 //!
 //! `String` is the FFI-compatible 5-variant tagged union shared with C++
 //! (`BunString` in `src/jsc/bindings/BunString.cpp`). `ZigString` is the
 //! pointer-tagged borrowed view; `ZigStringSlice` is the owned-or-borrowed
 //! UTF-8 byte slice that replaces Zig's allocator-vtable trick.
+//!
+//! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
+//! the `bun_string` crate is now a thin re-export shim over this module.
+
+// `#[macro_export]` macros defined in submodules (`w!`, `exact_case!`,
+// `to_utf16_literal!`, `literal!`) land at the *crate* root (`bun_core::`).
+// Re-export them here so `crate::string::w` / `bun_string::w` paths resolve.
+pub use crate::{w, exact_case, to_utf16_literal, literal};
 
 #[path = "HashedString.rs"]  pub mod hashed_string;
 #[path = "PathString.rs"]    pub mod path_string;
@@ -52,9 +59,9 @@ pub struct String(pub bun_alloc::String);
 // C++ mirror: `struct BunString { BunStringTag tag; BunStringImpl impl; }`
 // (`headers-handwritten.h`); returned **by value** from every `BunString__*`
 // FFI below, so size/align drift is silent ABI corruption.
-bun_core::assert_ffi_layout!(String, 24, 8);
+crate::assert_ffi_layout!(String, 24, 8);
 // The `as_zig()` accessor reinterprets `&bun_alloc::ZigString` as
-// `&crate::ZigString`; both are `#[repr(C)] { *const u8, usize }` with the
+// `&crate::string::ZigString`; both are `#[repr(C)] { *const u8, usize }` with the
 // same pointer-tag-bit scheme.
 const _: () = assert!(
     core::mem::size_of::<bun_alloc::ZigString>() == core::mem::size_of::<ZigString>()
@@ -135,7 +142,7 @@ impl String {
         // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string` is the
         // active union field. `ZigString` is `Copy`/POD so reading it is always
         // sound. The cast reinterprets `&bun_alloc::ZigString` as
-        // `&crate::ZigString` (both `#[repr(C)] { *const u8, usize }`, asserted
+        // `&crate::string::ZigString` (both `#[repr(C)] { *const u8, usize }`, asserted
         // above).
         unsafe { &*(core::ptr::addr_of!(self.0.value.zig_string) as *const ZigString) }
     }
@@ -299,7 +306,7 @@ impl String {
             unsafe { core::ptr::from_ref::<Ctx>(&*ctx).cast::<*mut c_void>().read() };
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, usize)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
-            Some(unsafe { bun_ptr::cast_fn_ptr::<
+            Some(unsafe { crate::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
@@ -407,7 +414,7 @@ impl String {
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
     /// WTF-backed string (UTF-8 on POSIX, UTF-16 on Windows).
-    pub fn create_from_os_path(os_path: &bun_paths::OSPathSlice) -> Self {
+    pub fn create_from_os_path(os_path: crate::OSPathSlice<'_>) -> Self {
         #[cfg(not(windows))]
         { Self::clone_utf8(os_path) }
         #[cfg(windows)]
@@ -574,7 +581,7 @@ impl String {
             return None;
         }
         if self.is_utf16() {
-            bun_core::strings::narrow_ascii_u16(self.utf16(), dst)
+            crate::strings::narrow_ascii_u16(self.utf16(), dst)
         } else {
             let src = self.byte_slice();
             if strings::first_non_ascii(src).is_some() {
@@ -808,7 +815,7 @@ impl String {
     }
 
     /// `bun.String.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
-    pub fn to_owned_slice_z(&self) -> bun_core::ZBox {
+    pub fn to_owned_slice_z(&self) -> crate::ZBox {
         self.to_zig_string().to_owned_slice_z()
     }
 
@@ -822,7 +829,7 @@ impl String {
     /// ANSI escape sequences as visible (string.zig). Dispatches on encoding
     /// to [`strings::visible::width`].
     pub fn visible_width(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::strings::visible::width as w;
+        use crate::string::strings::visible::width as w;
         if self.is_utf16() {
             return w::utf16(self.utf16(), ambiguous_as_wide);
         }
@@ -839,7 +846,7 @@ impl String {
     /// `self`, treating ANSI escape sequences as zero-width (string.zig).
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
     pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::strings::visible::width::exclude_ansi_colors as w;
+        use crate::string::strings::visible::width::exclude_ansi_colors as w;
         if self.is_utf16() {
             return w::utf16(self.utf16(), ambiguous_as_wide);
         }
@@ -1113,7 +1120,7 @@ impl From<WTFStringImpl> for String {
     }
 }
 
-impl bun_core::OptionsEnvArg for String {
+impl crate::OptionsEnvArg for String {
     #[inline]
     fn from_slice(s: &[u8]) -> Self {
         String::clone_utf8(s)
@@ -1251,27 +1258,27 @@ impl core::fmt::Display for String {
 
 /// `Display` adapter for [`String::github_action`]. Converts to UTF-8 on the
 /// fly (handles 16-bit / WTF-backed strings) and delegates to
-/// `bun_core::fmt::github_action_writer`.
+/// `crate::fmt::github_action_writer`.
 pub struct StringGithubActionFormatter<'a> {
     text: &'a String,
 }
 impl core::fmt::Display for StringGithubActionFormatter<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let utf8 = self.text.to_utf8_without_ref();
-        bun_core::fmt::github_action_writer(f, utf8.slice())
+        crate::fmt::github_action_writer(f, utf8.slice())
     }
 }
 
 /// `Display` adapter for [`ZigString::github_action`]. Converts to UTF-8 on
 /// the fly (handles 16-bit / latin-1 encodings) and delegates to
-/// `bun_core::fmt::github_action_writer`.
+/// `crate::fmt::github_action_writer`.
 pub struct ZigStringGithubActionFormatter {
     text: ZigString,
 }
 impl core::fmt::Display for ZigStringGithubActionFormatter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let utf8 = self.text.to_slice();
-        bun_core::fmt::github_action_writer(f, utf8.slice())
+        crate::fmt::github_action_writer(f, utf8.slice())
     }
 }
 
@@ -1282,9 +1289,9 @@ impl core::fmt::Display for ZigString {
             return write!(f, "{}", bstr::BStr::new(self.slice()));
         }
         if self.is_16bit() {
-            return bun_core::fmt::format_utf16_type(self.utf16_slice_aligned(), f);
+            return crate::fmt::format_utf16_type(self.utf16_slice_aligned(), f);
         }
-        bun_core::fmt::format_latin1(self.slice(), f)
+        crate::fmt::format_latin1(self.slice(), f)
     }
 }
 
@@ -1358,14 +1365,14 @@ impl ZigString {
             // `Zig::toString*` adopts it into a WTF string and `mi_free`s it on
             // string death. `heap::release` is the hand-off-to-foreign-owner
             // spelling (Zig `ZigString.dupeForJS` never frees `utf16` locally).
-            let leaked: &'static mut [u16] = bun_core::heap::release(utf16.into_boxed_slice());
+            let leaked: &'static mut [u16] = crate::heap::release(utf16.into_boxed_slice());
             let mut out = ZigString::init_utf16(leaked);
             out.mark_global();
             out.mark_utf16();
             Ok(out)
         } else {
             // Same hand-off: JSC owns the bytes, freed via `mi_free` on string death.
-            let duped: &'static mut [u8] = bun_core::heap::release(Box::<[u8]>::from(utf8));
+            let duped: &'static mut [u8] = crate::heap::release(Box::<[u8]>::from(utf8));
             let mut out = ZigString::init(duped);
             out.mark_global();
             Ok(out)
@@ -1448,7 +1455,7 @@ impl ZigString {
             return self.len;
         }
         if self.is_16bit() {
-            return bun_core::strings::element_length_utf16_into_utf8(self.utf16_slice());
+            return crate::strings::element_length_utf16_into_utf8(self.utf16_slice());
         }
         // Latin-1 path (ZigString.zig delegates to encoding.byteLengthU8(.utf8),
         // which is `simdutf.length.utf8.from.latin1` for the latin1 case).
@@ -1497,19 +1504,19 @@ impl ZigString {
     }
 
     /// `ZigString.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
-    pub fn to_owned_slice_z(self) -> bun_core::ZBox {
+    pub fn to_owned_slice_z(self) -> crate::ZBox {
         if self.is_utf8() {
             let mut v = self.slice().to_vec();
             v.push(0);
-            return bun_core::ZBox::from_vec_with_nul(v);
+            return crate::ZBox::from_vec_with_nul(v);
         }
         let mut list = if self.is_16bit() {
-            bun_core::strings::to_utf8_alloc(self.utf16_slice())
+            crate::strings::to_utf8_alloc(self.utf16_slice())
         } else {
-            bun_core::strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, self.slice())
+            crate::strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, self.slice())
         };
         list.push(0);
-        bun_core::ZBox::from_vec_with_nul(list)
+        crate::ZBox::from_vec_with_nul(list)
     }
 
     /// `ZigString.indexOfAny` (ZigString.zig:89) — first index whose code unit
@@ -1522,7 +1529,7 @@ impl ZigString {
                 .iter()
                 .position(|&c| c < 256 && chars.contains(&(c as u8)))
         } else {
-            crate::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
+            crate::string::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
         }
     }
 
@@ -1736,16 +1743,16 @@ impl ZigString {
     /// would not fit.
     pub fn slice_z_buf<'a>(
         &self,
-        buf: &'a mut bun_paths::PathBuffer,
-    ) -> Result<&'a ZStr, bun_core::Error> {
+        buf: &'a mut crate::PathBuffer,
+    ) -> Result<&'a ZStr, crate::Error> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
         let start_len = buf_slice.len();
         let mut cursor: &mut [u8] = buf_slice;
-        write!(cursor, "{}", self).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+        write!(cursor, "{}", self).map_err(|_| crate::err!("NoSpaceLeft"))?;
         let written = start_len - cursor.len();
         if written >= buf.len() {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(crate::err!("NoSpaceLeft"));
         }
         buf[written] = 0;
         Ok(ZStr::from_buf(&buf[..], written))
@@ -1825,12 +1832,12 @@ impl ZigString {
     pub fn to_slice(&self) -> ZigStringSlice {
         if self.len == 0 { return ZigStringSlice::EMPTY; }
         if self.is_16bit() {
-            return ZigStringSlice::Owned(bun_core::strings::to_utf8_alloc(self.utf16_slice()));
+            return ZigStringSlice::Owned(crate::strings::to_utf8_alloc(self.utf16_slice()));
         }
         let bytes = self.slice();
         if !self.is_utf8() {
             // Non-UTF-8 ZigString = Latin-1; transcode if any byte ≥ 0x80.
-            if let Some(v) = bun_core::strings::to_utf8_from_latin1(bytes) {
+            if let Some(v) = crate::strings::to_utf8_from_latin1(bytes) {
                 return ZigStringSlice::Owned(v);
             }
             // None ⇒ all-ASCII; safe to borrow as-is.
@@ -1863,12 +1870,12 @@ impl ZigString {
             return with_sentinel(self.slice().to_vec());
         }
         if self.is_16bit() {
-            return with_sentinel(bun_core::strings::to_utf8_alloc(self.utf16_slice()));
+            return with_sentinel(crate::strings::to_utf8_alloc(self.utf16_slice()));
         }
         // Latin-1: transcode non-ASCII, else byte-copy.
         let bytes = self.slice();
         with_sentinel(
-            bun_core::strings::to_utf8_from_latin1(bytes).unwrap_or_else(|| bytes.to_vec()),
+            crate::strings::to_utf8_from_latin1(bytes).unwrap_or_else(|| bytes.to_vec()),
         )
     }
 
@@ -1928,7 +1935,7 @@ impl ZigStringSlice {
     pub fn from_utf8_never_free(s: &[u8]) -> Self { Self::Static(s.as_ptr(), s.len()) }
     pub fn init_owned(v: Vec<u8>) -> Self { Self::Owned(v) }
     /// `ZigString.Slice.initDupe` — allocate an owned copy of `input`.
-    pub fn init_dupe(input: &[u8]) -> Result<Self, bun_core::AllocError> {
+    pub fn init_dupe(input: &[u8]) -> Result<Self, crate::AllocError> {
         Ok(Self::Owned(input.to_vec()))
     }
     /// `ZigString.Slice.cloneIfBorrowed` — if this slice borrows external
@@ -2139,7 +2146,7 @@ impl ZigStringSlice {
 
 // PORTING.md: ZStr/WStr are length-carrying NUL-terminated slices.
 // bun_core re-exports these; we are the canonical home.
-pub use bun_core::{ZStr, WStr};
+pub use crate::{ZStr, WStr};
 
 /// `bun_str::zig_string` — module path so callers can spell `ZigString.Slice`
 /// as `zig_string::Slice` (matches the Zig namespace `ZigString.Slice`).
@@ -2158,7 +2165,7 @@ pub mod zig_string {
 /// (lowest tier); re-exported here so existing `bun_string::StringPointer`
 /// callers (FFI sigs in `bun_jsc::FetchHeaders`, lockfile, sourcemap) keep
 /// resolving.
-pub use bun_core::StringPointer;
+pub use crate::StringPointer;
 
 pub use path_string::PathString;
 pub use mutable_string::MutableString;
@@ -2193,17 +2200,17 @@ pub use immutable as strings;
 pub mod lexer {
     #[inline]
     pub fn is_identifier_start(c: u32) -> bool {
-        crate::identifier::is_identifier_start(c as i32)
+        crate::string::identifier::is_identifier_start(c as i32)
     }
     #[inline]
     pub fn is_identifier_continue(c: u32) -> bool {
-        crate::identifier::is_identifier_part(c as i32)
+        crate::string::identifier::is_identifier_part(c as i32)
     }
     #[inline]
     pub fn is_identifier_part(c: u32) -> bool {
         is_identifier_continue(c)
     }
-    pub use crate::identifier::{is_identifier, is_identifier_utf16};
+    pub use crate::string::identifier::{is_identifier, is_identifier_utf16};
 }
 
 pub mod lexer_tables {
@@ -2259,10 +2266,10 @@ pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as u
 // pure-string `quoteForJSON` here.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod printer {
-    use crate::immutable::{self as strings, Encoding as StrEncoding};
-    use crate::mutable_string::MutableString;
+    use crate::string::immutable::{self as strings, Encoding as StrEncoding};
+    use crate::string::mutable_string::MutableString;
 
-    use bun_core::fmt::{hex2_upper, hex4_upper};
+    use crate::fmt::{hex2_upper, hex4_upper};
 
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
@@ -2283,15 +2290,15 @@ pub mod printer {
     /// surrogate-pair `\uHHHH\uHHHH` escape (uppercase hex).
     #[inline]
     pub const fn surrogate_pair_escape(c: u32) -> [u8; 12] {
-        let [lo, hi] = bun_core::strings::encode_surrogate_pair(c);
+        let [lo, hi] = crate::strings::encode_surrogate_pair(c);
         let l = hex4_upper(lo);
         let h = hex4_upper(hi);
         [b'\\', b'u', l[0], l[1], l[2], l[3], b'\\', b'u', h[0], h[1], h[2], h[3]]
     }
 
     /// Byte-sink alias so `write_pre_quoted_string` works for `Vec<u8>`,
-    /// `MutableString`, and any other `bun_core::io::Write` sink.
-    pub use bun_core::io::Write as PrinterWriter;
+    /// `MutableString`, and any other `crate::io::Write` sink.
+    pub use crate::io::Write as PrinterWriter;
 
     #[inline]
     pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
@@ -2321,13 +2328,13 @@ pub mod printer {
         ascii_only: bool,
         json: bool,
         encoding: StrEncoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
         // panics (rather than UB) if that contract is violated.
         let text16: &[u16] = if encoding == StrEncoding::Utf16 {
-            bun_core::cast_slice::<u8, u16>(text_in)
+            crate::cast_slice::<u8, u16>(text_in)
         } else {
             &[]
         };
@@ -2441,7 +2448,7 @@ pub mod printer {
         text: &[u8],
         bytes: &mut MutableString,
         ascii_only: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // PERF(port): Zig pre-grew via estimateLengthForUTF8 — profile in Phase B.
         bytes.append_char(b'"')?;
         write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;
@@ -2457,9 +2464,9 @@ pub use printer::quote_for_json;
 
 /// `bun.sliceTo(buf, 0)` — slice up to (not including) the first NUL byte,
 /// or the whole buffer if none. Port of `std.mem.sliceTo` for `u8`/`0`.
-/// Sunk to `bun_core::ffi` so tier-1 crates (cares_sys, sys) can share it;
+/// Sunk to `crate::ffi` so tier-1 crates (cares_sys, sys) can share it;
 /// re-exported here for the existing `bun_string::slice_to_nul` callers.
-pub use bun_core::ffi::{slice_to_nul, slice_to_nul_mut};
+pub use crate::ffi::{slice_to_nul, slice_to_nul_mut};
 
 /// move-in: `cheap_prefix_normalizer` (MOVE_DOWN ← `bundle_v2.zig`).
 ///
@@ -2479,7 +2486,7 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [
 
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
     // ["/foo/", "/bar.js"]                 => "/foo/bar.js"
-    let win = bun_core::Environment::IS_WINDOWS;
+    let win = crate::Environment::IS_WINDOWS;
     if strings::ends_with_char(prefix, b'/') || (win && strings::ends_with_char(prefix, b'\\')) {
         if strings::starts_with_char(suffix, b'/')
             || (win && strings::starts_with_char(suffix, b'\\'))

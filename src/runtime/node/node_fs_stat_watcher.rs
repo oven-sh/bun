@@ -18,7 +18,7 @@ use bun_jsc::{
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 

@@ -3,7 +3,7 @@ use core::mem::ManuallyDrop;
 
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
-use bun_string::strings;
+use bun_paths::strings;
 
 use crate::hosted_git_info;
 use crate::{Features, PackageManager, PackageNameHash};
@@ -136,7 +136,7 @@ impl DependencyExt for Dependency {
             return name;
         }
         let name_ = &name[1..];
-        match bun_str::strings::index_of_char(name_, b'/') {
+        match bun_core::index_of_char(name_, b'/') {
             Some(i) => &name_[i as usize + 1..],
             None => name,
         }

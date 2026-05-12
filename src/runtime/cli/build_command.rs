@@ -13,7 +13,7 @@ use bun_core::env::OperatingSystem;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{resolve_path, PathBuffer};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -798,7 +798,7 @@ impl BuildCommand {
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
                     zbuf.0[n] = 0;
                     // SAFETY: NUL-terminated above.
-                    let z = bun_str::ZStr::from_buf(&zbuf.0[..], n);
+                    let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
@@ -913,7 +913,7 @@ impl BuildCommand {
                                     encoding: bun_sys::WriteFileEncoding::Buffer,
                                     dirfd: root_dir.fd,
                                     file: bun_sys::PathOrFileDescriptor::Path(
-                                        bun_str::PathString::init(map_basename),
+                                        bun_core::PathString::init(map_basename),
                                     ),
                                     ..Default::default()
                                 },

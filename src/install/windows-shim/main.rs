@@ -169,7 +169,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// `bun_str::w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only).
-/// Mirrors `bun_string::w!` (src/string/immutable.rs).
+/// Mirrors `bun_core::w!` (src/string/immutable.rs).
 #[macro_export]
 macro_rules! w_lit {
     ($s:literal) => {{

@@ -32,7 +32,7 @@
 
 use bun_collections::{VecExt, ByteVecExt};
 use bun_jsc::JsCell;
-use crate::bun_str::WTFStringImplExt as _;
+use bun_core::WTFStringImplExt as _;
 use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -343,7 +343,7 @@ pub struct Interpreter {
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
-    pub vm_args_utf8: JsCell<Vec<bun_str::ZigStringSlice>>,
+    pub vm_args_utf8: JsCell<Vec<bun_core::ZigStringSlice>>,
 
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
@@ -444,13 +444,13 @@ impl Interpreter {
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a mut [bun_str::String],
+        jsstrings_to_escape: &'a mut [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> Result<bun_shell_parser::ast::Script<'a>, bun_core::Error> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
         let jsobjs_len = jsobjs.len() as u32;
-        let lex_result = if bun_core::strings::is_all_ascii(src) {
+        let lex_result = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
             lexer.lex().map_err(|e| bun_core::err!(from e))?;
             lexer.get_result()
@@ -1133,7 +1133,7 @@ impl Interpreter {
         for arg in vm_args {
             size += arg.slice().len();
         }
-        size += vm_args.capacity() * core::mem::size_of::<bun_str::ZigStringSlice>();
+        size += vm_args.capacity() * core::mem::size_of::<bun_core::ZigStringSlice>();
         size
     }
 
@@ -1580,7 +1580,7 @@ impl Interpreter {
     /// without re-converting on every reference.
     pub fn get_vm_args_utf8(
         &self,
-        argv: &[bun_str::WTFStringImpl],
+        argv: &[bun_core::WTFStringImpl],
         idx: u8,
     ) -> &[u8] {
         self.vm_args_utf8.with_mut(|v| {
@@ -1604,7 +1604,7 @@ impl Interpreter {
         original_int: u8,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
     ) {
         let mut int = original_int;
         match event_loop {

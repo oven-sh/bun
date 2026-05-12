@@ -5,11 +5,11 @@ use core::slice;
 
 use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::strings;
-use bun_str::String as BunString;
+use bun_core::strings;
+use bun_core::String as BunString;
 use bun_simdutf_sys::simdutf as bun_simdutf;
 
-// `bun_str::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
+// `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
 // once (in `bun_str`) instead of being re-derived here.
 #[inline]
@@ -288,7 +288,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             // TODO(port): Zig reinterpreted the owned u8 allocation as []u16 (with @alignCast)
             // and handed it to createExternalGloballyAllocated(.utf16, ...). Reinterpreting a
             // Vec<u8> as Vec<u16> is not generally sound in Rust (alignment + allocator layout).
-            // Phase B: route through bun_str::String API that accepts raw (ptr,len,cap) bytes.
+            // Phase B: route through bun_core::String API that accepts raw (ptr,len,cap) bytes.
             // SAFETY: input.as_ptr() is at least 1-aligned; Zig asserted u16 alignment via @alignCast.
             let as_u16 = unsafe {
                 let mut input = core::mem::ManuallyDrop::new(input);
@@ -808,7 +808,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.String.encodeInto` / `bun.String.encode` / `ZigString.encodeWithAllocator`
 //
-// Hosted here (not on `bun_string::String`) because the encoder bodies above
+// Hosted here (not on `bun_core::String`) because the encoder bodies above
 // (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
 // putting the methods on the `String` type would require a `bun_string →
 // bun_runtime` upward dep. Per PORTING.md §Dep-cycle, the methods move UP into
@@ -887,7 +887,7 @@ pub trait BunStringEncode {
     fn encode(&self, enc: Encoding) -> Vec<u8>;
 }
 
-impl BunStringEncode for bun_str::String {
+impl BunStringEncode for bun_core::String {
     /// `bun.String.encodeInto` — encode `self` into `out`. Returns bytes written.
     fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error> {
         if self.is_utf16() {
@@ -918,7 +918,7 @@ pub trait ZigStringEncode {
     }
 }
 
-impl ZigStringEncode for bun_str::ZigString {
+impl ZigStringEncode for bun_core::ZigString {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
         if self.is_16bit() {
             construct_from_u16_dyn(self.utf16_slice(), enc)

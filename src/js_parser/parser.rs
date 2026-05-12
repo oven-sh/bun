@@ -185,7 +185,7 @@ pub(crate) use bun_ast::base::Ref;
 #[allow(non_snake_case)]
 pub mod Runtime {
     use bun_collections::StringSet;
-    use bun_string::strings;
+    use bun_core::strings;
     use bun_wyhash::Wyhash;
 
     
@@ -968,7 +968,7 @@ impl<'a> JSXTag<'a> {
     where
         P: crate::p::ParserLike<'a>,
     {
-        use bun_string::strings;
+        use bun_core::strings;
 
         let loc = p.lexer().loc();
 

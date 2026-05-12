@@ -3,7 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_str::{strings, ZigString};
+use bun_core::{strings, ZigString};
 
 use super::Expect;
 use super::ExpectAny;

@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::{feature_flags, Output};
-use bun_str::strings;
+use bun_core::strings;
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
@@ -98,7 +98,7 @@ impl HmrSocket {
                     return ws.close();
                 }
                 let mut generation_bytes = [0u8; 4];
-                // std.fmt.hexToBytes → bun_str::strings::decode_hex_to_bytes
+                // std.fmt.hexToBytes → bun_core::decode_hex_to_bytes
                 if strings::decode_hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
                     return ws.close();
                 }
@@ -188,8 +188,8 @@ impl HmrSocket {
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
                 if let Some(agent) = unsafe { dev.inspector() } {
                     if self.inspector_connection_id > -1 {
-                        let mut pattern_str = bun_str::String::init(pattern);
-                        // `defer pattern_str.deref()` → Drop on bun_str::String
+                        let mut pattern_str = bun_core::String::init(pattern);
+                        // `defer pattern_str.deref()` → Drop on bun_core::String
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
@@ -285,8 +285,8 @@ impl HmrSocket {
 
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
                 if let Some(agent) = unsafe { dev.inspector() } {
-                    let mut log_str = bun_str::String::init(data);
-                    // `defer log_str.deref()` → Drop on bun_str::String
+                    let mut log_str = bun_core::String::init(data);
+                    // `defer log_str.deref()` → Drop on bun_core::String
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
                 }
 
@@ -395,8 +395,8 @@ impl HmrSocket {
             let dev = unsafe { self.dev() };
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
             if let Some(agent) = unsafe { dev.inspector() } {
-                let mut pattern_str = bun_str::String::init(pattern);
-                // `defer pattern_str.deref()` → Drop on bun_str::String
+                let mut pattern_str = bun_core::String::init(pattern);
+                // `defer pattern_str.deref()` → Drop on bun_core::String
                 agent.notify_client_navigated(
                     dev.inspector_server_id,
                     self.inspector_connection_id,

@@ -4,7 +4,7 @@ use bun_valkey::valkey_protocol as protocol;
 
 use super::protocol_jsc::{resp_value_to_js_with_options, ToJSOptions};
 
-type Slice = bun_str::ZigStringSlice;
+type Slice = bun_core::ZigStringSlice;
 
 // PORT NOTE: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept

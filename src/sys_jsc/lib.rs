@@ -48,7 +48,7 @@ pub trait SystemErrorJsc {
 
 #[inline]
 fn marshal(e: &bun_sys::SystemError) -> bun_jsc::SystemError {
-    // `bun_string::String` is `Copy` (intrusive WTF refcount handle); bitwise
+    // `bun_core::String` is `Copy` (intrusive WTF refcount handle); bitwise
     // copy *transfers* the existing ref to the FFI-layout struct. No `ref_()`
     // here — `to_error_instance()` will `deref()` each field exactly once.
     bun_jsc::SystemError {

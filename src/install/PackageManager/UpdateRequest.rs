@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_core::{Global, Output};
 use bun_ast::{Log, Loc};
-use bun_str::strings;
+use bun_core::strings;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 use bun_js_parser as js_ast;
 

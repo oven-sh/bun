@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 use crate::mark_binding;
 
 // TODO(port): move to <jsc>_sys

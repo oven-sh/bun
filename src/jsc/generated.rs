@@ -88,9 +88,9 @@ pub mod bun_object {
 
 // Shorthand for the bindgen string payload. The real generator hands back a
 // `bun.String` / `WTFStringImpl`; downstream code only calls `.length()` /
-// `.to_utf8()` / `.to_owned_slice_z()` on it, all of which `bun_string::String`
+// `.to_utf8()` / `.to_owned_slice_z()` on it, all of which `bun_core::String`
 // already provides.
-pub type GenString = bun_string::String;
+pub type GenString = bun_core::String;
 
 /// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
 /// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
@@ -116,7 +116,7 @@ pub type GenBlob = *mut core::ffi::c_void;
 // `convert_from_extern` step takes ownership of any embedded heap refs.
 // ──────────────────────────────────────────────────────────────────────────
 
-type RawWTFStringImpl = *mut bun_string::WTFStringImplStruct;
+type RawWTFStringImpl = *mut bun_core::WTFStringImplStruct;
 
 /// `BindgenOptional(BindgenTrivial<T>).ExternType` — `T` has no custom
 /// `OptionalExternType`, so the C++ side wraps it in a 2-arm tagged union
@@ -162,7 +162,7 @@ struct ExternArrayList<T> {
 #[inline]
 fn adopt_string(ptr: RawWTFStringImpl) -> GenString {
     // C++ hands back a +1 ref; `adopt_wtf_impl` takes ownership (no inc).
-    bun_string::String::adopt_wtf_impl(ptr)
+    bun_core::String::adopt_wtf_impl(ptr)
 }
 
 #[inline]
@@ -304,7 +304,7 @@ pub struct SSLConfig {
 // ── refcount release on drop ──────────────────────────────────────────────
 //
 // `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
-// (= `bun_string::String`), which is `Copy` and has no `Drop`. The Zig
+// (= `bun_core::String`), which is `Copy` and has no `Drop`. The Zig
 // bindgen output instead types these fields as `bun.string.WTFString.Optional`
 // — an RAII `WTF::Ref`-alike whose `deinit()` derefs — and the generated
 // struct's `deinit()` calls `bun.memory.deinit(&field)` on each. We replicate
@@ -316,7 +316,7 @@ pub struct SSLConfig {
 // out of scope here.
 //
 // `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
-// `bun_string::String` (the derived `Clone`, not the inherent `clone()` which
+// `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
 // bumps), so it does not take an additional ref — the single adopted ref stays
 // owned by the field and is released exactly once below.
 

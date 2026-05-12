@@ -127,7 +127,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         h3_client,
         "conn_close status={} '{}'",
         st,
-        BStr::new(bun_string::slice_to_nul(&buf)),
+        BStr::new(bun_core::slice_to_nul(&buf)),
     );
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);

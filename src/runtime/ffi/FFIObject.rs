@@ -5,7 +5,7 @@ use bun_jsc::{
     JSValue, JsResult,
 };
 use bun_jsc::host_fn::DomCall;
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 // Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
 use super::ffi_body::GlobalObjectFfiExt as _;

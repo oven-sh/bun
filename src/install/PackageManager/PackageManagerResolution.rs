@@ -5,7 +5,7 @@ use bun_core::Output;
 use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
-use bun_str::strings;
+use bun_core::strings;
 
 use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};

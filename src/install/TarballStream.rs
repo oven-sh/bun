@@ -26,7 +26,7 @@ use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
 use bun_paths::resolve_path::{self, platform};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Dir, E, Fd, FdExt, FdDirExt, FileKind, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 

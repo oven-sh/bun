@@ -10,7 +10,7 @@ use bun_collections::BoundedArray;
 use bun_ast::Log;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
-use bun_string::strings;
+use bun_core::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
 use crate::linker_context_mod::{debug, GenerateChunkCtx, LinkerContext, PendingPartRange};

@@ -1,5 +1,5 @@
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-use bun_str::ZigStringSlice;
+use bun_core::ZigStringSlice;
 use crate::webcore::Blob;
 
 // ──────────────────────────────────────────────────────────────────────────

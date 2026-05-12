@@ -14,7 +14,7 @@ use core::fmt;
 
 use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_ast::{Loc, Log, Source};
-use bun_string::{strings, ZStr};
+use bun_core::ZStr;
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -62,8 +62,8 @@ pub(crate) fn should_skip_line(line: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn is_quoted(val: &[u8]) -> bool {
-    (strings::starts_with_char(val, b'"') && strings::ends_with_char(val, b'"'))
-        || (strings::starts_with_char(val, b'\'') && strings::ends_with_char(val, b'\''))
+    (bun_core::starts_with_char(val, b'"') && bun_core::ends_with_char(val, b'"'))
+        || (bun_core::starts_with_char(val, b'\'') && bun_core::ends_with_char(val, b'\''))
 }
 
 #[inline]
@@ -256,7 +256,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_ast::E::Rope;
 use bun_ast::{self as js_ast, E, Expr, ExprData};
 use bun_ast::{IntoStr, Loc, Log, Source};
-use bun_string::{strings, ZStr};
+use bun_core::ZStr;
 use bun_url::URL;
 
 use super::{
@@ -467,7 +467,7 @@ impl<'a> Parser<'a> {
                 )?
                 .into_key();
             let is_array: bool = {
-                key_raw.len() > 2 && strings::ends_with(key_raw, b"[]")
+                key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]")
                 // Commenting out because options are not supported but we might
                 // support them.
                 // if (this.opts.bracked_array) {
@@ -482,7 +482,7 @@ impl<'a> Parser<'a> {
                 // }
             };
 
-            let key = if is_array && strings::ends_with(key_raw, b"[]") {
+            let key = if is_array && bun_core::ends_with(key_raw, b"[]") {
                 &key_raw[..key_raw.len() - 2]
             } else {
                 key_raw
@@ -567,7 +567,7 @@ impl<'a> Parser<'a> {
         offset_: i32,
     ) -> OOM<PrepareResult<'a>> {
         let mut offset = offset_;
-        let mut val = strings::trim(val_, b" \n\r\t");
+        let mut val = bun_core::trim(val_, b" \n\r\t");
 
         if is_quoted(val) {
             'out: {
@@ -704,7 +704,7 @@ impl<'a> Parser<'a> {
                                 unesc.extend_from_slice(b"\\.");
                             }
                         }
-                        _ => match strings::utf8_byte_sequence_length(c) {
+                        _ => match bun_core::utf8_byte_sequence_length(c) {
                             0 | 1 => unesc.extend_from_slice(&[b'\\', c]),
                             2 => {
                                 if val.len() - i >= 2 {
@@ -773,7 +773,7 @@ impl<'a> Parser<'a> {
                                 unesc.push(b'.');
                             }
                         }
-                        _ => match strings::utf8_byte_sequence_length(c) {
+                        _ => match bun_core::utf8_byte_sequence_length(c) {
                             0 | 1 => unesc.push(c),
                             2 => {
                                 if val.len() - i >= 2 {
@@ -873,7 +873,7 @@ impl<'a> Parser<'a> {
     /// - Backslash escaping is already handled by JSON parsing
     fn expand_env_vars(&mut self, bump: &'a Arena, val: &[u8]) -> OOM<&'a [u8]> {
         // Quick check if there are any env vars to expand
-        if strings::index_of(val, b"${").is_none() {
+        if bun_core::index_of(val, b"${").is_none() {
             // TODO(port): lifetime — Zig returns `val` directly (arena-borrowed).
             return Ok(bump.alloc_slice_copy(val));
         }
@@ -1147,7 +1147,7 @@ impl<'a> ConfigIterator<'a> {
 
         if let Some(keyexpr) = prop.key {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
-                if strings::has_prefix(key, b"//") {
+                if bun_core::has_prefix(key, b"//") {
                     // PORT NOTE: Zig builds this list at comptime by reversing
                     // `std.meta.fieldNames(Item.Opt)` so that `_authToken` is
                     // matched before `_auth`. We hard-code the reversed order.
@@ -1168,7 +1168,7 @@ impl<'a> ConfigIterator<'a> {
                         buf[1..1 + name.len()].copy_from_slice(name);
                         let name_with_eq = &buf[..1 + name.len()];
 
-                        if let Some(index) = strings::last_index_of(key, name_with_eq) {
+                        if let Some(index) = bun_core::last_index_of(key, name_with_eq) {
                             let url_part = &key[2..index];
                             if let Some(value_expr) = prop.value {
                                 if let Some(value) = value_expr.as_utf8_string_literal() {
@@ -1221,7 +1221,7 @@ impl<'a> ScopeIterator<'a> {
 
         if let Some(keyexpr) = prop.key {
             if let Some(key) = keyexpr.as_utf8_string_literal() {
-                if strings::has_prefix(key, b"@") && strings::ends_with(key, b":registry") {
+                if bun_core::has_prefix(key, b"@") && bun_core::ends_with(key, b":registry") {
                     if !self.count {
                         let registry = 'brk: {
                             if let Some(value) = prop.value {
@@ -1571,7 +1571,7 @@ pub fn load_npmrc(
             for prop in out_obj.properties.slice() {
                 if let Some(keyexpr) = &prop.key {
                     if let Some(key) = keyexpr.as_utf8_string_literal() {
-                        if strings::has_prefix(key, b"//") {
+                        if bun_core::has_prefix(key, b"//") {
                             count += 1;
                         }
                     }
@@ -1672,10 +1672,10 @@ pub fn load_npmrc(
         for conf_item in configs.iter() {
             let conf_item_url = URL::parse(&conf_item.registry_url);
 
-            if strings::without_trailing_slash(&default_registry_host)
-                == strings::without_trailing_slash(conf_item_url.host)
-                && strings::without_trailing_slash(&default_registry_pathname)
-                    == strings::without_trailing_slash(conf_item_url.pathname)
+            if bun_core::without_trailing_slash(&default_registry_host)
+                == bun_core::without_trailing_slash(conf_item_url.host)
+                && bun_core::without_trailing_slash(&default_registry_pathname)
+                    == bun_core::without_trailing_slash(conf_item_url.pathname)
             {
                 // Apply config to default registry
                 let v: &mut NpmRegistry = 'brk: {
@@ -1733,14 +1733,14 @@ pub fn load_npmrc(
             {
                 let url = URL::parse(url_bytes);
 
-                if strings::without_trailing_slash(url.host)
-                    == strings::without_trailing_slash(conf_item_url.host)
-                    && strings::without_trailing_slash(url.pathname)
-                        == strings::without_trailing_slash(conf_item_url.pathname)
+                if bun_core::without_trailing_slash(url.host)
+                    == bun_core::without_trailing_slash(conf_item_url.host)
+                    && bun_core::without_trailing_slash(url.pathname)
+                        == bun_core::without_trailing_slash(conf_item_url.pathname)
                 {
                     if !conf_item_url.hostname.is_empty() {
-                        if strings::without_trailing_slash(url.hostname)
-                            != strings::without_trailing_slash(conf_item_url.hostname)
+                        if bun_core::without_trailing_slash(url.hostname)
+                            != bun_core::without_trailing_slash(conf_item_url.hostname)
                         {
                             continue;
                         }

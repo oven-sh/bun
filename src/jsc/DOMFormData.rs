@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JSValue, JsResult, VM};
-use bun_string::ZigString;
+use bun_core::ZigString;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::DOMFormData (C++ side).

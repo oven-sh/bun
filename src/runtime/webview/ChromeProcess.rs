@@ -28,7 +28,7 @@ use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
 use bun_spawn::{self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd, FdExt as _, O};
 
 declare_scope!(Chrome, hidden);

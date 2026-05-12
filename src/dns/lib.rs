@@ -5,7 +5,7 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 // Zig used `std.hash.Wyhash`; bun_wyhash exports `Wyhash11` (same iterative
 // init/update/final_ surface). Hash is in-memory dedupe only — algorithm
 // identity is not load-bearing.

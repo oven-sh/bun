@@ -6,7 +6,7 @@ use bun_core::{Global, Output};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
 use bun_paths::{self as Path, platform, AbsPath, AutoAbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self as Syscall, Dir, Fd, FdDirExt, FdExt};
 
 use crate::bin_real as bin;

@@ -1,6 +1,6 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.

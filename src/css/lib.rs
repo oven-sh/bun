@@ -8,7 +8,7 @@ extern crate self as bun_css;
 /// ASCII case-insensitive ident dispatch — Rust port of Zig's
 /// `ComptimeStringMap.getCaseInsensitiveWithEql` / rust-cssparser's
 /// `match_ignore_ascii_case!`. Expands to a linear if-else chain over
-/// [`bun_string::strings::eql_case_insensitive_ascii_check_length`], so it is
+/// [`bun_core::eql_case_insensitive_ascii_check_length`], so it is
 /// runtime-equivalent to the open-coded chains it replaces. Subsumes the
 /// per-file local `m!`/`eq!` macros and chained `if eql_case_insensitive_ascii`
 /// blocks scattered across `src/css/`.
@@ -17,7 +17,7 @@ extern crate self as bun_css;
 macro_rules! match_ignore_ascii_case {
     ($name:expr, { $( $($lit:literal)|+ => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
         let __n: &[u8] = $name;
-        $( if $( ::bun_string::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+ { $arm } else )* { $fallback }
+        $( if $( ::bun_core::eql_case_insensitive_ascii_check_length(__n, $lit) )||+ { $arm } else )* { $fallback }
     }};
 }
 

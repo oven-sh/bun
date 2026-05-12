@@ -206,5 +206,5 @@ pub use bun_sys::macho::{LoadCommand, LoadCommandIterator, RawSlice};
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {
-    bun_string::slice_to_nul(name)
+    bun_core::slice_to_nul(name)
 }

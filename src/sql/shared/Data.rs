@@ -1,6 +1,6 @@
 use bun_collections::{VecExt, BoundedArray};
 use bun_ptr::RawSlice;
-use bun_string::ZStr;
+use bun_core::ZStr;
 
 pub type InlineStorage = BoundedArray<u8, 15>;
 

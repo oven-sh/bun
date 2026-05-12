@@ -14,7 +14,7 @@ use bun_install::package_manager::{
 use bun_install::{resolution, CommandLineArguments, DependencyID, PackageID, PackageManager};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
-use bun_str::strings;
+use bun_core::strings;
 use bun_wyhash::hash;
 
 use crate::Command;

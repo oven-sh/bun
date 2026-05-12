@@ -31,7 +31,7 @@ impl ContainerName {
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
         use crate::css_values::ident::CustomIdentFns;
-        use bun_string::strings;
+        use bun_core::strings;
         let ident = match CustomIdentFns::parse(input) {
             Ok(vv) => vv,
             Err(e) => return Err(e),

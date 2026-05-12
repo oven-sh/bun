@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use crate::JSValue;
 // `@import("ResolvedSourceTag")` is a build-system module (codegen → ResolvedSourceTag.zig).

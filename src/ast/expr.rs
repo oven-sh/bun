@@ -11,7 +11,7 @@ use bun_alloc::{Arena as Bump, AllocError};
 use bun_collections::{VecExt, ArrayHashMap};
 use bun_core::{self};
 use crate::Loc;
-use bun_string::{self as strings, ZStr};
+use bun_core::{strings, ZStr};
 
 use bun_alloc::ArenaVecExt as _;
 use crate::{
@@ -247,7 +247,7 @@ impl Expr {
     }
 
     // TODO(b2-ast-round-C): gated on `EString::string_z` (E.rs:1666 block) which
-    // needs `bun_string::ZStr` bump-arena constructors. Only caller
+    // needs `bun_core::ZStr` bump-arena constructors. Only caller
     // (`get_string_cloned_z`) is likewise gated.
     
     #[inline]
@@ -279,7 +279,7 @@ impl Expr {
 
 // Expr — property/object/string accessor methods.
 // TODO(b2-ast-round-C): these call into `E::Object::as_property` / `EString`
-// methods that need `bun_string::utf16_eql_string`/`to_utf8_alloc` (track-A
+// methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
 // blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
 
@@ -296,7 +296,7 @@ impl Expr {
             }
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
-            if strings::strings::eql_any_comptime(&key_str.data, names) {
+            if bun_core::eql_any_comptime(&key_str.data, names) {
                 return true;
             }
         }
@@ -381,11 +381,11 @@ impl Expr {
             return None;
         }
 
-        if let Some(idx) = strings::strings::index_of_any(name, b"[.") {
+        if let Some(idx) = bun_core::index_of_any(name, b"[.") {
             let idx = idx as usize;
             match name[idx] {
                 b'[' => {
-                    let end_idx = strings::strings::index_of_char(name, b']')? as usize;
+                    let end_idx = bun_core::index_of_char(name, b']')? as usize;
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
@@ -2845,7 +2845,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if strings::strings::eql_long(&l.value, &r.value, true) {
+                    if bun_core::immutable::eql_long(&l.value, &r.value, true) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true
@@ -3093,7 +3093,7 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     if str.is_empty() {
         return 0.0;
     }
-    if !strings::strings::is_all_ascii(str) {
+    if !bun_core::is_all_ascii(str) {
         return f64::NAN;
     }
     // TODO(port): move to *_sys

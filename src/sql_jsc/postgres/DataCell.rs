@@ -4,7 +4,7 @@ use core::mem::size_of;
 
 use bun_core::err;
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -32,7 +32,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let mut buf = vec![0u8; len].into_boxed_slice();
     // errdefer free(buf) → Box drops on `?`
 
-    let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)
+    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
         .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
     let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
 
@@ -602,7 +602,7 @@ fn parse_array(
                                 array.push(SQLDataCell {
                                     tag: Tag::Float8,
                                     value: Value {
-                                        float8: bun_string::parse_double(element).unwrap_or(f64::NAN),
+                                        float8: bun_core::parse_double(element).unwrap_or(f64::NAN),
                                     },
                                     ..Default::default()
                                 });
@@ -929,7 +929,7 @@ pub fn from_bytes(
                     ..Default::default()
                 })
             } else {
-                let float8: f64 = bun_string::parse_double(bytes).unwrap_or(f64::NAN);
+                let float8: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
                 Ok(SQLDataCell {
                     tag: Tag::Float8,
                     value: Value { float8 },
@@ -945,7 +945,7 @@ pub fn from_bytes(
                     ..Default::default()
                 })
             } else {
-                let float4: f64 = bun_string::parse_double(bytes).unwrap_or(f64::NAN);
+                let float4: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
                 Ok(SQLDataCell {
                     tag: Tag::Float8,
                     value: Value { float8: float4 },

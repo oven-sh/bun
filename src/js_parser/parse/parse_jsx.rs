@@ -9,7 +9,7 @@ use crate::parser::{options, JSXTag, JSXTagData, JsxT};
 use bun_ast::op::Level;
 use bun_collections::VecExt;
 use bun_core::err;
-use bun_string::strings;
+use bun_core::strings;
 
 // Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`

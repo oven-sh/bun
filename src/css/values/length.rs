@@ -8,7 +8,7 @@ use crate::values::protocol;
 use crate::targets::Browsers;
 use crate::compat::Feature;
 
-use bun_string::strings;
+use bun_core::strings;
 use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).

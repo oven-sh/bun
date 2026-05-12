@@ -7,6 +7,6 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_core.workspace = true
 bun_jsc.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true

@@ -7,7 +7,7 @@ use bun_http::{Headers, Method};
 use bun_http_types::ETag::{StringPointer};
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -83,7 +83,7 @@ impl FileRoute {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let mut string = BunString::borrow_utf8(last_modified);
-                // `defer string.deref()` — handled by Drop on bun_str::String
+                // `defer string.deref()` — handled by Drop on bun_core::String
                 // SAFETY: `VirtualMachine::get()` returns the live per-thread
                 // singleton; FileRoute is only ever reached from a server
                 // request callback on the JS thread.
@@ -322,7 +322,7 @@ impl FileRoute {
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
                     // SAFETY: path_buffer[path.len()] == 0 written above
-                    bun_str::ZStr::from_buf(&path_buffer[..], path.len()),
+                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
                     open_flags,
                     0,
                 )

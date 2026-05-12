@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use bun_collections::HashMap;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str as strings;
+use bun_core::strings;
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
@@ -131,7 +131,7 @@ pub fn bun_create_object_url(
     };
     let registry = ObjectURLRegistry::singleton();
     let uuid = registry.register(global_object.bun_vm_ptr(), blob);
-    let mut str = bun_str::String::create_format(format_args!("blob:{}", uuid));
+    let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }
 
@@ -148,9 +148,9 @@ pub fn bun_revoke_object_url(
         return Err(global_object
             .throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
     }
-    // `to_bun_string` returns a +1 ref; `bun_str::String` is `Copy` (no Drop),
+    // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()` — Zig's `defer str.deref()`.
-    let str = bun_str::OwnedString::new(
+    let str = bun_core::OwnedString::new(
         arguments.ptr[0]
             .to_bun_string(global_object)
             .expect("unreachable"),
@@ -186,7 +186,7 @@ pub fn js_function_resolve_object_url(
     // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
     // path (exception, non-blob prefix, success) releases it — Zig's
     // `defer str.deref()`.
-    let str = bun_str::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
+    let str = bun_core::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
 
     if global_object.has_exception() {
         return Ok(JSValue::ZERO);
@@ -207,7 +207,7 @@ pub fn js_function_resolve_object_url(
 pub const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
 
 pub fn is_blob_url(url: &[u8]) -> bool {
-    url.len() >= SPECIFIER_LEN && strings::strings::has_prefix_comptime(url, b"blob:")
+    url.len() >= SPECIFIER_LEN && strings::has_prefix_comptime(url, b"blob:")
 }
 
 // ported from: src/runtime/webcore/ObjectURLRegistry.zig

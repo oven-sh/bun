@@ -292,21 +292,17 @@ pub mod dir_iterator {
                 // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
                 //                         u8 d_type; char d_name[]; }
                 let base = self.index;
-                let p = self.buf.0.as_ptr();
-                // SAFETY: kernel guarantees a complete record fits in [base..end_index).
-                let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
-                } as usize;
-                let d_type = unsafe { *p.add(base + 18) };
+                let buf = &self.buf.0;
+                // Kernel guarantees a complete record fits in [base..end_index);
+                // safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
+                let d_type = buf[base + 18];
                 self.index = base + reclen;
 
                 // d_name is NUL-terminated within the record.
-                let name_ptr = unsafe { p.add(base + 19) };
-                let max = reclen.saturating_sub(19);
-                let mut len = 0usize;
-                // SAFETY: name_ptr[..max] lies inside the record.
-                while len < max && unsafe { *name_ptr.add(len) } != 0 { len += 1; }
-                let name = unsafe { core::slice::from_raw_parts(name_ptr, len) };
+                let name_field = &buf[base + 19..base + reclen];
+                let nul = name_field.iter().position(|&b| b == 0).unwrap_or(name_field.len());
+                let name = &name_field[..nul];
 
                 // skip . and .. entries
                 if name == b"." || name == b".." { continue; }
@@ -381,23 +377,18 @@ pub mod dir_iterator {
                 //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
                 //   u8 d_type; char d_name[];
                 let base = self.index;
-                let p = self.buf.0.as_ptr();
-                // SAFETY: kernel guarantees a complete record fits in [base..end_index).
-                let d_ino = unsafe {
-                    core::ptr::read_unaligned(p.add(base).cast::<u64>())
-                };
-                let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
-                } as usize;
-                let namlen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 18).cast::<u16>())
-                } as usize;
-                let d_type = unsafe { *p.add(base + 20) };
+                let buf = &self.buf.0;
+                // Kernel guarantees a complete record fits in [base..end_index);
+                // safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                let d_ino = u64::from_ne_bytes(
+                    buf[base..base + 8].try_into().expect("infallible: size matches"),
+                );
+                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
+                let namlen = u16::from_ne_bytes([buf[base + 18], buf[base + 19]]) as usize;
+                let d_type = buf[base + 20];
                 self.index = base + reclen;
 
-                let name = unsafe {
-                    core::slice::from_raw_parts(p.add(base + 21), namlen)
-                };
+                let name = &buf[base + 21..base + 21 + namlen];
 
                 if name == b"." || name == b".." || d_ino == 0 { continue; }
 
@@ -444,20 +435,17 @@ pub mod dir_iterator {
                 //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
                 //   u16 d_namlen; u16 pad1; char d_name[];
                 let base = self.index;
-                let p = self.buf.0.as_ptr();
-                let fileno = unsafe { core::ptr::read_unaligned(p.add(base).cast::<u64>()) };
-                let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
-                } as usize;
-                let d_type = unsafe { *p.add(base + 18) };
-                let namlen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 20).cast::<u16>())
-                } as usize;
+                let buf = &self.buf.0;
+                // Safe indexing into the owned `[u8; BUF_SIZE]` — no raw ptrs needed.
+                let fileno = u64::from_ne_bytes(
+                    buf[base..base + 8].try_into().expect("infallible: size matches"),
+                );
+                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
+                let d_type = buf[base + 18];
+                let namlen = u16::from_ne_bytes([buf[base + 20], buf[base + 21]]) as usize;
                 self.index = base + reclen;
 
-                let name = unsafe {
-                    core::slice::from_raw_parts(p.add(base + 24), namlen)
-                };
+                let name = &buf[base + 24..base + 24 + namlen];
 
                 if name == b"." || name == b".." || fileno == 0 { continue; }
 
@@ -574,22 +562,22 @@ pub mod dir_iterator {
                 }
 
                 let entry_offset = self.index;
-                let p = self.buf.0.as_ptr();
+                let buf = &self.buf.0;
                 // While the official api docs guarantee FILE_DIRECTORY_INFORMATION
                 // to be aligned properly, this may not always be the case (e.g.
-                // due to faulty VM/Sandboxing tools) — read fields unaligned.
-                // SAFETY: entry_offset < end_index ≤ BUF_SIZE; struct header
-                // (NAME_OFFSET = 64 bytes) is fully within the buffer per the
-                // NtQueryDirectoryFile contract on STATUS_SUCCESS.
-                let next_off = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset).cast::<u32>())
-                } as usize;
-                let file_attrs = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset + 56).cast::<u32>())
-                };
-                let name_len_bytes = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset + 60).cast::<u32>())
-                } as usize;
+                // due to faulty VM/Sandboxing tools) — read fields unaligned via
+                // safe byte-array indexing. entry_offset < end_index ≤ BUF_SIZE;
+                // struct header (NAME_OFFSET = 64 bytes) is fully within the buffer
+                // per the NtQueryDirectoryFile contract on STATUS_SUCCESS.
+                let next_off = u32::from_ne_bytes(
+                    buf[entry_offset..entry_offset + 4].try_into().expect("infallible: size matches"),
+                ) as usize;
+                let file_attrs = u32::from_ne_bytes(
+                    buf[entry_offset + 56..entry_offset + 60].try_into().expect("infallible: size matches"),
+                );
+                let name_len_bytes = u32::from_ne_bytes(
+                    buf[entry_offset + 60..entry_offset + 64].try_into().expect("infallible: size matches"),
+                ) as usize;
                 self.index = if next_off != 0 {
                     entry_offset + next_off
                 } else {
@@ -604,13 +592,12 @@ pub mod dir_iterator {
                 let name_byte_offset = entry_offset + NAME_OFFSET;
                 let buf_remaining_u16 = BUF_SIZE.saturating_sub(name_byte_offset) / 2;
                 let name_len_u16 = (name_len_bytes / 2).min(buf_remaining_u16);
-                // SAFETY: name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp.
-                let dir_info_name = unsafe {
-                    core::slice::from_raw_parts(
-                        p.add(name_byte_offset).cast::<u16>(),
-                        name_len_u16,
-                    )
-                };
+                // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
+                // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
+                // both multiples of 4, so the u8→u16 cast is always aligned.
+                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                    &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
+                );
 
                 if dir_info_name == [b'.' as u16]
                     || dir_info_name == [b'.' as u16, b'.' as u16]
@@ -4032,11 +4019,12 @@ pub use bun_core::time;
 pub fn self_process_memory_usage() -> Option<usize> {
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        fn getRSS(rss: *mut usize) -> ::core::ffi::c_int;
+        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
+        // only writes the slot and returns a status code — no other preconditions.
+        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
     }
     let mut rss: usize = 0;
-    // SAFETY: FFI call; `rss` is a valid `*mut usize` for the duration of the call.
-    if unsafe { getRSS(&raw mut rss) } != 0 {
+    if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
@@ -4261,9 +4249,10 @@ pub mod c {
         pub safe fn _dyld_image_count() -> u32;
         /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
         pub safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
-        /// `const struct mach_header* _dyld_get_image_header(uint32_t)`
+        /// `const struct mach_header* _dyld_get_image_header(uint32_t)` — by-value
+        /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
-        fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+        safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
     }
     /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
     #[cfg(target_os = "macos")]
@@ -4278,8 +4267,8 @@ pub mod c {
     /// same cast).
     #[cfg(target_os = "macos")]
     #[inline]
-    pub unsafe fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
-        unsafe { dyld_get_image_header_raw(image_index).cast() }
+    pub fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
+        dyld_get_image_header_raw(image_index).cast()
     }
 
     /// `bun.c.kqueue` — create a new kqueue fd.

@@ -569,6 +569,13 @@ impl RunCommand {
     /// Port of `RunCommand.createFakeTemporaryNodeExecutable`
     /// (src/cli/run_command.zig). Symlinks/hardlinks the running bun binary as
     /// `node` + `bun` inside a temp dir and prepends that dir to `path`.
+    ///
+    /// `#[cold]`: only reached on the `bun run <script>` / lifecycle-script
+    /// slow path, never on plain `bun foo.js` startup. Forcing it into
+    /// `.text.unlikely.*` keeps it out of the hot fault-around windows that
+    /// the startup/dot benches page in (belt-and-suspenders alongside
+    /// `startup.order` regen — survives mangling-hash drift).
+    #[cold]
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],

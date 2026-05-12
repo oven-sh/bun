@@ -192,18 +192,14 @@ impl SQLDataCell {
         }
 
         match self.tag {
-            Tag::String => {
-                // SAFETY: tag == String ⇒ `string` is the active union field;
-                // when non-null it points to a live WTF::StringImpl. `as_ref`
-                // folds the null-check and deref into one site.
+            Tag::String | Tag::Json => {
+                // SAFETY: tag ∈ {String, Json} ⇒ the active union field is a
+                // `WTFStringImpl` (`string` and `json` are both `*mut
+                // WTFStringImplStruct` overlaid at the same union offset, so
+                // reading either yields the same pointer). When non-null it
+                // points to a live WTF::StringImpl; `as_ref` folds the
+                // null-check and deref into one site.
                 if let Some(p) = unsafe { self.value.string.as_ref() } {
-                    p.deref();
-                }
-            }
-            Tag::Json => {
-                // SAFETY: tag == Json ⇒ `json` is the active union field;
-                // when non-null it points to a live WTF::StringImpl.
-                if let Some(p) = unsafe { self.value.json.as_ref() } {
                     p.deref();
                 }
             }

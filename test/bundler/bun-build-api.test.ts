@@ -1501,4 +1501,62 @@ describe("Bun.build chains inline input sourcemaps", () => {
     // phantom "authored.ts".
     expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
   });
+
+  // https://github.com/oven-sh/bun/issues/6173 — a plugin `onLoad` that
+  // transpiles and returns JS with an inline sourcemap comment should
+  // have the pre-transform authored source surface in the final map.
+  // The scanner runs on `source.contents` regardless of origin, so the
+  // plugin case rides on the same pipeline as the file case.
+  test("onLoad plugin returning JS with inline sourcemap — authored source surfaces", async () => {
+    const dir = tempDirWithFiles("bun-build-plugin-chained-sourcemap", {
+      "src.custom": "export const x = 42;\n",
+      "entry.ts": `import { x } from './src.custom';\nconsole.log(x);\n`,
+    });
+
+    // Use a distinct inner-source name so we can tell which `sources[]`
+    // slot is the plugin intermediate vs. which is the chained inner.
+    const authoredContent = "const x_authored_marker = 42;\nexport { x_authored_marker as x };\n";
+    const innerMap = {
+      version: 3,
+      sources: ["original-authored.custom"],
+      sourcesContent: [authoredContent],
+      names: [],
+      mappings: "AAAA;",
+    };
+    const inlineComment = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+      plugins: [
+        {
+          name: "custom-transpiler",
+          setup(build) {
+            build.onLoad({ filter: /\.custom$/ }, () => ({
+              // Emit transformed JS carrying its own inline sourcemap
+              // pointing back at the authored `.custom` source.
+              contents: "export const x = 42;\n" + inlineComment,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+
+    // The authored-source slot (distinct filename) must be present and
+    // carry the pre-transform content verbatim.
+    expect(parsed.sources.some((s: string) => s.endsWith("original-authored.custom"))).toBe(true);
+    expect(parsed.sourcesContent).toHaveLength(parsed.sources.length);
+
+    const authoredIdx = parsed.sources.findIndex((s: string) => s.endsWith("original-authored.custom"));
+    expect(parsed.sourcesContent[authoredIdx]).toBe(authoredContent);
+  });
 });

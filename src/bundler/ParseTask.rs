@@ -660,17 +660,11 @@ fn css_symbols_to_parser_symbols(
     use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
     let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
     for s in src.slice() {
-        // Both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the same
-        // Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
-        // identical by construction. `Kind` has 25 variants — bridge via
-        // `#[repr(u8)]` round-trip rather than a 25-arm match.
-        // SAFETY: identical `#[repr(u8)]` discriminant set.
-        let kind: PKind = unsafe { core::mem::transmute::<u8, PKind>(s.kind as u8) };
-        let import_item_status = match s.import_item_status as u8 {
-            1 => bun_ast::ImportItemStatus::Generated,
-            2 => bun_ast::ImportItemStatus::Missing,
-            _ => bun_ast::ImportItemStatus::None,
-        };
+        // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
+        // `s.kind`/`s.import_item_status` are already the target nominal types
+        // — the former `#[repr(u8)]` round-trip bridge is no longer needed.
+        let kind: PKind = s.kind;
+        let import_item_status: bun_ast::ImportItemStatus = s.import_item_status;
         // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
         // — same nominal type, no bridge needed.
         let link: bun_ast::Ref = s.link.get();

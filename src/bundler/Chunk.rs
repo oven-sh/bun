@@ -113,8 +113,8 @@ impl Default for Content {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`OutputPiece.data_ptr`, `Layers::Borrowed`, `StringJoiner` nodes,
-// `ChunkRenamer` arena) point into bundler-arena storage that outlives the
+// fields (`Layers::Borrowed`, `StringJoiner` nodes, `ChunkRenamer` arena)
+// point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task. Zig has no Send/Sync
 // distinction; mirror `InputFile`'s blanket impls (bundle_v2.rs).
 //
@@ -374,15 +374,15 @@ pub enum IntermediateOutput {
 ///
 /// PORT NOTE: In Zig, `breakOutputIntoPieces` calls `j.done(alloc)` with the
 /// per-worker arena, so the joined buffer outlives the chunk by construction
-/// and `OutputPiece.data_ptr` stays valid. The Rust `StringJoiner::done()`
+/// and `OutputPiece.data` stays valid. The Rust `StringJoiner::done()`
 /// returns a `Box<[u8]>`; if that box is dropped at the end of
-/// `break_output_into_pieces`, every piece's `data_ptr` dangles (ASAN
+/// `break_output_into_pieces`, every piece's `data` slice dangles (ASAN
 /// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
 /// the pieces so their raw-pointer slices remain valid for the chunk's
 /// lifetime.
 pub struct OutputPieces {
     pieces: Vec<OutputPiece>,
-    /// Backing storage for every `OutputPiece::data_ptr` in `pieces`.
+    /// Backing storage for every `OutputPiece::data` in `pieces`.
     /// Never read directly — only pins the allocation.
     _buffer: Box<[u8]>,
 }
@@ -523,7 +523,7 @@ impl IntermediateOutput {
             IntermediateOutput::Pieces(pieces) => {
                 let mut total: usize = 0;
                 for piece in pieces.slice() {
-                    total += piece.data_len as usize;
+                    total += piece.data.len();
                 }
                 total
             }
@@ -685,7 +685,7 @@ impl IntermediateOutput {
                 };
 
                 for piece in pieces.slice() {
-                    count += piece.data_len as usize;
+                    count += piece.data.len();
 
                     match piece.query.kind() {
                         QueryKind::Chunk
@@ -1068,25 +1068,25 @@ impl IntermediateOutput {
 ///
 /// An output piece is the concatenation of source code text and an output
 /// path, in that order. An array of pieces makes up an entire file.
+///
+/// PORT NOTE: Zig split ptr+u32 len to shave 8 bytes. The Rust port stores a
+/// `RawSlice` (encapsulates the unsafe re-borrow) — the per-chunk piece count
+/// is bounded by the number of unique-key boundaries, so the extra word per
+/// piece is negligible against the safety win.
 pub struct OutputPiece {
-    /// Pointer and length split to reduce struct size
-    data_ptr: *const u8,
-    data_len: u32,
+    /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
+    /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
+    data: bun_ptr::RawSlice<u8>,
     pub query: Query,
 }
 
 impl OutputPiece {
     pub fn data(&self) -> &[u8] {
-        // SAFETY: data_ptr/data_len always set from a valid slice via `init()`
-        unsafe { core::slice::from_raw_parts(self.data_ptr, self.data_len as usize) }
+        self.data.slice()
     }
 
     pub fn init(data_slice: &[u8], query: Query) -> OutputPiece {
-        OutputPiece {
-            data_ptr: data_slice.as_ptr(),
-            data_len: u32::try_from(data_slice.len()).expect("int cast"),
-            query,
-        }
+        OutputPiece { data: bun_ptr::RawSlice::new(data_slice), query }
     }
 }
 

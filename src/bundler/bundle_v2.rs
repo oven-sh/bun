@@ -619,28 +619,26 @@ pub mod bake_types {
             #[inline] pub const fn get(self) -> u32 { self.0 }
         }
 
-        /// `EntryPointMap.InputFile` (raw ptr+len so `Side` packs in the
-        /// trailing word — keeps the 16-byte key layout the Zig hasher relies on).
+        /// `EntryPointMap.InputFile`. Zig packed `Side` into the slice-len word
+        /// for a 16-byte key; the Rust `Hash`/`Eq` impls below are content-based
+        /// (not byte-layout), so that packing is not load-bearing here — store a
+        /// `RawSlice` instead and let `bun_ptr` encapsulate the unsafe re-borrow.
+        /// `RawSlice<u8>: Send + Sync`, so no manual auto-trait impls are needed.
         #[derive(Copy, Clone)]
         pub struct InputFile {
-            abs_path_ptr: *const u8,
-            abs_path_len: u32,
+            abs_path: bun_ptr::RawSlice<u8>,
             pub side: Side,
         }
-        // SAFETY: abs_path_ptr borrows `EntryPointMap.owned_paths`-owned bytes;
-        // the map itself is single-producer (bake build thread) per Zig contract.
-        unsafe impl Send for InputFile {}
-        unsafe impl Sync for InputFile {}
         impl InputFile {
             #[inline]
             pub fn init(abs_path: &[u8], side: Side) -> Self {
-                Self { abs_path_ptr: abs_path.as_ptr(), abs_path_len: abs_path.len() as u32, side }
+                Self { abs_path: bun_ptr::RawSlice::new(abs_path), side }
             }
             #[inline]
             pub fn abs_path(&self) -> &[u8] {
-                // SAFETY: ptr/len were derived from a slice in `init`; the backing
-                // allocation is owned by `EntryPointMap.owned_paths` (duped on insert).
-                unsafe { core::slice::from_raw_parts(self.abs_path_ptr, self.abs_path_len as usize) }
+                // Backing allocation is owned by `EntryPointMap.owned_paths`
+                // (duped on insert) and outlives every key stored in `files`.
+                self.abs_path.slice()
             }
         }
         impl core::hash::Hash for InputFile {
@@ -738,11 +736,15 @@ pub mod api {
         /// this crate stays free of `JSValue` / `JSGlobalObject`.
         bun_opaque::opaque_ffi! { pub struct Plugin; }
         unsafe extern "C" {
+            // The three `safe fn`s below take only Rust references / by-value
+            // scalars: every pointer the C++ side reads is guaranteed valid by
+            // the type system, so there is no caller-side precondition left to
+            // discharge (mirrors the `safe fn` pattern in `lolhtml_sys`).
             #[link_name = "JSBundlerPlugin__anyMatches"]
-            fn JSBundlerPlugin__anyMatches(
-                this: *const Plugin,
-                namespace: *const BunString,
-                path: *const BunString,
+            safe fn JSBundlerPlugin__anyMatches(
+                this: &Plugin,
+                namespace: &BunString,
+                path: &BunString,
                 is_on_load: bool,
             ) -> bool;
             #[link_name = "JSBundlerPlugin__matchOnLoad"]
@@ -764,9 +766,9 @@ pub mod api {
                 kind: u8,
             );
             #[link_name = "JSBundlerPlugin__drainDeferred"]
-            fn JSBundlerPlugin__drainDeferred(this: *mut Plugin, rejected: bool);
+            safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
             #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
-            fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: *const Plugin) -> i32;
+            safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
             #[link_name = "JSBundlerPlugin__callOnBeforeParsePlugins"]
             fn JSBundlerPlugin__callOnBeforeParsePlugins(
                 this: *const Plugin,
@@ -786,15 +788,12 @@ pub mod api {
             /// `catch return`, so the void FFI call is the observable
             /// behaviour at this tier.
             pub fn drain_deferred(&mut self, rejected: bool) {
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature
-                // matches JSBundlerPlugin.cpp `JSBundlerPlugin__drainDeferred`.
-                unsafe { JSBundlerPlugin__drainDeferred(self, rejected) }
+                JSBundlerPlugin__drainDeferred(self, rejected)
             }
 
             #[inline]
             pub fn has_on_before_parse_plugins(&self) -> bool {
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-                unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
+                JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
             }
 
             #[inline]
@@ -836,11 +835,7 @@ pub mod api {
                 };
                 let path_string = BunString::clone_utf8(path.text);
                 // namespace_string/path_string deref on Drop
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
-                // JSBundlerPlugin.cpp `JSBundlerPlugin__anyMatches`.
-                unsafe {
-                    JSBundlerPlugin__anyMatches(self, &raw const namespace_string, &raw const path_string, is_on_load)
-                }
+                JSBundlerPlugin__anyMatches(self, &namespace_string, &path_string, is_on_load)
             }
 
             pub fn match_on_load(

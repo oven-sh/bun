@@ -120,6 +120,9 @@ mod platform {
         fn next_darwin(&mut self) -> Result {
             unsafe extern "C" {
                 // Private libsystem symbol; same one Zig's `posix.system.__getdirentries64` hits.
+                // SAFETY precondition: `buf` must be writable for `nbytes` and
+                // `basep` must point to a valid i64 — raw-pointer contract,
+                // cannot be `safe fn`.
                 fn __getdirentries64(
                     fd: libc::c_int,
                     buf: *mut u8,
@@ -239,6 +242,8 @@ mod platform {
     // neither `getdents` nor `getdirentries` on FreeBSD, so declare the former
     // to keep the struct shape and syscall surface mirroring the spec.
     unsafe extern "C" {
+        // SAFETY precondition: `buf` must be writable for `nbytes` bytes and
+        // dirent-aligned — raw-pointer contract, cannot be `safe fn`.
         fn getdents(
             fd: core::ffi::c_int,
             buf: *mut core::ffi::c_char,

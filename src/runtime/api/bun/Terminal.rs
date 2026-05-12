@@ -839,6 +839,9 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         // PORT NOTE: declared locally (not via the `libc` crate) so the
         // `OpenPtyFn` type unifies with the Linux dlsym path.
         unsafe extern "C" {
+            // SAFETY precondition: out-param fd pointers must be writable and
+            // termp/winp must be null or valid — raw-pointer contract. Kept
+            // `unsafe` so the fn item coerces to `OpenPtyFn` (unsafe fn ptr).
             pub fn openpty(
                 amaster: *mut c_int,
                 aslave: *mut c_int,

@@ -1376,11 +1376,14 @@ impl CronJob {
     /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
     /// reference is live across the potential free in `deref()`.
     ///
-    /// # Safety
-    /// `this` must be a live `heap::alloc` pointer for the guard's lifetime.
+    /// Safe under the same module-private invariant as [`from_ctx_ptr`]: every
+    /// call site (private to this module) passes the intrusively-refcounted
+    /// heap allocation with refcount > 0.
     #[inline]
-    unsafe fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
-        // SAFETY: caller contract — `this` is live.
+    fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
+        // SAFETY: module-private invariant (see `from_ctx_ptr`) — `this` is the
+        // live heap allocation with refcount > 0; `ScopedRef::new` bumps it so
+        // the guard's `Drop` cannot free a dangling pointer.
         unsafe { CronJobDerefOnDrop::new(this) }
     }
 
@@ -1527,8 +1530,8 @@ impl CronJob {
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
-        // SAFETY: timer heap holds the entry; `this` is live until the guard drops.
-        let _guard = unsafe { Self::ref_guard(this) };
+        // Timer heap holds the entry; `this` is live until the guard drops.
+        let _guard = Self::ref_guard(this);
         // Bracket-ref above keeps `this` alive across scheduleNext →
         // finishDeferredStop. R-2: shared (`&*`) — `cb.call()` re-enters JS,
         // which may call `stop()`/`ref()`/`unref()` on this same wrapper; a

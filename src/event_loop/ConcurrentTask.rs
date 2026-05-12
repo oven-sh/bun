@@ -203,9 +203,17 @@ pub trait Taskable {
     }
 }
 
+/// Type -> packed-payload binding for tasks whose `ptr` slot intentionally
+/// carries an integer payload instead of a pointer.
+pub trait TaskPayload: Taskable {
+    type Payload: Copy;
+
+    fn encode_payload(payload: Self::Payload) -> usize;
+}
+
 impl Task {
     #[inline]
-    pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
+    const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
         Task { tag, ptr }
     }
 
@@ -237,6 +245,14 @@ impl Task {
     #[inline]
     pub fn init_with_type<T: Taskable>(ptr: *mut ()) -> Task {
         Task::new(T::TAG, ptr)
+    }
+
+    /// Build a [`Task`] for the rare variants whose payload is an integer
+    /// packed into the `ptr` slot. The task tag still comes from `T`, so callers
+    /// cannot mismatch the discriminant and payload shape.
+    #[inline]
+    pub fn init_payload<T: TaskPayload>(payload: T::Payload) -> Task {
+        Task::new(T::TAG, T::encode_payload(payload) as *mut ())
     }
 }
 

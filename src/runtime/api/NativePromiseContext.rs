@@ -20,7 +20,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
+use bun_event_loop::{task_tag, Task, TaskPayload, TaskTag, Taskable};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -171,6 +171,15 @@ impl Taskable for DeferredDerefTask {
     const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
 }
 
+impl TaskPayload for DeferredDerefTask {
+    type Payload = usize;
+
+    #[inline]
+    fn encode_payload(payload: Self::Payload) -> usize {
+        payload
+    }
+}
+
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
@@ -189,12 +198,9 @@ impl DeferredDerefTask {
 
         // Zig stamped the discriminant via `Task.init(&marker)` then overwrote
         // the packed `_ptr` bitfield with `setUintptr(@truncate(addr | tag))`.
-        // The Rust `Task` is a plain `{ tag, ptr }` pair (no bitfield packing),
-        // so build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        // Rust keeps the tag tied to `DeferredDerefTask` and only packs the
+        // ctx|Tag payload into the task pointer slot.
+        let task = Task::init_payload::<DeferredDerefTask>(addr | (tag as usize));
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);

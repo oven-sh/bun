@@ -831,7 +831,7 @@ pub mod waiter_thread_posix {
     use bun_event_loop::AnyTaskWithExtraContext::{
         AnyTaskWithExtraContext, New as AnyTaskNew,
     };
-    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag, Taskable};
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
     use core::sync::atomic::AtomicPtr;
@@ -1000,6 +1000,10 @@ pub mod waiter_thread_posix {
         ) -> Option<ProcessExitDelivery>;
     }
 
+    impl<T: ProcessLike> Taskable for ResultTask<T> {
+        const TAG: TaskTag = T::TASK_TAG;
+    }
+
     impl ProcessLike for Process {
         const TASK_TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
         #[inline]
@@ -1076,14 +1080,12 @@ pub mod waiter_thread_posix {
 
                         match T::event_loop(process) {
                             EventLoopHandle::Js { owner } => {
-                                let ct = ConcurrentTask::create(Task::new(
-                                    T::TASK_TAG,
+                                let ct = ConcurrentTask::create(Task::init(
                                     ResultTask::<T>::new(ResultTask {
                                         result,
                                         subprocess: process,
                                         rusage,
-                                    })
-                                    .cast(),
+                                    }),
                                 ));
                                 owner.enqueue_task_concurrent(ct);
                             }

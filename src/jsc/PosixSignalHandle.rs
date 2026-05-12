@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
 use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
-use bun_event_loop::{Taskable, task_tag};
+use bun_event_loop::{TaskPayload, Taskable, task_tag};
 
 bun_core::declare_scope!(PosixSignalHandle, hidden);
 
@@ -93,14 +93,11 @@ impl PosixSignalHandle {
     /// Called by the main thread.
     pub fn drain(&self, event_loop: &mut EventLoop) {
         while let Some(signal) = self.dequeue() {
-            // PORT NOTE: Zig stamps the discriminant via `Task.init(&stack_marker)` then
-            // overwrites the packed `_ptr` bitfield with `setUintptr(signal)`. The Rust
-            // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
-            // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
-                <PosixSignalTask as Taskable>::TAG,
-                signal as usize as *mut (),
-            );
+            // PORT NOTE: Zig stamps the discriminant via `Task.init(&stack_marker)`
+            // then overwrites the packed `_ptr` bitfield with `setUintptr(signal)`.
+            // Rust keeps the tag tied to `PosixSignalTask` and only packs the
+            // signal payload into the task pointer slot.
+            let task = Task::init_payload::<PosixSignalTask>(signal);
             event_loop.enqueue_task(task);
         }
     }
@@ -131,6 +128,15 @@ pub struct PosixSignalTask {
 
 impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
+}
+
+impl TaskPayload for PosixSignalTask {
+    type Payload = u8;
+
+    #[inline]
+    fn encode_payload(payload: Self::Payload) -> usize {
+        payload as usize
+    }
 }
 
 // TODO(port): move to <area>_sys

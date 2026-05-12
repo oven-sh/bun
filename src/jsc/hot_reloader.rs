@@ -12,7 +12,7 @@ use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
-use bun_event_loop::task_tag;
+use bun_event_loop::{Taskable, task_tag};
 use crate::Task as JscTask;
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
@@ -495,6 +495,12 @@ pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
 }
 
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> Taskable
+    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+{
+    const TAG: bun_event_loop::TaskTag = task_tag::HotReloadTask;
+}
+
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -624,12 +630,8 @@ where
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
-            // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
-            // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
-            // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
-            // use the raw `(tag, ptr)` constructor.
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
+                task: JscTask::init(that),
                 ..Default::default()
             });
             // TODO(port): `&that.concurrent_task` is an interior pointer into a

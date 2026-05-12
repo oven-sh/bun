@@ -585,27 +585,34 @@ Typed reader-delivery follow-through
 
 ## Runtime Tasks
 
-Runtime tasks follow the same split: the queue item shape can be a closed enum,
-but execution remains in the runtime crate because it owns JSC, C++, timers,
-auto-delete semantics, and promise deref behavior.
+Runtime tasks are the next upward hard surface. The current branch does not
+pretend the whole queue has become a closed enum: `bun_runtime::dispatch` still
+owns the `TaskTag` match because it owns JSC, C++, timers, auto-delete
+semantics, promise deref behavior, and the concrete task effect bodies. The
+landed task slice instead removes the public raw producer API: code outside
+`bun_event_loop` can no longer call `Task::new(tag, ptr)`.
+
+Normal pointer tasks now have to implement `Taskable` and enqueue with
+`Task::init` / `Task::from_boxed`; packed scalar tasks have to implement
+`TaskPayload` and enqueue with `Task::init_payload`. That is not the final
+closed-enum task inversion, but it prevents new producers from freely pairing
+an arbitrary runtime tag with an arbitrary pointer while the larger event-loop
+split remains open.
 
 ```
-Runtime task target shape
-  ├─> closed queue item
-  │     ├─> ShellRm
-  │     ├─> ReadFile
-  │     ├─> ArchiveExtract
-  │     ├─> Cpp
-  │     ├─> JscDeferredWork
-  │     ├─> JscTimer(Immediate | WtfTimer)
-  │     ├─> Concurrent(owner + AutoDelete/Manual)
-  │     ├─> PosixSignal(u8)
-  │     └─> NativePromiseDeferredDeref(usize)
-  └─> runtime executor
-        ├─> enters JSC / C++ / WebKit
-        ├─> applies auto-delete ownership
-        ├─> derefs native promises
-        └─> drains microtasks
+Runtime task current shape
+  ├─> producer side
+  │     ├─> Task::new(tag, ptr) is private to bun_event_loop
+  │     ├─> BundleV2DeferredBatchTask implements Taskable and enqueues with Task::init
+  │     ├─> waiter-thread ResultTask<T> implements Taskable and enqueues with Task::init
+  │     ├─> HotReloadTask implements Taskable and enqueues with Task::init
+  │     ├─> PosixSignalTask implements TaskPayload<u8>
+  │     └─> NativePromiseDeferredDerefTask implements TaskPayload<usize>
+  └─> executor side
+        ├─> bun_runtime::dispatch::run_task still matches TaskTag
+        ├─> pointer recovery remains local to each runtime-owned dispatch arm
+        ├─> packed scalar decoding remains local to the two scalar task arms
+        └─> a real closed-enum task split remains future hard work, not claimed complete here
 ```
 
 ## Reader Parents

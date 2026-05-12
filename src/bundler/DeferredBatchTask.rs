@@ -7,10 +7,8 @@
 use core::mem::offset_of;
 
 use crate::BundleV2;
-// Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
-// runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, task_tag};
+use bun_event_loop::{Task, Taskable, task_tag};
 
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;
@@ -25,6 +23,10 @@ pub struct DeferredBatchTask {
     // Zig: `running: if (Environment.isDebug) bool else u0` — zero-sized in release.
     #[cfg(debug_assertions)]
     running: bool,
+}
+
+impl Taskable for DeferredBatchTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
 }
 
 impl DeferredBatchTask {
@@ -53,12 +55,7 @@ impl DeferredBatchTask {
             debug_assert!(!self.running);
             self.running = false;
         }
-        // PORTING.md §Dispatch: tag+ptr, not TaggedPointer. Tag constant lives in
-        // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
-        let task = ConcurrentTask::create(Task::new(
-            task_tag::BundleV2DeferredBatchTask,
-            std::ptr::from_mut::<Self>(self).cast::<()>(),
-        ));
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
 
         // Zig: `getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(task)`.
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);

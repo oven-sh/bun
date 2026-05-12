@@ -322,12 +322,8 @@ impl<T: RefCounted> RefCount<T> {
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
             {
-                // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
-                };
                 // SAFETY: count is &*get_ref_count(self_); we need &mut for deinit
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
+                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             // SAFETY: raw_count == 0, sole owner
             unsafe { T::destructor(self_, ctx) };
@@ -505,12 +501,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         if old_count == 1 {
             #[cfg(debug_assertions)]
             {
-                // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
-                };
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
+                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             // SAFETY: last ref dropped
             unsafe { T::destructor(self_) };
@@ -544,12 +536,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         if old_count == 1 {
             #[cfg(debug_assertions)]
             {
-                // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
-                };
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
+                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             true
         } else {
@@ -1175,7 +1163,10 @@ impl<Count: CountLoad> DebugData<Count> {
         );
     }
 
-    fn deinit(&mut self, data: &[u8], ret_addr: usize) {
+    // PORT NOTE: Zig `deinit` took `std.mem.asBytes(self)` as `data: []const u8`
+    // but never read it; the Rust port dropped the parameter to avoid forming a
+    // `&[u8]` over `T` (which may contain padding/uninit bytes — UB to read).
+    fn deinit(&mut self, ret_addr: usize) {
         self.assert_valid();
         self.magic = 0; // Zig: `= undefined`
         let _guard = self.lock.lock();
@@ -1183,7 +1174,7 @@ impl<Count: CountLoad> DebugData<Count> {
         self.map.shrink_to_fit();
         self.frees.clear();
         // TODO(port): ArrayHashMap shrink — Zig clearAndFree
-        let _ = (data, ret_addr);
+        let _ = ret_addr;
     }
 }
 

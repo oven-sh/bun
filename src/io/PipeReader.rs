@@ -1412,32 +1412,22 @@ impl WindowsBufferedReader {
     /// Handles cleanup, cancellation, and normal read processing.
     #[cfg(windows)]
     extern "C" fn on_file_read(fs: *mut uv::fs_t) {
-        // SAFETY: libuv fs_cb — `fs` is a valid `uv_fs_t*` owned by the boxed
-        // `source::File` (separate heap allocation from `Self`). Invoked from
-        // the event loop with no other Rust borrow of it live (single-owner).
-        // Read out the scalars we need before forming `&mut File` so the
-        // `fs_ref` borrow is dead (NLL) by the time `file` covers it.
-        let fs_ref = unsafe { &mut *fs };
-        let result = fs_ref.result;
+        // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field of a heap-boxed
+        // `source::File` (separate allocation from `Self`). Invoked from the
+        // event loop with no other Rust borrow of it live (single-owner).
+        // `from_fs_callback` snapshots `result`/`data` then container_of's the
+        // owning `&mut File`; that borrow does not overlap the later
+        // `&mut WindowsBufferedReader` (distinct heap allocations).
+        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
         let nread_int = result.int();
         let was_canceled = nread_int == uv::UV_ECANCELED as i64;
 
         bun_sys::syslog!(
             "onFileRead({}) = {}",
             // SAFETY: `uv_fs_read` populated the `fd` arm of the `file` union.
-            Fd::from_uv(unsafe { fs_ref.file_fd() }),
+            Fd::from_uv(unsafe { file.fs.file_fd() }),
             nread_int
         );
-
-        // Get parent before completing (fs.data may be null if detached)
-        let parent_ptr = fs_ref.data;
-
-        // SAFETY: `fs` is the `fs` field of a heap-boxed `source::File`
-        // (separate allocation from `Self`), so `from_fs`'s container_of
-        // subtraction is valid and the resulting `&mut File` does not overlap
-        // the later `&mut WindowsBufferedReader` (distinct allocations).
-        // `fs_ref` above is dead (NLL) before this point.
-        let file: &mut crate::source::File = unsafe { &mut *crate::source::File::from_fs(fs) };
 
         // ALWAYS complete the read first (cleans up fs_t, updates state)
         file.complete(was_canceled);
@@ -1449,10 +1439,10 @@ impl WindowsBufferedReader {
         }
 
         // SAFETY: `parent_ptr` (= `fs.data`) is `*mut Self` set via `set_data`.
-        // `fs_ref`/`file` above point into the boxed `source::File` — a
-        // separate heap allocation — and their borrows end (NLL) before this
-        // point in the non-null path, so this is the sole live `&mut` to the
-        // reader (single-owner).
+        // `file` above points into the boxed `source::File` — a separate heap
+        // allocation — and its borrow ends (NLL) before this point in the
+        // non-null path, so this is the sole live `&mut` to the reader
+        // (single-owner).
         let this: &mut WindowsBufferedReader =
             unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
 

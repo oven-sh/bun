@@ -105,6 +105,29 @@ impl File {
         unsafe { bun_core::from_field_ptr!(File, fs, fs) }
     }
 
+    /// Backref-deref accessor for libuv `fs_t` completion callbacks: snapshot
+    /// the `result` / `data` POD fields, then recover the owning `&mut File`
+    /// via `container_of`. Collapses the open-coded raw-deref prelude in each
+    /// `on_fs_*_complete` / `on_file_read` callback into one call site.
+    ///
+    /// # Safety
+    /// `fs` must be the live `uv_fs_t*` libuv handed to a completion callback
+    /// for an operation started on a heap-boxed `File` (i.e. it points at
+    /// `self.fs`). No other `&`/`&mut File` may be live for `'a` — satisfied by
+    /// libuv's single-threaded callback dispatch (sole re-entry point).
+    #[inline]
+    pub unsafe fn from_fs_callback<'a>(
+        fs: *mut uv::fs_t,
+    ) -> (&'a mut File, uv::ReturnCodeI64, *mut c_void) {
+        // SAFETY: caller contract — `fs` is live; read the POD `result`/`data`
+        // before forming `&mut File` so the short raw read is dead (NLL) by the
+        // time the parent borrow covers the same bytes.
+        let (result, data) = unsafe { ((*fs).result, (*fs).data) };
+        // SAFETY: caller contract — `fs` is `File.fs`; `from_fs` container_of
+        // recovers the boxed parent, which outlives `'a` (callback contract).
+        (unsafe { &mut *Self::from_fs(fs) }, result, data)
+    }
+
     /// Returns true if ready to start a new operation.
     pub fn can_start(&self) -> bool {
         self.state == FileState::Deinitialized && !self.fs.data.is_null()

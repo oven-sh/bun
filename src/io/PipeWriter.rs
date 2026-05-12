@@ -1581,20 +1581,16 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
-        // SAFETY: `fs` is the `uv_fs_t` field at offset 0 of a boxed
-        // `source::File`; `from_fs` reverses the `offset_of` to recover the
-        // owning pointer.
-        let file = unsafe { crate::source::File::from_fs(fs) };
-        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
-        let result = unsafe { (*fs).result };
+        // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field at offset 0 of a
+        // boxed `source::File`; `from_fs_callback` snapshots `result`/`data`
+        // and recovers `&mut File` via container_of. Single-threaded dispatch,
+        // no other Rust borrow of the boxed `File` is live.
+        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
         let was_canceled = result.int() == uv::UV_ECANCELED as i64;
-        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
-        let parent_ptr = unsafe { (*fs).data };
 
-        // ALWAYS complete first
-        // SAFETY: `file` was derived from `fs` via `offset_of`; the boxed
-        // `source::File` outlives this callback (detach()/close() gates free).
-        unsafe { (*file).complete(was_canceled) };
+        // ALWAYS complete first — the boxed `source::File` outlives this
+        // callback (detach()/close() gates free).
+        file.complete(was_canceled);
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
         if parent_ptr.is_null() {
@@ -1603,9 +1599,9 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             // !owns_fd close() path: complete() left state == Deinitialized and
             // nothing else will reclaim the Box<File>; this callback is the sole
             // remaining owner, so free it here.
-            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
-            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
-                drop(unsafe { bun_core::heap::take(file) });
+            if file.state == crate::source::FileState::Deinitialized {
+                // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+                drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
             }
             return;
         }
@@ -2095,20 +2091,16 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
-        // SAFETY: `fs` is the `uv_fs_t` field at offset 0 of a boxed
-        // `source::File`; `from_fs` reverses the `offset_of` to recover the
-        // owning pointer.
-        let file = unsafe { crate::source::File::from_fs(fs) };
-        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
-        let result = unsafe { (*fs).result };
+        // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field at offset 0 of a
+        // boxed `source::File`; `from_fs_callback` snapshots `result`/`data`
+        // and recovers `&mut File` via container_of. Single-threaded dispatch,
+        // no other Rust borrow of the boxed `File` is live.
+        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
         let was_canceled = result.int() == uv::UV_ECANCELED as i64;
-        // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
-        let parent_ptr = unsafe { (*fs).data };
 
-        // ALWAYS complete first
-        // SAFETY: `file` was derived from `fs` via `offset_of`; the boxed
-        // `source::File` outlives this callback (detach()/close() gates free).
-        unsafe { (*file).complete(was_canceled) };
+        // ALWAYS complete first — the boxed `source::File` outlives this
+        // callback (detach()/close() gates free).
+        file.complete(was_canceled);
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance processSend's ref was already done in close().
@@ -2118,9 +2110,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // !owns_fd close() path: complete() left state == Deinitialized and
             // nothing else will reclaim the Box<File>; this callback is the sole
             // remaining owner, so free it here.
-            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
-            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
-                drop(unsafe { bun_core::heap::take(file) });
+            if file.state == crate::source::FileState::Deinitialized {
+                // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+                drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
             }
             return;
         }

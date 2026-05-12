@@ -164,21 +164,16 @@ impl Walker {
                                 top_idx = self.stack.len() - 1;
                             }
                         }
-                        // SAFETY: `name_buffer[cur_len] == 0` was written above; both slices end
-                        // at `cur_len` and are NUL-terminated by that sentinel byte/char.
-                        let (basename, path) = unsafe {
-                            (
-                                OSPathSliceZ::from_raw(
-                                    self.name_buffer.as_ptr().add(dirname_len),
-                                    cur_len - dirname_len,
-                                ),
-                                OSPathSliceZ::from_raw(self.name_buffer.as_ptr(), cur_len),
-                            )
-                        };
+                        // `name_buffer[cur_len] == 0` was written above; both views end at
+                        // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
+                        // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
                         return Ok(Some(WalkerEntry {
                             dir: self.stack[top_idx].iter.dir(),
-                            basename,
-                            path,
+                            basename: OSPathSliceZ::from_buf(
+                                &self.name_buffer[dirname_len..],
+                                cur_len - dirname_len,
+                            ),
+                            path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
                             kind,
                         }));
                     } else {

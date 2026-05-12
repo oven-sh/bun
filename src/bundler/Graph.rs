@@ -22,8 +22,10 @@ pub struct Graph {
     // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
     // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
     // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
-    // (sibling field). Phase B: decide between `Box<ThreadPool>` vs arena handle.
-    pub pool: NonNull<ThreadPool>,
+    // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
+    // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
+    // bundle pass.
+    pub pool: bun_ptr::BackRef<ThreadPool>,
     pub heap: ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -143,7 +145,7 @@ impl Default for Graph {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use (Graph.zig has `= undefined`).
-            pool: NonNull::dangling(),
+            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
             heap: ThreadLocalArena::new(),
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
@@ -176,12 +178,12 @@ impl Graph {
     /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
     #[inline]
     pub fn pool(&self) -> &ThreadPool {
-        // SAFETY: `pool` is set in `BundleV2::init` to an arena-owned
-        // `ThreadPool` and remains valid until `BundleV2::deinit`. The
-        // `NonNull` guarantees non-null; no `&mut ThreadPool` is live across
-        // any `pool()` borrow (the only `&mut` site is `deinit`, called after
-        // all schedule/worker activity has drained).
-        unsafe { self.pool.as_ref() }
+        // BackRef invariant: `pool` is set in `BundleV2::init` to an
+        // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
+        // no `&mut ThreadPool` is live across any `pool()` borrow (the only
+        // `&mut` site is `deinit`, called after all schedule/worker activity
+        // has drained).
+        self.pool.get()
     }
 
     /// Exclusive borrow of the bundler `ThreadPool`. Only needed for
@@ -191,7 +193,7 @@ impl Graph {
     pub fn pool_mut(&mut self) -> &mut ThreadPool {
         // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
         // `Graph`, so no aliasing `&ThreadPool` is live.
-        unsafe { self.pool.as_mut() }
+        unsafe { self.pool.get_mut() }
     }
 
     #[inline]

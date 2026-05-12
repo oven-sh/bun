@@ -1420,7 +1420,9 @@ pub mod dispatch {
         /// "generate JSC bytecode off the main JS thread" helper — marks the
         /// calling thread as bytecode-only, initializes JSC, generates, and
         /// returns an owned copy of the bytes. Definer-prefixed (`__bun_jsc_*`).
-        fn __bun_jsc_generate_cached_bytecode(
+        /// All arguments are safe Rust types (no raw-pointer preconditions),
+        /// so the link-time-resolved body upholds Rust's invariants on its own.
+        safe fn __bun_jsc_generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &mut bun_string::String,
@@ -1452,8 +1454,7 @@ pub mod dispatch {
         source: &[u8],
         source_provider_url: &mut bun_string::String,
     ) -> Option<Box<[u8]>> {
-        // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc`.
-        unsafe { __bun_jsc_generate_cached_bytecode(format, source, source_provider_url) }
+        __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
     }
 
     /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` (JSBundler.zig) — the
@@ -1569,12 +1570,8 @@ impl<'a> BundleV2<'a> {
         }
         // From bake where the loop running the bundle is also the loop running
         // the plugins (Zig: `switch (this.loop().*) { .js => |l| l, .mini => @panic }`).
-        let any_loop = self
-            .r#loop()
-            .expect("No JavaScript event loop for transpiler plugins to run on")
-            .as_ptr();
-        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
-        match unsafe { &*any_loop } {
+        // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
+        match &*self.any_loop_mut() {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 owner.enqueue_task_concurrent(task);
             }
@@ -2526,7 +2523,7 @@ impl<'a> BundleV2<'a> {
             ssr_transpiler: ssr_alias,
             framework: None,
             graph: Graph {
-                pool: NonNull::dangling(), // set below
+                pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()), // set below
                 heap,
                 kit_referenced_server_data: false,
                 kit_referenced_client_data: false,
@@ -2636,8 +2633,9 @@ impl<'a> BundleV2<'a> {
         // SAFETY: arena slot is live for the bundle pass; the default value
         // written above has no Drop, so overwriting via `*pool = ...` is fine.
         unsafe { *pool = ThreadPool::init(&mut *this, thread_pool)?; }
-        this.graph.pool = NonNull::new(pool).expect("arena allocation is non-null");
-        // `Graph::pool` wraps the `NonNull` deref; `start()` takes `&self`.
+        this.graph.pool =
+            bun_ptr::BackRef::from(NonNull::new(pool).expect("arena allocation is non-null"));
+        // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
         this.graph.pool().start();
         Ok(this)
     }

@@ -2061,8 +2061,23 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         let toEnqueue = view;
 
         if (remaining > 0) {
-          toEnqueue = view.subarray(0, result);
-          view = view.subarray(result);
+          if (result <= remaining) {
+            // The read filled less than half of the pull buffer (e.g. an SSE
+            // line or a small TTY/socket read). Copy the bytes out so the
+            // consumer holds a `result`-sized ArrayBuffer instead of pinning
+            // the whole `autoAllocateChunkSize` (256KB-2MB) buffer, and keep
+            // `view` so the next pull reuses the same allocation. Without
+            // this, every read that returned >0 bytes shrank `view` below
+            // `chunkSize`, forcing #getInternalBuffer to allocate a fresh
+            // chunkSize Uint8Array on the next pull while the consumer's
+            // subarray kept the previous one alive — on Windows that piles
+            // up MEM_COMMIT'd pages (commit charge >> RSS) until the system
+            // commit limit is hit.
+            toEnqueue = view.slice(0, result);
+          } else {
+            toEnqueue = view.subarray(0, result);
+            view = view.subarray(result);
+          }
         } else {
           view = undefined;
         }

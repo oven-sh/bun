@@ -64,7 +64,7 @@ async function runInstall(dir: string, env: Record<string, string>, extraArgs: s
   return { stdout, stderr, exitCode };
 }
 
-describe("install.forceRegistry", () => {
+describe.concurrent("install.forceRegistry", () => {
   test("global bunfig forceRegistry overrides local bunfig registry", async () => {
     const forced = makeRegistry();
     const other = makeRegistry();

@@ -699,11 +699,6 @@ pub fn load(
             {
                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
                 api_registry.url = registry_;
-                // The env var only carries a URL. Preserve the token that
-                // `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` populated above so
-                // auth still applies to the forced host — same behaviour as
-                // `BUN_CONFIG_REGISTRY`.
-                api_registry.token = this.scope.token;
                 forced = api_registry;
             }
         }
@@ -718,8 +713,13 @@ pub fn load(
             }
         }
 
-        if (forced) |force_registry| {
-            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry, allocator, env);
+        if (forced) |*force_registry| {
+            // If the forced registry did not supply its own token (env var, or
+            // string form in bunfig), inherit the one already resolved from
+            // `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token` — same
+            // behaviour as `BUN_CONFIG_REGISTRY`.
+            if (force_registry.token.len == 0) force_registry.token = this.scope.token;
+            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
             // Discard scoped registries so `scopeForPackageName` always falls
             // back to `this.scope` — every package resolves through the
             // forced registry.
